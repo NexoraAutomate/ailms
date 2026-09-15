@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AuditRecord, Department, Letter, MasterValue, MonthlyTrend, Notification, Organization, User
+from app.models import Approval, AuditRecord, Department, Escalation, Letter, MasterValue, MonthlyTrend, Notification, Organization, User
 from app.services import (
     CLOSED_STATUSES,
     PENDING_STATUSES,
@@ -20,11 +20,32 @@ from app.services import (
 router = APIRouter(tags=["dashboard"])
 
 
+def _user_notifications(db: Session, user_name: str) -> list:
+    from app.notification_service import notifications_for_user_query
+
+    rows = notifications_for_user_query(db, user_name).order_by(Notification.created_at.desc()).all()
+    return [serialize_notification(row) for row in rows]
+
+
+def _user_unread_count(db: Session, user_name: str) -> int:
+    from app.notification_service import notifications_for_user_query
+
+    return notifications_for_user_query(db, user_name).filter(Notification.read.is_(False)).count()
+
+
 def _letters(db: Session) -> list:
-    return [serialize_letter(row) for row in db.query(Letter).order_by(Letter.id.desc()).all()]
+    rows = db.query(Letter).filter(Letter.is_archived.is_(False)).order_by(Letter.id.desc()).all()
+    return [serialize_letter(row) for row in rows]
 
 
-def _metrics(items: list) -> dict[str, str]:
+def _operational_counts(db: Session) -> dict[str, int]:
+    return {
+        "approvalPending": db.query(Approval).filter(Approval.approval_status == "Pending").count(),
+        "escalationsOpen": db.query(Escalation).filter(Escalation.status.in_(["Open", "In Progress"])).count(),
+    }
+
+
+def _metrics(items: list, db: Session | None = None) -> dict[str, str]:
     total = len(items)
     incoming = sum(1 for item in items if item.type == "Incoming")
     outgoing = total - incoming
@@ -37,6 +58,7 @@ def _metrics(items: list) -> dict[str, str]:
     closure_rate = f"{round((closed_or_done / total) * 100)}%" if total else "0%"
     pending_days = [item.daysPending for item in items if item.status not in CLOSED_STATUSES]
     avg = f"{round(sum(pending_days) / len(pending_days), 1)}d" if pending_days else "0d"
+    ops = _operational_counts(db) if db else {"approvalPending": 0, "escalationsOpen": 0}
     return {
         "Total Correspondence": str(total),
         "Total Letters": str(total),
@@ -49,6 +71,8 @@ def _metrics(items: list) -> dict[str, str]:
         "Closed": str(closed),
         "Average Response Time": avg,
         "Closure Rate": closure_rate,
+        "Approval Pending": str(ops["approvalPending"]),
+        "Escalated": str(ops["escalationsOpen"]),
     }
 
 
@@ -71,16 +95,20 @@ def _trend(db: Session) -> list[dict]:
     ]
 
 
-def _alerts(items: list) -> list[dict]:
+def _alerts(items: list, db: Session | None = None) -> list[dict]:
     overdue = sum(1 for item in items if item.status == "Overdue")
     critical = sum(1 for item in items if item.priority == "Urgent" and item.status in PENDING_STATUSES)
     due_today = sum(1 for item in items if item.dueDate == date.today().isoformat() and item.status not in CLOSED_STATUSES)
     long_pending = sum(1 for item in items if item.daysPending >= 7 and item.status not in CLOSED_STATUSES)
+    approval_pending = db.query(Approval).filter(Approval.approval_status == "Pending").count() if db else 0
+    escalations_open = db.query(Escalation).filter(Escalation.status.in_(["Open", "In Progress"])).count() if db else 0
     return [
         {"title": "Overdue correspondence", "count": overdue, "tone": "red"},
         {"title": "Critical pending letters", "count": critical, "tone": "amber"},
         {"title": "Items due today", "count": due_today, "tone": "blue"},
         {"title": "Long-pending correspondence", "count": long_pending, "tone": "violet"},
+        {"title": "Approval pending", "count": approval_pending, "tone": "amber"},
+        {"title": "Open escalations", "count": escalations_open, "tone": "red"},
     ]
 
 
@@ -134,12 +162,12 @@ def _priority_performance(items: list) -> list[dict]:
 @router.get("/dashboard")
 def dashboard(db: Session = Depends(get_db)) -> dict:
     items = _letters(db)
-    metrics = _metrics(items)
+    metrics = _metrics(items, db)
     return {
         "metrics": metrics,
         "dashboardMetrics": _dashboard_cards(metrics),
         "trend": _trend(db),
-        "alerts": _alerts(items),
+        "alerts": _alerts(items, db),
         "departmentPerformance": _department_performance(db, items)[:4],
         "recentActivity": [serialize_audit(row) for row in db.query(AuditRecord).order_by(AuditRecord.created_at.desc()).limit(4)],
     }
@@ -148,7 +176,7 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
 @router.get("/analytics")
 def analytics(db: Session = Depends(get_db)) -> dict:
     items = _letters(db)
-    metrics = _metrics(items)
+    metrics = _metrics(items, db)
     return {
         "metrics": metrics,
         "trend": _trend(db),
@@ -190,7 +218,8 @@ def me(db: Session = Depends(get_db)) -> dict:
 @router.get("/bootstrap")
 def bootstrap(db: Session = Depends(get_db)) -> dict:
     items = _letters(db)
-    metrics = _metrics(items)
+    metrics = _metrics(items, db)
+    ops = _operational_counts(db)
     master: dict[str, list[str]] = {}
     for row in db.query(MasterValue).filter(MasterValue.status == "Active").order_by(MasterValue.id).all():
         master.setdefault(row.category, []).append(row.value)
@@ -201,13 +230,13 @@ def bootstrap(db: Session = Depends(get_db)) -> dict:
         "departments": [serialize_department(db, row) for row in db.query(Department).order_by(Department.id).all()],
         "organizations": [serialize_organization(row) for row in db.query(Organization).order_by(Organization.id).all()],
         "users": [serialize_user(row) for row in db.query(User).order_by(User.id).all()],
-        "notifications": [serialize_notification(row) for row in db.query(Notification).order_by(Notification.created_at.desc()).all()],
+        "notifications": _user_notifications(db, settings["currentUser"]),
         "auditRecords": [serialize_audit(row) for row in db.query(AuditRecord).order_by(AuditRecord.created_at.desc()).all()],
         "masterData": master,
         "trend": _trend(db),
         "metrics": metrics,
         "dashboardMetrics": _dashboard_cards(metrics),
-        "alerts": _alerts(items),
+        "alerts": _alerts(items, db),
         "departmentPerformance": _department_performance(db, items),
         "statusDistribution": _status_distribution(items),
         "priorityPerformance": _priority_performance(items),
@@ -218,5 +247,9 @@ def bootstrap(db: Session = Depends(get_db)) -> dict:
             "department": user.department if user else "",
             "initials": "".join(part[0] for part in settings["currentUser"].replace(".", "").split()[:2]).upper(),
         },
-        "unreadCount": db.query(Notification).filter(Notification.read.is_(False)).count(),
+        "unreadCount": _user_unread_count(db, settings["currentUser"]),
+        "operational": {
+            "approvalPending": ops["approvalPending"],
+            "escalationsOpen": ops["escalationsOpen"],
+        },
     }

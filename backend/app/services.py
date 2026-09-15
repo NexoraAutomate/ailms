@@ -22,8 +22,23 @@ from app.schemas import (
     UserOut,
 )
 
-CLOSED_STATUSES = {"Completed", "Closed"}
-PENDING_STATUSES = {"Registered", "Under Review", "Assigned", "Action in Progress", "Awaiting Response", "Overdue"}
+CLOSED_STATUSES = {"Completed", "Closed", "Archived", "Rejected"}
+PENDING_STATUSES = {
+    "Draft",
+    "Registered",
+    "Under Review",
+    "Assigned",
+    "Action in Progress",
+    "Awaiting Response",
+    "Response Prepared",
+    "Approval Pending",
+    "Response Approved",
+    "Response Sent",
+    "Returned for Revision",
+    "Escalated",
+    "Reopened",
+    "Overdue",
+}
 
 
 def iso(value: date | None) -> str:
@@ -98,6 +113,7 @@ def serialize_letter(letter: Letter) -> LetterOut:
         actionRequired=letter.action_required,
         remarks=letter.remarks,
         completionDate=completion,
+        isArchived=bool(getattr(letter, "is_archived", False)),
     )
 
 
@@ -144,15 +160,9 @@ def serialize_user(user: User) -> UserOut:
 
 
 def serialize_notification(item: Notification) -> NotificationOut:
-    return NotificationOut(
-        id=item.id,
-        title=item.title,
-        description=item.description,
-        time=relative_time(item.created_at),
-        priority=item.priority,
-        read=item.read,
-        letter=str(item.letter_id or ""),
-    )
+    from app.notification_service import serialize_notification_row
+
+    return NotificationOut(**serialize_notification_row(item, relative_time_fn=relative_time))
 
 
 def serialize_audit(item: AuditRecord) -> AuditOut:
@@ -196,14 +206,25 @@ def add_notification(
     description: str,
     priority: str = "Medium",
     letter_id: int | None = None,
+    notification_type: str | None = None,
+    recipient_name: str | None = None,
+    recipient_user_id: int | None = None,
+    related_entity_type: str | None = None,
+    related_entity_id: str | None = None,
 ) -> None:
-    db.add(
-        Notification(
-            title=title,
-            description=description,
-            priority=priority,
-            letter_id=letter_id,
-        )
+    from app.notification_service import create_notification
+
+    create_notification(
+        db,
+        title=title,
+        description=description,
+        priority=priority,
+        letter_id=letter_id,
+        notification_type=notification_type,
+        recipient_name=recipient_name,
+        recipient_user_id=recipient_user_id,
+        related_entity_type=related_entity_type,
+        related_entity_id=related_entity_id,
     )
 
 
@@ -235,3 +256,10 @@ def setting_map(db: Session) -> dict[str, str]:
 
 def current_user_name(db: Session) -> str:
     return setting_map(db)["currentUser"]
+
+
+def resolve_user_role(db: Session, user_name: str) -> str:
+    row = db.query(User).filter(User.name == user_name).one_or_none()
+    if row:
+        return row.role
+    return "Department/User"

@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     frontend_origin: str = "http://localhost:3000"
+    reminder_interval_seconds: int = 3600
+    document_storage_path: str = "storage"
+    max_upload_bytes: int = 25 * 1024 * 1024
 
     @property
     def database_url(self) -> str:

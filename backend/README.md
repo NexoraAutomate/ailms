@@ -25,7 +25,10 @@ POSTGRES_PORT=5432
 POSTGRES_DB=ailms
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your_password
+DOCUMENT_STORAGE_PATH=storage
 ```
+
+Uploaded correspondence files are stored under `DOCUMENT_STORAGE_PATH` (default `backend/storage` when running from the backend folder). Only storage keys are persisted in PostgreSQL — not raw filesystem paths in API responses.
 
 ## Run
 

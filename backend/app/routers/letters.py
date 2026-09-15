@@ -14,6 +14,8 @@ from app.services import (
     current_user_name,
     serialize_letter,
 )
+from app.archive_service import assert_active_letter
+from app.workflow_service import execute_transition
 
 router = APIRouter(prefix="/letters", tags=["letters"])
 
@@ -42,11 +44,17 @@ def list_letters(
     department: str | None = None,
     assigned_to: str | None = None,
     view: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
     date_from: date | None = None,
     date_to: date | None = None,
     db: Session = Depends(get_db),
 ) -> list[LetterOut]:
-    rows = db.query(Letter).order_by(Letter.id.desc()).all()
+    query = db.query(Letter)
+    if view == "archived":
+        query = query.filter(Letter.is_archived.is_(True))
+    elif not include_archived:
+        query = query.filter(Letter.is_archived.is_(False))
+    rows = query.order_by(Letter.id.desc()).all()
     items = [serialize_letter(row) for row in rows]
 
     if view == "incoming":
@@ -59,6 +67,8 @@ def list_letters(
         items = [item for item in items if item.status == "Overdue"]
     elif view == "closed":
         items = [item for item in items if item.status == "Closed"]
+    elif view == "archived":
+        items = [item for item in items if item.isArchived]
     elif view == "mine":
         owner = assigned_to or current_user_name(db)
         items = [item for item in items if item.assignedTo == owner]
@@ -131,10 +141,14 @@ def create_letter(payload: LetterCreate, db: Session = Depends(get_db)) -> Lette
     if letter.assigned_to:
         add_notification(
             db,
-            title="New assignment",
+            title="New Assignment",
             description=f"{letter.subject} assigned to {letter.assigned_to}.",
             priority="High" if letter.priority == "Urgent" else "Medium",
             letter_id=letter.id,
+            notification_type="New Assignment",
+            recipient_name=letter.assigned_to,
+            related_entity_type="letter",
+            related_entity_id=str(letter.id),
         )
     db.commit()
     db.refresh(letter)
@@ -144,6 +158,7 @@ def create_letter(payload: LetterCreate, db: Session = Depends(get_db)) -> Lette
 @router.patch("/{letter_id}", response_model=LetterOut)
 def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(get_db)) -> LetterOut:
     letter = _get_letter(db, letter_id)
+    assert_active_letter(letter)
     data = payload.model_dump(exclude_unset=True, by_alias=False)
     mapping = {
         "letterDate": "letter_date",
@@ -175,6 +190,7 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
 @router.patch("/{letter_id}/status", response_model=LetterOut)
 def update_letter_status(letter_id: int, payload: LetterStatusUpdate, db: Session = Depends(get_db)) -> LetterOut:
     letter = _get_letter(db, letter_id)
+    assert_active_letter(letter)
     _apply_status(letter, payload.status)
     letter.last_action = f"Status changed to {payload.status}"
     add_audit(
@@ -210,31 +226,50 @@ def list_actions(letter_id: int, db: Session = Depends(get_db)) -> list[LetterAc
 @router.post("/{letter_id}/actions", response_model=LetterActionOut, status_code=201)
 def add_action(letter_id: int, payload: LetterActionCreate, db: Session = Depends(get_db)) -> LetterActionOut:
     letter = _get_letter(db, letter_id)
-    action = LetterAction(
-        letter_id=letter.id,
-        action=payload.action,
-        remarks=payload.remarks,
-        created_by=payload.createdBy,
-    )
-    letter.last_action = payload.action
-    if letter.status == "Registered":
-        letter.status = "Action in Progress"
-    db.add(action)
-    add_audit(
-        db,
-        user=payload.createdBy,
-        module="Letters",
-        action="Action Assigned",
-        record=letter.number,
-        description=payload.action,
-    )
+    assert_active_letter(letter)
+    try:
+        execute_transition(
+            db,
+            letter=letter,
+            action="add_action",
+            actor_name=payload.createdBy,
+            remarks=payload.remarks,
+            action_label=payload.action,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 400 and "Workflow transition not allowed" in str(exc.detail):
+            action = LetterAction(
+                letter_id=letter.id,
+                action=payload.action,
+                remarks=payload.remarks,
+                created_by=payload.createdBy,
+            )
+            letter.last_action = payload.action
+            db.add(action)
+            add_audit(
+                db,
+                user=payload.createdBy,
+                module="Letters",
+                action="Action Assigned",
+                record=letter.number,
+                description=payload.action,
+            )
+        else:
+            raise
     db.commit()
-    db.refresh(action)
+    action_row = (
+        db.query(LetterAction)
+        .filter(LetterAction.letter_id == letter_id)
+        .order_by(LetterAction.id.desc())
+        .first()
+    )
+    if not action_row:
+        raise HTTPException(status_code=500, detail="Unable to record action")
     return LetterActionOut(
-        id=action.id,
-        letterId=str(action.letter_id),
-        action=action.action,
-        remarks=action.remarks,
-        createdBy=action.created_by,
-        createdAt=action.created_at,
+        id=action_row.id,
+        letterId=str(action_row.letter_id),
+        action=action_row.action,
+        remarks=action_row.remarks,
+        createdBy=action_row.created_by,
+        createdAt=action_row.created_at,
     )

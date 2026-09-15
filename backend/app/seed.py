@@ -4,9 +4,16 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     AppSetting,
+    Approval,
     AuditRecord,
     Department,
+    Escalation,
     Letter,
+    LetterMeetingLink,
+    LetterRelation,
+    Meeting,
+    MeetingAction,
+    MeetingParticipant,
     MasterValue,
     MonthlyTrend,
     Notification,
@@ -19,17 +26,38 @@ MASTER_DATA = {
     "Letter Types": ["Incoming", "Outgoing", "Internal Memo"],
     "Priorities": ["Routine", "Important", "Urgent"],
     "Statuses": [
+        "Draft",
         "Registered",
         "Under Review",
         "Assigned",
         "Action in Progress",
         "Awaiting Response",
+        "Response Prepared",
+        "Approval Pending",
+        "Response Approved",
+        "Response Sent",
         "Completed",
         "Closed",
+        "Rejected",
+        "Returned for Revision",
+        "Escalated",
+        "Reopened",
+        "Archived",
         "Overdue",
     ],
     "Confidentiality Levels": ["Normal", "Confidential", "Restricted"],
     "Action Types": ["Review", "Prepare response", "Forward", "Approve", "Archive"],
+    "Document Types": [
+        "Original Letter",
+        "Scanned Letter",
+        "Draft Response",
+        "Final Response",
+        "Supporting Document",
+        "Technical Document",
+        "Financial Document",
+        "Reference Document",
+        "Other",
+    ],
     "Organization Types": [
         "Government",
         "Defence",
@@ -147,3 +175,105 @@ def seed_if_empty(db: Session) -> None:
         ]
     )
     db.commit()
+
+
+def ensure_phase4b_samples(db: Session) -> None:
+    """Light sample data when tables exist but are empty (non-destructive)."""
+    if db.query(Approval).count() == 0:
+        letter = db.query(Letter).filter(Letter.number == "SUPARCO/ADM/26/118").first()
+        if letter:
+            db.add(
+                Approval(
+                    letter_id=letter.id,
+                    prepared_by="S. Khan",
+                    reviewer="A. Rahman",
+                    approval_status="Pending",
+                    revision_number=1,
+                )
+            )
+
+    if db.query(Escalation).count() == 0:
+        letter = db.query(Letter).filter(Letter.status == "Overdue").first()
+        if letter:
+            db.add(
+                Escalation(
+                    letter_id=letter.id,
+                    escalation_level="Level 2",
+                    escalated_by="S. Khan",
+                    escalated_to="A. Rahman",
+                    reason="Overdue technical review requires management attention.",
+                    escalation_date=date(2026, 9, 13),
+                    target_resolution_date=date(2026, 9, 15),
+                    status="Open",
+                )
+            )
+
+
+def ensure_phase4d_samples(db: Session) -> None:
+    if db.query(Meeting).count() == 0:
+        meeting = Meeting(
+            title="Quarterly security coordination meeting",
+            meeting_date=date(2026, 9, 17),
+            start_time="10:00",
+            end_time="11:30",
+            location="Conference Room A",
+            chairperson="A. Rahman",
+            agenda="Review pending security correspondence and department actions.",
+            status="Scheduled",
+            created_by="A. Rahman",
+        )
+        db.add(meeting)
+        db.flush()
+        db.add(MeetingParticipant(meeting_id=meeting.id, participant_name="A. Rahman", department="Coordination"))
+        db.add(MeetingParticipant(meeting_id=meeting.id, participant_name="S. Khan", department="Technical"))
+        letter = db.query(Letter).filter(Letter.number == "MOD/SEC/2026/0412").first()
+        if letter:
+            db.add(LetterMeetingLink(meeting_id=meeting.id, letter_id=letter.id, linked_by="A. Rahman"))
+        db.add(
+            MeetingAction(
+                meeting_id=meeting.id,
+                action_description="Circulate updated security checklist to all departments",
+                responsible_person="S. Khan",
+                department="Technical",
+                priority="Important",
+                due_date=date(2026, 9, 20),
+                status="Open",
+            )
+        )
+
+    if db.query(LetterRelation).count() == 0:
+        primary = db.query(Letter).filter(Letter.number == "MOD/SEC/2026/0412").first()
+        related = db.query(Letter).filter(Letter.number == "OUT/OPS/2026/089").first()
+        if primary and related:
+            db.add(
+                LetterRelation(
+                    from_letter_id=primary.id,
+                    to_letter_id=related.id,
+                    relationship_type="Related",
+                    created_by="A. Rahman",
+                    remarks="Linked during coordination review",
+                )
+            )
+
+
+def ensure_master_document_types(db: Session) -> None:
+    desired = MASTER_DATA.get("Document Types", [])
+    existing = {
+        row.value
+        for row in db.query(MasterValue).filter(MasterValue.category == "Document Types").all()
+    }
+    for value in desired:
+        if value not in existing:
+            db.add(MasterValue(category="Document Types", value=value))
+
+
+def ensure_master_statuses(db: Session) -> None:
+    """Add Phase 4 workflow statuses to existing databases without re-seeding letters."""
+    desired = MASTER_DATA["Statuses"]
+    existing = {
+        row.value
+        for row in db.query(MasterValue).filter(MasterValue.category == "Statuses").all()
+    }
+    for value in desired:
+        if value not in existing:
+            db.add(MasterValue(category="Statuses", value=value))

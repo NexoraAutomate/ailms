@@ -5,7 +5,23 @@ export type Department = { code: string; name: string; head: string; users: numb
 export type Organization = { name: string; short: string; type: string; contact: string; email: string; phone: string; status: string }
 export type AppUser = { name: string; username: string; department: string; role: string; email: string; status: string; activity: string }
 export type AuditRecord = { date: string; user: string; module: string; action: string; record: string; description: string; source: string }
-export type AppNotification = { id: number; title: string; description: string; time: string; priority: string; read: boolean; letter: string }
+export type AppNotification = {
+  id: number
+  title: string
+  description: string
+  time: string
+  priority: string
+  read: boolean
+  letter: string
+  notificationType?: string
+  recipientName?: string
+  relatedEntityType?: string
+  relatedEntityId?: string
+  readAt?: string
+  navigateTo?: string
+  navigateLabel?: string
+  createdAt?: string
+}
 export type AlertItem = { title: string; count: number; tone: string }
 export type DepartmentStat = { name: string; assigned: number; pending: number; completed: number; overdue: number }
 export type StatusSlice = { name: string; value: number; tone: string }
@@ -53,13 +69,7 @@ export async function createMasterValue(category: string, value: string) {
   return api.post('/api/master-data', { category, value })
 }
 
-export async function markNotificationRead(id: number) {
-  return api.patch<AppNotification>(`/api/notifications/${id}/read`)
-}
-
-export async function markAllNotificationsRead() {
-  return api.post<AppNotification[]>('/api/notifications/mark-all-read')
-}
+export { fetchNotifications, fetchNotificationSummary, fetchNotificationTypes, markAllNotificationsRead, markNotificationRead, openNotificationTarget } from '@/services/notifications'
 
 export async function saveSettings(input: Partial<AppSettings>) {
   return api.put<AppSettings>('/api/settings', input)

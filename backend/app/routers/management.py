@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -12,6 +12,7 @@ from app.schemas import (
     MasterValueIn,
     MasterValueOut,
     NotificationOut,
+    NotificationSummaryOut,
     OrganizationIn,
     OrganizationOut,
     SettingsIn,
@@ -111,11 +112,42 @@ def create_user(payload: UserIn, db: Session = Depends(get_db)) -> UserOut:
     return serialize_user(row)
 
 
+@notifications_router.get("/types")
+def notification_types() -> dict:
+    from app.notification_service import NOTIFICATION_TYPES
+
+    return {"types": NOTIFICATION_TYPES}
+
+
+@notifications_router.get("/summary", response_model=NotificationSummaryOut)
+def notification_summary(db: Session = Depends(get_db)) -> NotificationSummaryOut:
+    from app.notification_service import notifications_for_user_query
+
+    rows = notifications_for_user_query(db, current_user_name(db)).all()
+    by_type: dict[str, int] = {}
+    unread = 0
+    for row in rows:
+        if row.read:
+            continue
+        unread += 1
+        key = row.notification_type or "System Notification"
+        by_type[key] = by_type.get(key, 0) + 1
+    return NotificationSummaryOut(total=len(rows), unread=unread, byType=by_type)
+
+
 @notifications_router.get("", response_model=list[NotificationOut])
-def list_notifications(unread: bool = False, db: Session = Depends(get_db)) -> list[NotificationOut]:
-    query = db.query(Notification).order_by(Notification.created_at.desc())
+def list_notifications(
+    unread: bool = False,
+    notification_type: str | None = Query(default=None, alias="notificationType"),
+    db: Session = Depends(get_db),
+) -> list[NotificationOut]:
+    from app.notification_service import notifications_for_user_query
+
+    query = notifications_for_user_query(db, current_user_name(db)).order_by(Notification.created_at.desc())
     if unread:
         query = query.filter(Notification.read.is_(False))
+    if notification_type:
+        query = query.filter(Notification.notification_type == notification_type)
     return [serialize_notification(row) for row in query.all()]
 
 
@@ -124,7 +156,9 @@ def mark_notification_read(notification_id: int, db: Session = Depends(get_db)) 
     row = db.get(Notification, notification_id)
     if not row:
         raise HTTPException(status_code=404, detail="Notification not found")
-    row.read = True
+    from app.notification_service import mark_read
+
+    mark_read(row)
     db.commit()
     db.refresh(row)
     return serialize_notification(row)
@@ -132,9 +166,16 @@ def mark_notification_read(notification_id: int, db: Session = Depends(get_db)) 
 
 @notifications_router.post("/mark-all-read", response_model=list[NotificationOut])
 def mark_all_read(db: Session = Depends(get_db)) -> list[NotificationOut]:
-    db.query(Notification).filter(Notification.read.is_(False)).update({"read": True})
+    from app.notification_service import mark_read, notifications_for_user_query
+
+    rows = notifications_for_user_query(db, current_user_name(db)).filter(Notification.read.is_(False)).all()
+    for row in rows:
+        mark_read(row)
     db.commit()
-    return [serialize_notification(row) for row in db.query(Notification).order_by(Notification.created_at.desc()).all()]
+    return [
+        serialize_notification(row)
+        for row in notifications_for_user_query(db, current_user_name(db)).order_by(Notification.created_at.desc()).all()
+    ]
 
 
 @audit_router.get("", response_model=list[AuditOut])

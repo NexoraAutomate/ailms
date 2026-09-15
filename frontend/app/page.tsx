@@ -7,6 +7,7 @@ import {
   Bell,
   BriefcaseBusiness,
   Building2,
+  Calendar,
   CalendarClock,
   Check,
   CheckCircle2,
@@ -31,6 +32,7 @@ import {
   Sparkles,
   Table2,
   Tags,
+  Upload,
   Users,
   X,
 } from 'lucide-react'
@@ -40,6 +42,45 @@ import { AIAssistant, AIManagementInsights, AISearchBanner, AIInsightsPage, Lett
 import { Button } from '@/components/ui/button'
 import { looksLikeNaturalQuery, naturalLanguageSearch, type InterpretedQuery } from '@/services/ai'
 import { priorityTone, statusTone, type Letter, type LetterStatus } from '@/services/letters'
+import {
+  executeWorkflow,
+  fetchWorkflowActions,
+  fetchWorkflowHistory,
+  workflowActionLabel,
+  type WorkflowTransition,
+} from '@/services/workflow'
+import { getCurrentApproval, listApprovals, type Approval } from '@/services/approvals'
+import { listEscalations, resolveEscalation, type Escalation } from '@/services/escalations'
+import {
+  documentDownloadUrl,
+  documentPreviewUrl,
+  formatFileSize,
+  listDocumentVersions,
+  listLetterDocuments,
+  uploadDocumentVersion,
+  uploadLetterDocument,
+  type DocumentVersion,
+  type LetterDocument,
+} from '@/services/documents'
+import { createRelation, fetchCorrespondenceThread, listRelationTypes, type CorrespondenceThread } from '@/services/correspondence'
+import {
+  addMeetingAction,
+  createMeeting,
+  getMeeting,
+  linkMeetingLetter,
+  listMeetings,
+  updateMeetingAction,
+  type Meeting,
+} from '@/services/meetings'
+import {
+  archiveLetters,
+  confirmLetterImport,
+  downloadExport,
+  restoreLetters,
+  runBulkOperation,
+  validateLetterImport,
+  type ImportJobResult,
+} from '@/services/data-operations'
 
 const toneClasses: Record<string, string> = {
   slate: 'bg-slate-100 text-slate-700',
@@ -52,8 +93,9 @@ const toneClasses: Record<string, string> = {
 }
 
 const groups = [
-  { label: 'Workspace', items: [['Dashboard', LayoutDashboard], ['All Letters', Table2], ['Incoming', Inbox], ['Outgoing', ChevronRight], ['Pending', ClipboardList], ['Overdue', CircleAlert], ['Closed', CheckCircle2], ['Register Letter', FilePlus2], ['My Actions', CalendarClock], ['Monitoring', SlidersHorizontal]] as const },
+  { label: 'Workspace', items: [['Dashboard', LayoutDashboard], ['All Letters', Table2], ['Incoming', Inbox], ['Outgoing', ChevronRight], ['Pending', ClipboardList], ['Overdue', CircleAlert], ['Closed', CheckCircle2], ['Archive', BriefcaseBusiness], ['Register Letter', FilePlus2], ['My Actions', CalendarClock], ['Monitoring', SlidersHorizontal]] as const },
   { label: 'AI Intelligence', items: [['AI Assistant', Sparkles], ['Letter Analysis', LineChart], ['AI Insights', Lightbulb]] as const },
+  { label: 'Operations', items: [['Meetings', Calendar], ['Import Center', Upload], ['Export Center', Download]] as const },
   { label: 'Management', items: [['Analytics', BarChart3], ['Reports', FileText]] as const },
   { label: 'Administration', items: [['Departments', Building2], ['Organizations', Building2], ['Users & Roles', Users], ['Master Data', Tags], ['Audit Log', ShieldCheck]] as const },
   { label: 'System', items: [['Notifications', Bell], ['Settings', Settings2]] as const },
@@ -181,7 +223,22 @@ function Kpi({ label, icon, onClick, value }: { label: string; icon: React.React
   )
 }
 
-function LetterTable({ data, onOpen }: { data: Letter[]; onOpen: (id: string) => void }) {
+function LetterTable({
+  data,
+  onOpen,
+  selectable,
+  selectedIds,
+  onToggle,
+  onToggleAll,
+}: {
+  data: Letter[]
+  onOpen: (id: string) => void
+  selectable?: boolean
+  selectedIds?: Set<string>
+  onToggle?: (id: string) => void
+  onToggleAll?: (checked: boolean) => void
+}) {
+  const allSelected = selectable && data.length > 0 && data.every((l) => selectedIds?.has(l.id))
   return (
     <Card>
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
@@ -197,11 +254,23 @@ function LetterTable({ data, onOpen }: { data: Letter[]; onOpen: (id: string) =>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[850px] text-left">
           <thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-400">
-            <tr>{['Letter no.', 'Subject / source', 'Department', 'Priority', 'Status', 'Due date', 'Assigned to', ''].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}</tr>
+            <tr>
+              {selectable && (
+                <th className="px-4 py-3">
+                  <input type="checkbox" checked={!!allSelected} onChange={(e) => onToggleAll?.(e.target.checked)} aria-label="Select all" />
+                </th>
+              )}
+              {['Letter no.', 'Subject / source', 'Department', 'Priority', 'Status', 'Due date', 'Assigned to', ''].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}
+            </tr>
           </thead>
           <tbody>
             {data.map((l) => (
               <tr key={l.id} className="border-t border-slate-100 hover:bg-slate-50">
+                {selectable && (
+                  <td className="px-4 py-3">
+                    <input type="checkbox" checked={selectedIds?.has(l.id) ?? false} onChange={() => onToggle?.(l.id)} aria-label={`Select ${l.number}`} />
+                  </td>
+                )}
                 <td className="px-4 py-3">
                   <button onClick={() => onOpen(l.id)} className="text-left text-xs font-bold text-[#1769aa] hover:underline">{l.number}</button>
                   <p className="mt-1 text-[11px] text-slate-400">{l.letterDate}</p>
@@ -563,32 +632,85 @@ function ManagementTable({ title, description, headers, rows, onAdd, addTitle, a
 }
 
 function Notifications({ go }: { go: (p: string) => void }) {
-  const { notifications, readNotification, readAllNotifications } = useAppData()
+  const { readNotification, readAllNotifications, refresh } = useAppData()
   const [view, setView] = useState<'all' | 'unread'>('all')
-  const visible = notifications.filter((n) => view === 'all' || !n.read)
+  const [typeFilter, setTypeFilter] = useState('All')
+  const [types, setTypes] = useState<string[]>([])
+  const [items, setItems] = useState<import('@/services/management').AppNotification[]>([])
+  const [summary, setSummary] = useState<{ unread: number }>({ unread: 0 })
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const { fetchNotificationSummary, fetchNotificationTypes, fetchNotifications } = await import('@/services/notifications')
+      const [typeList, rows, stats] = await Promise.all([
+        fetchNotificationTypes(),
+        fetchNotifications({
+          unread: view === 'unread',
+          notificationType: typeFilter === 'All' ? undefined : typeFilter,
+        }),
+        fetchNotificationSummary(),
+      ])
+      setTypes(typeList.types)
+      setItems(rows)
+      setSummary(stats)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [view, typeFilter])
+
+  const openTarget = async (n: import('@/services/management').AppNotification) => {
+    const { openNotificationTarget } = await import('@/services/notifications')
+    if (!n.read) {
+      await readNotification(n.id)
+      await refresh()
+    }
+    openNotificationTarget(go, n)
+    await load()
+  }
+
   return (
     <>
-      <PageTitle title="Notifications" description="Stay informed about assignments, deadlines and correspondence updates." action={<Button variant="outline" onClick={() => readAllNotifications()}><Check data-icon="inline-start" />Mark all as read</Button>} />
-      <div className="mb-4 flex gap-2">
+      <PageTitle
+        title="Notifications"
+        description={`Stay informed about assignments, deadlines and correspondence updates.${summary.unread ? ` ${summary.unread} unread.` : ''}`}
+        action={<Button variant="outline" onClick={async () => { await readAllNotifications(); await refresh(); await load() }}><Check data-icon="inline-start" />Mark all as read</Button>}
+      />
+      <div className="mb-4 flex flex-wrap gap-2">
         <Button size="sm" variant={view === 'all' ? 'default' : 'outline'} onClick={() => setView('all')}>All notifications</Button>
         <Button size="sm" variant={view === 'unread' ? 'default' : 'outline'} onClick={() => setView('unread')}>Unread only</Button>
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-xs">
+          <option>All</option>
+          {types.map((t) => <option key={t}>{t}</option>)}
+        </select>
       </div>
       <Card>
-        {visible.length === 0 ? <div className="p-8 text-center text-sm text-slate-500">You&apos;re all caught up.</div> : visible.map((n) => (
+        {loading && <div className="p-8 text-center text-sm text-slate-500">Loading notifications…</div>}
+        {!loading && items.length === 0 ? <div className="p-8 text-center text-sm text-slate-500">You&apos;re all caught up.</div> : items.map((n) => (
           <div className={`flex gap-4 border-b border-slate-100 p-5 last:border-0 ${!n.read ? 'bg-blue-50/40' : ''}`} key={n.id}>
             <div className={`mt-1 flex size-8 shrink-0 items-center justify-center rounded-full ${n.priority === 'Critical' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-[#1769aa]'}`}><Bell className="size-4" /></div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-sm font-bold text-slate-700">{n.title}</h2>
+                {n.notificationType && <Badge tone="indigo">{n.notificationType}</Badge>}
                 <Badge tone={n.priority === 'Critical' ? 'red' : n.priority === 'High' ? 'amber' : 'slate'}>{n.priority}</Badge>
                 {!n.read && <Badge tone="blue">Unread</Badge>}
               </div>
               <p className="mt-1 text-xs text-slate-500">{n.description}</p>
-              <p className="mt-2 text-[11px] text-slate-400">{n.time}</p>
+              <p className="mt-2 text-[11px] text-slate-400">{n.time}{n.recipientName ? ` · For ${n.recipientName}` : ''}</p>
             </div>
             <div className="flex gap-2">
-              {n.letter && <Button size="sm" variant="outline" onClick={() => go(n.letter)}>Open letter</Button>}
-              {!n.read && <Button size="sm" variant="ghost" onClick={() => readNotification(n.id)}>Mark read</Button>}
+              {(n.navigateTo || n.letter) && (
+                <Button size="sm" variant="outline" onClick={() => void openTarget(n)}>
+                  {n.navigateLabel || 'Open record'}
+                </Button>
+              )}
+              {!n.read && <Button size="sm" variant="ghost" onClick={async () => { await readNotification(n.id); await refresh(); await load() }}>Mark read</Button>}
             </div>
           </div>
         ))}
@@ -666,8 +788,629 @@ function MasterData() {
   )
 }
 
+function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users: { name: string }[]; onDone: () => Promise<void> }) {
+  const [actions, setActions] = useState<string[]>([])
+  const [history, setHistory] = useState<WorkflowTransition[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [dialog, setDialog] = useState<{ action: string } | null>(null)
+  const [remarks, setRemarks] = useState('')
+  const [assignedTo, setAssignedTo] = useState(letter.assignedTo || '')
+
+  const load = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const [available, transitions] = await Promise.all([fetchWorkflowActions(letter.id), fetchWorkflowHistory(letter.id)])
+      setActions(available.actions)
+      setHistory(transitions)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load workflow')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [letter.id])
+
+  const needsAssign = (action: string) => action === 'assign' || action === 'reassign' || action === 'submit_for_approval'
+  const needsEscalation = (action: string) => action === 'escalate'
+  const needsRemarks = (action: string) => ['approve', 'reject', 'return_for_revision', 'escalate'].includes(action)
+  const [escalationLevel, setEscalationLevel] = useState('Level 1')
+
+  const run = async (action: string) => {
+    if (needsAssign(action) && !assignedTo.trim()) {
+      setError('Select an assignee before continuing.')
+      return
+    }
+    if (needsRemarks(action) && !remarks.trim()) {
+      setError('Remarks are required for this action.')
+      return
+    }
+    setError('')
+    await executeWorkflow(letter.id, {
+      action,
+      remarks,
+      assignedTo: needsAssign(action) ? assignedTo : undefined,
+      reviewerName: action === 'submit_for_approval' ? assignedTo : undefined,
+      escalatedTo: needsEscalation(action) ? assignedTo : undefined,
+      escalationLevel: needsEscalation(action) ? escalationLevel : undefined,
+    })
+    setDialog(null)
+    setRemarks('')
+    await onDone()
+    await load()
+  }
+
+  return (
+    <Card className="mt-5 p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-bold text-slate-700">Workflow</h2>
+          <p className="text-xs text-slate-400">Authorized transitions from the current status.</p>
+        </div>
+        <Badge tone={statusTone(letter.status as LetterStatus)}>{letter.status}</Badge>
+      </div>
+      {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
+      {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
+      {!loading && actions.length === 0 && <p className="text-xs text-slate-500">No workflow actions are available for this status.</p>}
+      <div className="flex flex-wrap gap-2">
+        {actions.map((action) => (
+          <Button
+            key={action}
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setRemarks('')
+              setAssignedTo(letter.assignedTo || '')
+              if (needsAssign(action) || needsRemarks(action) || needsEscalation(action)) setDialog({ action })
+              else void run(action)
+            }}
+          >
+            {workflowActionLabel(action)}
+          </Button>
+        ))}
+      </div>
+      {history.length > 0 && (
+        <div className="mt-6">
+          <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Transition history</h3>
+          <div className="flex flex-col gap-2">
+            {history.slice(0, 8).map((item) => (
+              <div key={item.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                <p className="font-semibold text-slate-700">{workflowActionLabel(item.action)} · {item.fromStatus} → {item.toStatus}</p>
+                <p className="text-slate-500">{item.performedBy} · {new Date(item.createdAt).toLocaleString()}</p>
+                {item.remarks && <p className="mt-1 text-slate-600">{item.remarks}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {dialog && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/30 p-4">
+          <Card className="w-full max-w-lg p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-bold text-slate-700">{workflowActionLabel(dialog.action)}</h2>
+              <button onClick={() => setDialog(null)}><X className="size-4 text-slate-400" /></button>
+            </div>
+            {(needsAssign(dialog.action) || needsEscalation(dialog.action)) && (
+              <label className="mb-3 flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-600">{needsEscalation(dialog.action) ? 'Escalate to' : dialog.action === 'submit_for_approval' ? 'Reviewer' : 'Assign to'}</span>
+                <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                  <option value="">Select…</option>
+                  {users.map((user) => <option key={user.name} value={user.name}>{user.name}</option>)}
+                </select>
+              </label>
+            )}
+            {needsEscalation(dialog.action) && (
+              <label className="mb-3 flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-600">Escalation level</span>
+                <select value={escalationLevel} onChange={(e) => setEscalationLevel(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                  {['Level 1', 'Level 2', 'Level 3'].map((level) => <option key={level}>{level}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-semibold text-slate-600">{needsRemarks(dialog.action) ? 'Remarks *' : 'Remarks'}</span>
+              <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-24 rounded-md border border-slate-200 px-3 py-2 text-xs" />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDialog(null)}>Cancel</Button>
+              <Button onClick={() => void run(dialog.action)}>{workflowActionLabel(dialog.action)}</Button>
+            </div>
+          </Card>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function ApprovalEscalationPanel({ letter, onDone }: { letter: Letter; onDone: () => Promise<void> }) {
+  const [approval, setApproval] = useState<Approval | null>(null)
+  const [history, setHistory] = useState<Approval[]>([])
+  const [escalations, setEscalations] = useState<Escalation[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const [current, approvals, esc] = await Promise.all([
+        getCurrentApproval(letter.id),
+        listApprovals(letter.id),
+        listEscalations(letter.id),
+      ])
+      setApproval(current)
+      setHistory(approvals)
+      setEscalations(esc)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load approval/escalation data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [letter.id])
+
+  return (
+    <div className="mt-5 grid gap-5 lg:grid-cols-2">
+      <Card className="p-5">
+        <h2 className="mb-3 text-sm font-bold text-slate-700">Approval tracking</h2>
+        {loading && <p className="text-xs text-slate-500">Loading…</p>}
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        {!loading && !approval && <p className="text-xs text-slate-500">No approval record for this letter yet.</p>}
+        {approval && (
+          <div className="space-y-2 text-xs">
+            <p><span className="text-slate-400">Status:</span> <Badge tone={approval.approvalStatus === 'Pending' ? 'amber' : approval.approvalStatus === 'Approved' ? 'green' : 'red'}>{approval.approvalStatus}</Badge></p>
+            <p><span className="text-slate-400">Prepared by:</span> {approval.preparedBy}</p>
+            <p><span className="text-slate-400">Reviewer:</span> {approval.reviewer || '—'}</p>
+            <p><span className="text-slate-400">Revision:</span> {approval.revisionNumber}</p>
+            {approval.reviewerRemarks && <p className="text-slate-600">{approval.reviewerRemarks}</p>}
+          </div>
+        )}
+        {history.length > 1 && (
+          <p className="mt-3 text-[11px] text-slate-400">{history.length} approval revision(s) on file.</p>
+        )}
+      </Card>
+      <Card className="p-5">
+        <h2 className="mb-3 text-sm font-bold text-slate-700">Escalations</h2>
+        {loading && <p className="text-xs text-slate-500">Loading…</p>}
+        {!loading && escalations.length === 0 && <p className="text-xs text-slate-500">No escalations recorded.</p>}
+        <div className="flex flex-col gap-2">
+          {escalations.slice(0, 5).map((item) => (
+            <div key={item.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+              <p className="font-semibold text-slate-700">{item.escalationLevel} · {item.status}</p>
+              <p className="text-slate-500">{item.escalatedBy} → {item.escalatedTo}</p>
+              <p className="text-slate-600">{item.reason}</p>
+              {item.status === 'Open' && (
+                <Button size="sm" variant="outline" className="mt-2" onClick={async () => { await resolveEscalation(item.id, 'Resolved from letter detail'); await onDone(); await load() }}>Mark resolved</Button>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: (p: string) => void }) {
+  const { letters } = useAppData()
+  const [thread, setThread] = useState<CorrespondenceThread | null>(null)
+  const [types, setTypes] = useState<string[]>([])
+  const [toLetterId, setToLetterId] = useState('')
+  const [relationshipType, setRelationshipType] = useState('Related')
+  const [remarks, setRemarks] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const [t, relTypes] = await Promise.all([fetchCorrespondenceThread(letter.id), listRelationTypes()])
+      setThread(t)
+      setTypes(relTypes.types)
+      if (relTypes.types.length) setRelationshipType(relTypes.types[0])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load correspondence thread')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [letter.id])
+
+  const addLink = async () => {
+    if (!toLetterId) return
+    setError('')
+    try {
+      await createRelation({
+        fromLetterId: Number(letter.id),
+        toLetterId: Number(toLetterId),
+        relationshipType,
+        remarks,
+      })
+      setRemarks('')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create relationship')
+    }
+  }
+
+  return (
+    <Card className="mt-5 p-5">
+      <h2 className="mb-3 text-sm font-bold text-slate-700">Correspondence thread</h2>
+      {loading && <p className="text-xs text-slate-500">Loading thread…</p>}
+      {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
+      {!loading && thread && (
+        <div className="space-y-2">
+          {thread.nodes.map((node) => (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => go(node.id)}
+              className={`w-full rounded-md border px-3 py-2 text-left text-xs ${node.id === letter.id ? 'border-[#1769aa] bg-blue-50' : 'border-slate-100 bg-slate-50 hover:bg-white'}`}
+            >
+              <p className="font-semibold text-slate-700">{node.number} · {node.subject}</p>
+              <p className="text-slate-500">{node.letterDate} · {node.type} · {node.status}</p>
+              <p className="text-slate-400">{node.from} → {node.to} · {node.actionStatus}</p>
+            </button>
+          ))}
+          {thread.nodes.length <= 1 && <p className="text-xs text-slate-500">No linked correspondence yet.</p>}
+        </div>
+      )}
+      <div className="mt-4 grid gap-2 border-t border-slate-100 pt-4 sm:grid-cols-3">
+        <select value={toLetterId} onChange={(e) => setToLetterId(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs sm:col-span-1">
+          <option value="">Link to letter…</option>
+          {letters.filter((l) => l.id !== letter.id).map((l) => <option key={l.id} value={l.id}>{l.number}</option>)}
+        </select>
+        <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+          {types.map((t) => <option key={t}>{t}</option>)}
+        </select>
+        <Button size="sm" onClick={() => void addLink()}>Add relationship</Button>
+        <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Remarks (optional)" className="h-10 rounded-md border border-slate-200 px-3 text-xs sm:col-span-3" />
+      </div>
+    </Card>
+  )
+}
+
+function RelatedMeetingsPanel({ letter, go }: { letter: Letter; go: (p: string) => void }) {
+  const [meetings, setMeetings] = useState<Meeting[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    listMeetings({ letterId: letter.id })
+      .then(setMeetings)
+      .finally(() => setLoading(false))
+  }, [letter.id])
+
+  return (
+    <Card className="mt-5 p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-bold text-slate-700">Related meetings</h2>
+        <Button size="sm" variant="outline" onClick={() => go('Meetings')}>All meetings</Button>
+      </div>
+      {loading && <p className="text-xs text-slate-500">Loading…</p>}
+      {!loading && meetings.length === 0 && <p className="text-xs text-slate-500">No meetings linked to this letter.</p>}
+      <div className="flex flex-col gap-2">
+        {meetings.map((m) => (
+          <button key={m.id} type="button" onClick={() => go(`meeting:${m.id}`)} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs hover:bg-white">
+            <p className="font-semibold text-slate-700">{m.title}</p>
+            <p className="text-slate-500">{m.date} · {m.startTime}–{m.endTime} · {m.status}</p>
+          </button>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+function MeetingsPage({ go }: { go: (p: string) => void }) {
+  const { users } = useAppData()
+  const [meetings, setMeetings] = useState<Meeting[]>([])
+  const [loading, setLoading] = useState(true)
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState({ title: '', date: '', location: '', chairperson: users[0]?.name ?? '', agenda: '' })
+
+  const load = () => listMeetings().then(setMeetings).finally(() => setLoading(false))
+  useEffect(() => { void load() }, [])
+
+  return (
+    <>
+      <PageTitle title="Meetings" description="Schedule meetings, link correspondence, and track meeting actions." action={<Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" />New meeting</Button>} />
+      {loading && <p className="text-sm text-slate-500">Loading meetings…</p>}
+      <Card>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left">
+            <thead className="bg-slate-50 text-[10px] uppercase text-slate-400">
+              <tr>{['Title', 'Date', 'Time', 'Location', 'Status', 'Actions'].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {meetings.map((m) => (
+                <tr key={m.id} className="border-t border-slate-100 text-xs">
+                  <td className="px-4 py-3 font-semibold text-[#1769aa]"><button onClick={() => go(`meeting:${m.id}`)}>{m.title}</button></td>
+                  <td className="px-4 py-3">{m.date}</td>
+                  <td className="px-4 py-3">{m.startTime}–{m.endTime}</td>
+                  <td className="px-4 py-3">{m.location || '—'}</td>
+                  <td className="px-4 py-3"><Badge tone="blue">{m.status}</Badge></td>
+                  <td className="px-4 py-3">{m.actions.length} action(s)</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      {open && (
+        <FormDialog
+          title="Create meeting"
+          fields={[
+            { name: 'title', label: 'Title', required: true },
+            { name: 'date', label: 'Date (YYYY-MM-DD)', required: true },
+            { name: 'location', label: 'Location' },
+            { name: 'chairperson', label: 'Chairperson' },
+            { name: 'agenda', label: 'Agenda' },
+          ]}
+          onClose={() => setOpen(false)}
+          onSubmit={async (values) => {
+            await createMeeting({
+              title: values.title,
+              date: values.date,
+              location: values.location,
+              chairperson: values.chairperson || form.chairperson,
+              agenda: values.agenda,
+              participants: values.chairperson ? [{ name: values.chairperson }] : [],
+            })
+            setOpen(false)
+            await load()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function MeetingDetailPage({ id, go, letters }: { id: string; go: (p: string) => void; letters: Letter[] }) {
+  const [meeting, setMeeting] = useState<Meeting | null>(null)
+  const [linkLetterId, setLinkLetterId] = useState('')
+  const [actionText, setActionText] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      setMeeting(await getMeeting(id))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [id])
+
+  if (loading) return <p className="text-sm text-slate-500">Loading meeting…</p>
+  if (!meeting) return <p className="text-sm text-slate-500">Meeting not found.</p>
+
+  return (
+    <>
+      <button type="button" onClick={() => go('Meetings')} className="mb-4 text-xs font-semibold text-[#1769aa]">← Back to meetings</button>
+      <PageTitle title={meeting.title} description={`${meeting.date} · ${meeting.startTime}–${meeting.endTime} · ${meeting.location || 'No location'}`} />
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card className="p-5 text-xs">
+          <p className="mb-2"><span className="text-slate-400">Chairperson:</span> {meeting.chairperson || '—'}</p>
+          <p className="mb-2"><span className="text-slate-400">Agenda:</span> {meeting.agenda || '—'}</p>
+          <p><span className="text-slate-400">Participants:</span> {meeting.participants.map((p) => p.name).join(', ') || '—'}</p>
+        </Card>
+        <Card className="p-5 text-xs">
+          <h3 className="mb-2 font-bold text-slate-700">Linked letters</h3>
+          {meeting.letterIds.length === 0 && <p className="text-slate-500">No letters linked.</p>}
+          {meeting.letterIds.map((lid) => {
+            const letter = letters.find((l) => l.id === lid)
+            return (
+              <button key={lid} type="button" className="mb-1 block text-[#1769aa]" onClick={() => go(lid)}>
+                {letter?.number ?? lid} · {letter?.subject ?? ''}
+              </button>
+            )
+          })}
+          <div className="mt-3 flex gap-2">
+            <select value={linkLetterId} onChange={(e) => setLinkLetterId(e.target.value)} className="h-9 flex-1 rounded-md border border-slate-200 px-2">
+              <option value="">Link letter…</option>
+              {letters.map((l) => <option key={l.id} value={l.id}>{l.number}</option>)}
+            </select>
+            <Button size="sm" onClick={async () => { if (!linkLetterId) return; await linkMeetingLetter(id, linkLetterId); setLinkLetterId(''); await load() }}>Link</Button>
+          </div>
+        </Card>
+      </div>
+      <Card className="mt-5 p-5">
+        <h3 className="mb-3 text-sm font-bold text-slate-700">Meeting actions</h3>
+        <div className="mb-3 flex gap-2">
+          <input value={actionText} onChange={(e) => setActionText(e.target.value)} placeholder="Action description" className="h-10 flex-1 rounded-md border border-slate-200 px-3 text-xs" />
+          <Button size="sm" onClick={async () => {
+            if (!actionText.trim()) return
+            await addMeetingAction(id, { actionDescription: actionText.trim(), status: 'Open' })
+            setActionText('')
+            await load()
+          }}>Add action</Button>
+        </div>
+        {meeting.actions.map((action) => (
+          <div key={action.id} className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+            <div>
+              <p className="font-semibold">{action.actionDescription}</p>
+              <p className="text-slate-500">{action.status} · {action.dueDate || 'No due date'}</p>
+            </div>
+            {action.status !== 'Completed' && (
+              <Button size="sm" variant="outline" onClick={async () => { await updateMeetingAction(action.id, { status: 'Completed' }); await load() }}>Complete</Button>
+            )}
+          </div>
+        ))}
+      </Card>
+    </>
+  )
+}
+
+function DocumentsPanel({ letter }: { letter: Letter }) {
+  const { masterData, refresh } = useAppData()
+  const types = masterData['Document Types'] ?? ['Supporting Document', 'Original Letter', 'Draft Response', 'Final Response']
+  const [documents, setDocuments] = useState<LetterDocument[]>([])
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [versions, setVersions] = useState<DocumentVersion[]>([])
+  const [documentType, setDocumentType] = useState(types[0] ?? 'Supporting Document')
+  const [changeDescription, setChangeDescription] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [previewId, setPreviewId] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      setDocuments(await listLetterDocuments(letter.id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load documents')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [letter.id])
+
+  const loadVersions = async (documentId: string) => {
+    setExpanded(documentId)
+    setVersions(await listDocumentVersions(documentId))
+  }
+
+  const upload = async () => {
+    if (!file) {
+      setError('Select a file to upload.')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await uploadLetterDocument(letter.id, file, documentType, changeDescription)
+      setFile(null)
+      setChangeDescription('')
+      await load()
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const uploadRevision = async (documentId: string, revisionFile: File) => {
+    setBusy(true)
+    setError('')
+    try {
+      await uploadDocumentVersion(documentId, revisionFile, changeDescription || 'Revised upload')
+      await loadVersions(documentId)
+      await load()
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to upload new version')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="mt-5 p-5">
+      <h2 className="mb-1 text-sm font-bold text-slate-700">Documents & attachments</h2>
+      <p className="mb-4 text-xs text-slate-400">Secure uploads stored on server filesystem (metadata in database).</p>
+      {loading && <p className="text-xs text-slate-500">Loading documents…</p>}
+      {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
+      <div className="mb-5 grid gap-3 rounded-md border border-dashed border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-xs">
+          <span className="font-semibold text-slate-600">Document type</span>
+          <select value={documentType} onChange={(e) => setDocumentType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3">
+            {types.map((t) => <option key={t}>{t}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs sm:col-span-2">
+          <span className="font-semibold text-slate-600">Change description</span>
+          <input value={changeDescription} onChange={(e) => setChangeDescription(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3" placeholder="Optional notes for this upload" />
+        </label>
+        <label className="flex flex-col gap-1 text-xs sm:col-span-2">
+          <span className="font-semibold text-slate-600">File</span>
+          <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-xs" />
+        </label>
+        <div className="sm:col-span-2">
+          <Button size="sm" disabled={busy} onClick={() => void upload()}>Upload document</Button>
+        </div>
+      </div>
+      {documents.length === 0 && !loading && <p className="text-xs text-slate-500">No documents attached yet.</p>}
+      <div className="flex flex-col gap-3">
+        {documents.map((doc) => {
+          const current = doc.currentVersion
+          return (
+            <div key={doc.id} className="rounded-md border border-slate-100 bg-white px-3 py-3 text-xs">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-slate-700">{doc.documentType}</p>
+                  {current && (
+                    <p className="text-slate-500">{current.originalFilename} · v{current.versionNumber} · {formatFileSize(current.fileSize)}</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {current && (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => window.open(documentDownloadUrl(current.id), '_blank')}>Download</Button>
+                      {current.previewable && (
+                        <Button size="sm" variant="outline" onClick={() => setPreviewId(current.id)}>Preview</Button>
+                      )}
+                    </>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => void loadVersions(doc.id)}>Version history</Button>
+                </div>
+              </div>
+              {expanded === doc.id && (
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  {versions.map((v) => (
+                    <div key={v.id} className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded bg-slate-50 px-2 py-2">
+                      <span>v{v.versionNumber} · {v.originalFilename} · {v.status}</span>
+                      <div className="flex gap-2">
+                        <button type="button" className="text-[#1769aa]" onClick={() => window.open(documentDownloadUrl(v.id), '_blank')}>Download</button>
+                        {v.previewable && <button type="button" className="text-[#1769aa]" onClick={() => setPreviewId(v.id)}>Preview</button>}
+                      </div>
+                    </div>
+                  ))}
+                  <label className="mt-2 flex flex-col gap-1">
+                    <span className="font-semibold text-slate-600">Upload new version</span>
+                    <input type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadRevision(doc.id, f) }} className="text-xs" />
+                  </label>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {previewId !== null && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4">
+          <Card className="flex h-[85vh] w-full max-w-4xl flex-col p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-sm font-bold text-slate-700">Document preview</p>
+              <button onClick={() => setPreviewId(null)}><X className="size-4 text-slate-400" /></button>
+            </div>
+            <iframe title="Document preview" src={documentPreviewUrl(previewId)} className="min-h-0 flex-1 rounded border border-slate-200 bg-white" />
+          </Card>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 function Details({ id, go }: { id: string; go: (p: string) => void }) {
-  const { letters, addAction, applyLetterField, acceptAiAction } = useAppData()
+  const { letters, users, refresh, addAction, applyLetterField, acceptAiAction } = useAppData()
   const [action, setAction] = useState('')
   const letter = letters.find((item) => item.id === id)
   if (!letter) return <p className="text-sm text-slate-500">Letter not found.</p>
@@ -700,6 +1443,11 @@ function Details({ id, go }: { id: string; go: (p: string) => void }) {
           </div>
         </Card>
       </div>
+      <WorkflowPanel letter={letter} users={users} onDone={refresh} />
+      <ApprovalEscalationPanel letter={letter} onDone={refresh} />
+      <DocumentsPanel letter={letter} />
+      <RelatedMeetingsPanel letter={letter} go={go} />
+      <CorrespondenceThreadPanel letter={letter} go={go} />
       <div className="mt-5">
         <AIIntelligencePanel letter={letter} letters={letters} onApplyField={(field, value, decision) => applyLetterField(letter.id, field, value, decision)} onAcceptAction={(next, decision) => acceptAiAction(letter.id, next, decision)} />
         <div className="mt-5"><AIAnalyzeDocument letter={letter} /></div>
@@ -708,24 +1456,173 @@ function Details({ id, go }: { id: string; go: (p: string) => void }) {
   )
 }
 
-function Database({ page, query, go, aiSearch, onClearAi }: { page: string; query: string; go: (p: string) => void; aiSearch: InterpretedQuery | null; onClearAi: () => void }) {
-  const { letters, me } = useAppData()
+function ImportCenterPage({ refresh }: { refresh: () => Promise<void> }) {
+  const [job, setJob] = useState<ImportJobResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const onFile = async (file: File | null) => {
+    if (!file) return
+    setBusy(true)
+    setMessage('')
+    try {
+      setJob(await validateLetterImport(file))
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Validation failed')
+      setJob(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirm = async () => {
+    if (!job) return
+    setBusy(true)
+    setMessage('')
+    try {
+      const result = await confirmLetterImport(job.id)
+      setJob(result)
+      setMessage(`Imported ${result.importedRows} letter(s).`)
+      await refresh()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Import failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <PageTitle title="Import Center" description="Upload CSV correspondence files, review validation results, then confirm import." />
+      <Card className="max-w-3xl p-5">
+        <p className="text-xs text-slate-500">Required columns: number, letterDate, subject. Optional: type, priority, status, department, assignedTo, from, to, receivedDate, dueDate, actionRequired, remarks.</p>
+        <input type="file" accept=".csv,text/csv" className="mt-4 block text-xs" onChange={(e) => onFile(e.target.files?.[0] ?? null)} disabled={busy} />
+        {message && <p className="mt-3 text-xs text-slate-600">{message}</p>}
+        {job && (
+          <div className="mt-5 space-y-3 text-xs">
+            <p><strong>{job.filename}</strong> · {job.status} · {job.validRows} valid / {job.totalRows} total · {job.errorRows} errors</p>
+            {job.errors.length > 0 && (
+              <div className="max-h-48 overflow-auto rounded-md border border-slate-200">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50"><tr><th className="px-3 py-2">Row</th><th className="px-3 py-2">Field</th><th className="px-3 py-2">Message</th></tr></thead>
+                  <tbody>{job.errors.slice(0, 50).map((e, i) => <tr key={i} className="border-t border-slate-100"><td className="px-3 py-2">{e.rowNumber}</td><td className="px-3 py-2">{e.field}</td><td className="px-3 py-2">{e.message}</td></tr>)}</tbody>
+                </table>
+              </div>
+            )}
+            {job.status === 'ready' && (
+              <Button onClick={confirm} disabled={busy}>Confirm import ({job.validRows} rows)</Button>
+            )}
+          </div>
+        )}
+      </Card>
+    </>
+  )
+}
+
+function ExportCenterPage() {
+  const [message, setMessage] = useState('')
+  const run = async (entity: 'letters' | 'departments' | 'organizations' | 'audit' | 'meetings' | 'notifications', includeArchived = false) => {
+    setMessage('')
+    try {
+      await downloadExport(entity, includeArchived)
+      setMessage(`Downloaded ${entity}.csv`)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Export failed')
+    }
+  }
+  const items: { label: string; entity: 'letters' | 'departments' | 'organizations' | 'audit' | 'meetings' | 'notifications'; archived?: boolean }[] = [
+    { label: 'Letters (active register)', entity: 'letters' },
+    { label: 'Letters (include archived)', entity: 'letters', archived: true },
+    { label: 'Departments', entity: 'departments' },
+    { label: 'Organizations', entity: 'organizations' },
+    { label: 'Audit log', entity: 'audit' },
+    { label: 'Meetings', entity: 'meetings' },
+    { label: 'My notifications', entity: 'notifications' },
+  ]
+  return (
+    <>
+      <PageTitle title="Export Center" description="Download CSV extracts from the live PostgreSQL register." />
+      <Card className="max-w-xl p-5">
+        <div className="flex flex-col gap-2">
+          {items.map((item) => (
+            <Button key={item.label} variant="outline" className="justify-start" onClick={() => run(item.entity, item.archived)}>
+              <Download data-icon="inline-start" />
+              {item.label}
+            </Button>
+          ))}
+        </div>
+        {message && <p className="mt-4 text-xs text-slate-600">{message}</p>}
+      </Card>
+    </>
+  )
+}
+
+function Database({ page, query, go, aiSearch, onClearAi, refresh }: { page: string; query: string; go: (p: string) => void; aiSearch: InterpretedQuery | null; onClearAi: () => void; refresh: () => Promise<void> }) {
+  const { letters, me, users, departments, masterData } = useAppData()
   const [filter, setFilter] = useState('All')
-  const source = aiSearch ? aiSearch.letters : letters
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkOp, setBulkOp] = useState('assign')
+  const [bulkValue, setBulkValue] = useState('')
+  const [bulkMsg, setBulkMsg] = useState('')
+  const [archivedLetters, setArchivedLetters] = useState<Letter[]>([])
+
+  useEffect(() => {
+    if (page !== 'Archive') return
+    import('@/services/letters').then(({ listLetters }) => listLetters({ view: 'archived' }).then(setArchivedLetters))
+  }, [page, letters])
+
+  const source = page === 'Archive' ? archivedLetters : aiSearch ? aiSearch.letters : letters
   const data = source.filter((l) => {
     const q = aiSearch || !query || Object.values(l).some((v) => String(v).toLowerCase().includes(query.toLowerCase()))
+    const archiveOk = page === 'Archive' ? !!l.isArchived : !l.isArchived
     const matchesPage =
       page === 'All Letters' ||
       (page === 'Incoming' && l.type === 'Incoming') ||
       (page === 'Outgoing' && l.type === 'Outgoing') ||
       (page === 'Overdue' && l.status === 'Overdue') ||
       (page === 'Closed' && l.status === 'Closed') ||
-      (page === 'Pending' && !['Closed', 'Completed'].includes(l.status)) ||
+      (page === 'Archive' && l.isArchived) ||
+      (page === 'Pending' && !['Closed', 'Completed', 'Archived'].includes(l.status)) ||
       (page === 'My Actions' && l.assignedTo === me.name) ||
-      (page === 'Monitoring' && (l.status === 'Overdue' || l.daysPending >= 7 || !['Closed', 'Completed'].includes(l.status)))
-    return q && matchesPage && (filter === 'All' || l.priority === filter)
+      (page === 'Monitoring' && (l.status === 'Overdue' || l.daysPending >= 7 || !['Closed', 'Completed', 'Archived'].includes(l.status)))
+    return q && archiveOk && matchesPage && (filter === 'All' || l.priority === filter)
   })
   const title = page === 'All Letters' ? 'Letter database' : page
+  const selectedIds = [...selected].filter((id) => data.some((l) => l.id === id))
+  const numericIds = selectedIds.map((id) => Number(id))
+
+  const runBulk = async () => {
+    setBulkMsg('')
+    if (!numericIds.length) return
+    try {
+      if (bulkOp === 'archive') {
+        if (page === 'Archive') {
+          await restoreLetters(numericIds)
+          setBulkMsg('Restored selected letters.')
+        } else {
+          await archiveLetters(numericIds)
+          setBulkMsg('Archived selected letters.')
+        }
+      } else {
+        const payload: Record<string, string> = {}
+        if (bulkOp === 'assign' || bulkOp === 'reassign') payload.assignedTo = bulkValue
+        if (bulkOp === 'change_department') payload.department = bulkValue
+        if (bulkOp === 'change_priority') payload.priority = bulkValue
+        if (bulkOp === 'change_status') payload.status = bulkValue
+        const result = await runBulkOperation(bulkOp, numericIds, payload)
+        setBulkMsg(`${result.succeeded} succeeded, ${result.failed} failed.`)
+      }
+      setSelected(new Set())
+      await refresh()
+      if (page === 'Archive') {
+        const { listLetters } = await import('@/services/letters')
+        setArchivedLetters(await listLetters({ view: 'archived' }))
+      }
+    } catch (err) {
+      setBulkMsg(err instanceof Error ? err.message : 'Bulk operation failed')
+    }
+  }
+
   return (
     <>
       <PageTitle title={title} description="Search, filter and manage all registered correspondence." action={<Button onClick={() => go('Register Letter')}><Plus data-icon="inline-start" />Register letter</Button>} />
@@ -736,7 +1633,59 @@ function Database({ page, query, go, aiSearch, onClearAi }: { page: string; quer
         </select>
         <Button variant="ghost" size="sm" onClick={() => setFilter('All')}>Clear</Button>
       </div>
-      <LetterTable data={data} onOpen={(id) => go(id)} />
+      {selectedIds.length > 0 && (
+        <Card className="mb-4 flex flex-wrap items-center gap-2 p-3">
+          <span className="text-xs font-semibold text-slate-600">{selectedIds.length} selected</span>
+          <select value={bulkOp} onChange={(e) => { setBulkOp(e.target.value); setBulkValue('') }} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
+            <option value="assign">Assign</option>
+            <option value="reassign">Reassign</option>
+            <option value="change_department">Change department</option>
+            <option value="change_priority">Change priority</option>
+            <option value="change_status">Change status</option>
+            <option value="archive">{page === 'Archive' ? 'Restore from archive' : 'Archive'}</option>
+          </select>
+          {['assign', 'reassign'].includes(bulkOp) && (
+            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
+              <option value="">User…</option>
+              {users.map((u) => <option key={u.username} value={u.name}>{u.name}</option>)}
+            </select>
+          )}
+          {bulkOp === 'change_department' && (
+            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
+              <option value="">Department…</option>
+              {departments.map((d) => <option key={d.code} value={d.name}>{d.name}</option>)}
+            </select>
+          )}
+          {bulkOp === 'change_priority' && (
+            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
+              <option value="">Priority…</option>
+              {(masterData.Priorities ?? ['Routine', 'Important', 'Urgent']).map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          {bulkOp === 'change_status' && (
+            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
+              <option value="">Status…</option>
+              {(masterData.Statuses ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          <Button size="sm" onClick={runBulk}>Apply</Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear selection</Button>
+          {bulkMsg && <span className="text-xs text-slate-500">{bulkMsg}</span>}
+        </Card>
+      )}
+      <LetterTable
+        data={data}
+        onOpen={(id) => go(id)}
+        selectable
+        selectedIds={selected}
+        onToggle={(id) => setSelected((current) => {
+          const next = new Set(current)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          return next
+        })}
+        onToggleAll={(checked) => setSelected(checked ? new Set(data.map((l) => l.id)) : new Set())}
+      />
     </>
   )
 }
@@ -884,8 +1833,12 @@ function Workspace() {
   else if (page === 'AI Assistant') content = <><PageTitle title="AI Assistant" description="Ask questions about the correspondence register. Responses are mock, advisory intelligence." /><AIAssistant go={go} /></>
   else if (page === 'AI Insights') content = <><PageTitle title="AI Insights" description="Operational, risk and management observations generated from the current register." /><AIInsightsPage go={go} /></>
   else if (page === 'Letter Analysis' || page.startsWith('analysis:')) content = <><PageTitle title="Letter Analysis" description="Timeline, delays and relationship analysis for selected correspondence." /><LetterAnalysisPage selectedId={page.startsWith('analysis:') ? page.split(':')[1] : undefined} go={go} /></>
+  else if (page === 'Meetings') content = <MeetingsPage go={go} />
+  else if (page === 'Import Center') content = <ImportCenterPage refresh={refresh} />
+  else if (page === 'Export Center') content = <ExportCenterPage />
+  else if (page.startsWith('meeting:')) content = <MeetingDetailPage id={page.split(':')[1]} go={go} letters={letters} />
   else if (page.startsWith('detail:')) content = <Details id={page.split(':')[1]} go={go} />
-  else content = <Database page={page} query={query} go={go} aiSearch={aiSearch} onClearAi={() => { setAiSearch(null); setQuery('') }} />
+  else content = <Database page={page} query={query} go={go} aiSearch={aiSearch} onClearAi={() => { setAiSearch(null); setQuery('') }} refresh={refresh} />
 
   return (
     <div className="flex min-h-screen bg-[#f5f8fb] text-slate-900">

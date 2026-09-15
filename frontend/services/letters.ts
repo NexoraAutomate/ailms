@@ -1,7 +1,25 @@
 import { api } from '@/lib/api'
 
 export type LetterType = 'Incoming' | 'Outgoing'
-export type LetterStatus = 'Registered' | 'Under Review' | 'Assigned' | 'Action in Progress' | 'Awaiting Response' | 'Completed' | 'Closed' | 'Overdue'
+export type LetterStatus =
+  | 'Draft'
+  | 'Registered'
+  | 'Under Review'
+  | 'Assigned'
+  | 'Action in Progress'
+  | 'Awaiting Response'
+  | 'Response Prepared'
+  | 'Approval Pending'
+  | 'Response Approved'
+  | 'Response Sent'
+  | 'Completed'
+  | 'Closed'
+  | 'Rejected'
+  | 'Returned for Revision'
+  | 'Escalated'
+  | 'Reopened'
+  | 'Archived'
+  | 'Overdue'
 export type Priority = 'Routine' | 'Important' | 'Urgent'
 
 export type Letter = {
@@ -24,6 +42,7 @@ export type Letter = {
   actionRequired?: string
   remarks?: string
   completionDate?: string
+  isArchived?: boolean
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }
@@ -32,20 +51,34 @@ export type LetterInput = Partial<Letter> & { number: string; subject: string }
 
 export const statusTone = (status: LetterStatus) =>
   ({
+    Draft: 'slate',
     Registered: 'slate',
     'Under Review': 'amber',
     Assigned: 'blue',
     'Action in Progress': 'indigo',
     'Awaiting Response': 'violet',
+    'Response Prepared': 'indigo',
+    'Approval Pending': 'amber',
+    'Response Approved': 'green',
+    'Response Sent': 'violet',
     Completed: 'green',
     Closed: 'slate',
+    Rejected: 'red',
+    'Returned for Revision': 'amber',
+    Escalated: 'red',
+    Reopened: 'blue',
+    Archived: 'slate',
     Overdue: 'red',
-  }[status])
+  }[status] ?? 'slate')
 
 export const priorityTone = (priority: Priority) => ({ Routine: 'slate', Important: 'amber', Urgent: 'red' }[priority])
 
-export async function listLetters(query?: string) {
-  const suffix = query ? `?q=${encodeURIComponent(query)}` : ''
+export async function listLetters(params?: { q?: string; view?: string; includeArchived?: boolean }) {
+  const search = new URLSearchParams()
+  if (params?.q) search.set('q', params.q)
+  if (params?.view) search.set('view', params.view)
+  if (params?.includeArchived) search.set('include_archived', 'true')
+  const suffix = search.toString() ? `?${search.toString()}` : ''
   return api.get<Letter[]>(`/api/letters${suffix}`)
 }
 
