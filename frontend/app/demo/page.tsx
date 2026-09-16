@@ -406,7 +406,11 @@ export default function DemoPresentationPage() {
             <p className="text-[11px] text-slate-500">
               Executive deck ·{' '}
               <a href="/demo/video" className="text-[#8fb7d9] hover:underline">
-                Cinematic video
+                20s trailer
+              </a>
+              {' · '}
+              <a href="/demo/showcase" className="text-[#8fb7d9] hover:underline">
+                60s+ showcase
               </a>
             </p>
           </div>

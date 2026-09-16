@@ -1,0 +1,34 @@
+@import '../video/cinematic.css';
+
+.shw-disclaimer {
+  font-size: 9px;
+  color: rgba(148, 163, 184, 0.55);
+}
+
+.shw-montage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  max-width: min(88vw, 720px);
+  margin: 0 auto;
+}
+
+.shw-montage-grid img,
+.shw-montage-grid .shw-mock-slot {
+  border-radius: 10px;
+  border: 1px solid rgba(147, 197, 253, 0.25);
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.shw-mock-slot {
+  transform: scale(0.92);
+  transform-origin: top center;
+}
+
+.shw-scene-label {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
