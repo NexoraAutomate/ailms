@@ -148,7 +148,19 @@ class UserIn(BaseModel):
     status: str = "Active"
 
 
+class UserUpdateIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    email: str | None = None
+    department: str | None = None
+    role: str | None = None
+    status: str | None = None
+    password: str | None = None
+
+
 class UserOut(BaseModel):
+    id: int
     name: str
     username: str
     department: str
@@ -156,6 +168,39 @@ class UserOut(BaseModel):
     email: str
     status: str
     activity: str
+    created: str = ""
+
+
+class RoleIn(BaseModel):
+    name: str
+    description: str = ""
+
+
+class RoleOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    permissionCount: int = 0
+
+
+class RolePermissionsIn(BaseModel):
+    description: str | None = None
+    permissions: dict
+
+
+class StatusDefinitionIn(BaseModel):
+    category: str
+    name: str
+    description: str = ""
+    color: str = "#64748b"
+
+
+class StatusDefinitionOut(BaseModel):
+    id: int
+    category: str
+    name: str
+    description: str
+    color: str
 
 
 class NotificationOut(BaseModel):

@@ -22,8 +22,13 @@ import {
   Lightbulb,
   LineChart,
   Menu,
+  Maximize2,
   MoreHorizontal,
   Plus,
+  KeyRound,
+  LogOut,
+  Moon,
+  Sun,
   Printer,
   Search,
   Settings2,
@@ -81,6 +86,7 @@ import {
   validateLetterImport,
   type ImportJobResult,
 } from '@/services/data-operations'
+import { SettingsHub } from '@/components/admin/settings-hub'
 
 const toneClasses: Record<string, string> = {
   slate: 'bg-slate-100 text-slate-700',
@@ -137,8 +143,8 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
 function Sidebar({ page, setPage, mobile, setMobile }: { page: string; setPage: (p: string) => void; mobile: boolean; setMobile: (v: boolean) => void }) {
   const { unreadCount } = useAppData()
   return (
-    <aside className={`${mobile ? 'fixed inset-y-0 left-0 z-20 flex w-72' : 'hidden lg:flex lg:w-64'} flex-col border-r border-slate-200 bg-white`}>
-      <div className="flex h-[72px] items-center gap-3 border-b border-slate-200 px-5">
+    <aside className={`${mobile ? 'fixed inset-y-0 left-0 z-20 flex w-72' : 'hidden lg:flex lg:h-dvh lg:w-64 lg:shrink-0'} flex-col border-r border-slate-200 bg-white`}>
+      <div className="flex h-[72px] shrink-0 items-center gap-3 border-b border-slate-200 px-5">
         <Logo />
         <div>
           <p className="text-sm font-bold text-[#102a43]">Correspondence</p>
@@ -178,32 +184,86 @@ function Sidebar({ page, setPage, mobile, setMobile }: { page: string; setPage: 
 }
 
 function Header({ setMobile, query, setQuery, go }: { setMobile: (v: boolean) => void; query: string; setQuery: (v: string) => void; go: (p: string) => void }) {
-  const { me, unreadCount } = useAppData()
+  const { me, unreadCount, settings } = useAppData()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [dark, setDark] = useState(false)
+  const [pwdOpen, setPwdOpen] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+
+  const toggleTheme = () => {
+    const next = !dark
+    setDark(next)
+    document.documentElement.classList.toggle('dark', next)
+  }
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.()
+    else document.exitFullscreen?.()
+  }
+
   return (
-    <header className="flex min-h-[72px] items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-7">
+    <header className="sticky top-0 z-10 flex shrink-0 min-h-[72px] items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-7">
       <button className="lg:hidden" onClick={() => setMobile(true)}>
         <Menu className="size-5 text-slate-600" />
       </button>
       <div className="hidden min-w-0 flex-1 md:block">
-        <p className="text-xs text-slate-400">Wednesday, September 13, 2026</p>
-        <p className="truncate text-sm font-semibold text-slate-700">Correspondence workspace</p>
+        <p className="text-xs text-slate-400">{today}</p>
+        <p className="truncate text-sm font-semibold text-slate-700">{settings.systemName || 'Correspondence Management System'}</p>
       </div>
       <div className="relative flex-1 md:max-w-sm">
         <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search or ask: Show overdue letters from SUPARCO" className="h-10 w-full rounded-md border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs outline-none ring-blue-500 focus:ring-2" />
       </div>
-      <button className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={() => go('AI Assistant')} title="AI Assistant"><Sparkles className="size-5" /></button>
-      <button className="relative rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={() => go('Notifications')}>
+      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={toggleFullscreen} title="Full screen"><Maximize2 className="size-5" /></button>
+      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={toggleTheme} title="Toggle theme">{dark ? <Sun className="size-5" /> : <Moon className="size-5" />}</button>
+      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={() => go('AI Assistant')} title="AI Assistant"><Sparkles className="size-5" /></button>
+      <button type="button" className="relative rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={() => go('Notifications')}>
         <Bell className="size-5" />
-        {unreadCount > 0 && <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-500" />}
+        {unreadCount > 0 && <span className="absolute right-0.5 top-0.5 min-w-[16px] rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
       </button>
-      <button className="hidden items-center gap-2 border-l border-slate-200 pl-4 sm:flex">
-        <span className="flex size-8 items-center justify-center rounded-full bg-[#dce9f7] text-xs font-bold text-[#0d3763]">{me.initials}</span>
-        <span className="text-left">
-          <span className="block text-xs font-semibold text-slate-700">{me.name}</span>
-          <span className="block text-[10px] text-slate-400">{me.role}</span>
-        </span>
-      </button>
+      <div className="relative border-l border-slate-200 pl-3">
+        <button type="button" className="flex items-center gap-2 rounded-md p-1 hover:bg-slate-50" onClick={() => setMenuOpen((v) => !v)}>
+          <span className="flex size-8 items-center justify-center rounded-full bg-[#dce9f7] text-xs font-bold text-[#0d3763]">{me.initials}</span>
+          <span className="hidden text-left sm:block">
+            <span className="block text-xs font-semibold text-slate-700">{me.name}</span>
+            <span className="block text-[10px] font-medium text-[#2563eb]">{me.role}</span>
+          </span>
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-0 top-full z-30 mt-2 w-56 rounded-lg border border-slate-200 bg-white py-2 shadow-lg">
+              <div className="border-b border-slate-100 px-4 pb-2">
+                <p className="text-xs font-bold text-slate-800">{me.name}</p>
+                <p className="text-[11px] text-slate-400">{settings.currentUser || me.name.toLowerCase().replace(/\s+/g, '-')}</p>
+              </div>
+              <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50" onClick={() => { setMenuOpen(false); go('Settings:users') }}>
+                <Users className="size-4" /> View profile
+              </button>
+              <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50" onClick={() => { setMenuOpen(false); setPwdOpen(true) }}>
+                <KeyRound className="size-4" /> Change password
+              </button>
+              <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-red-600 hover:bg-red-50" onClick={() => { setMenuOpen(false); go('Settings:security') }}>
+                <LogOut className="size-4" /> Logout (demo)
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+      {pwdOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-xl">
+            <h3 className="text-sm font-bold text-slate-800">Change password</h3>
+            <p className="mt-1 text-xs text-slate-500">Policy is enforced when full authentication is enabled.</p>
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="mt-4 h-10 w-full rounded-md border border-slate-200 px-3 text-xs" placeholder="New password" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPwdOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={() => { setPwdOpen(false); setNewPassword('') }}>Update</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   )
 }
@@ -370,8 +430,8 @@ function Dashboard({ go }: { go: (p: string) => void }) {
             <h2 className="text-sm font-bold text-slate-700">Recent management activity</h2>
             <p className="text-xs text-slate-400">Latest audit records</p>
           </div>
-          {auditRecords.slice(0, 4).map((a) => (
-            <div className="flex gap-3 border-b border-slate-100 p-4" key={`${a.date}-${a.record}`}>
+          {auditRecords.slice(0, 4).map((a, index) => (
+            <div className="flex gap-3 border-b border-slate-100 p-4" key={`${a.date}-${a.record}-${a.action}-${a.user}-${index}`}>
               <Activity className="mt-0.5 size-4 text-[#1769aa]" />
               <div>
                 <p className="text-xs font-semibold text-slate-700">{a.action}</p>
@@ -1762,38 +1822,9 @@ function Register({ go }: { go: (p: string) => void }) {
   )
 }
 
-function SettingsPage() {
-  const { settings, updateSettings } = useAppData()
-  const [form, setForm] = useState(settings)
-  const [saved, setSaved] = useState(false)
-  return (
-    <>
-      <PageTitle title="Settings" description="System defaults used across the correspondence workspace." />
-      <Card className="max-w-2xl p-5">
-        <div className="grid gap-4">
-          {([
-            ['organizationName', 'Organization name'],
-            ['systemName', 'System name'],
-            ['defaultDueDays', 'Default due days'],
-            ['currentUser', 'Current user'],
-          ] as const).map(([key, label]) => (
-            <label key={key} className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold text-slate-600">{label}</span>
-              <input value={form[key]} onChange={(e) => setForm((current) => ({ ...current, [key]: e.target.value }))} className="h-10 rounded-md border border-slate-200 px-3 text-xs" />
-            </label>
-          ))}
-        </div>
-        <div className="mt-5 flex justify-end">
-          <Button onClick={async () => { await updateSettings(form); setSaved(true); setTimeout(() => setSaved(false), 2000) }}>Save settings</Button>
-        </div>
-      </Card>
-      {saved && <div className="fixed bottom-5 right-5 rounded-lg bg-[#102a43] px-4 py-3 text-xs font-semibold text-white">Settings saved.</div>}
-    </>
-  )
-}
 
 function Workspace() {
-  const { loading, error, refresh, departments, organizations, users, addDepartment, addOrganization, addUser, letters } = useAppData()
+  const { loading, error, refresh, departments, organizations, users, settings, masterData, addDepartment, addOrganization, addUser, addMasterValue, updateSettings, letters } = useAppData()
   const [page, setPage] = useState('Dashboard')
   const [query, setQuery] = useState('')
   const [mobile, setMobile] = useState(false)
@@ -1824,12 +1855,24 @@ function Workspace() {
   else if (page === 'Reports') content = <Reports />
   else if (page === 'Departments') content = <ManagementTable title="Departments" description="Manage organizational departments and workload ownership." headers={['Code', 'Department Name', 'Head / Responsible Officer', 'Active Users', 'Pending Letters', 'Status']} rows={departments} onAdd={(v) => addDepartment({ code: v.code, name: v.name, head: v.head })} addFields={[{ name: 'code', label: 'Code' }, { name: 'name', label: 'Department name' }, { name: 'head', label: 'Head / responsible officer' }]} />
   else if (page === 'Organizations') content = <ManagementTable title="Organizations" description="Manage internal and external correspondence sources." headers={['Organization', 'Short Name', 'Type', 'Contact Person', 'Email', 'Phone', 'Status']} rows={organizations} onAdd={(v) => addOrganization({ name: v.name, short: v.short, type: v.type, contact: v.contact, email: v.email, phone: v.phone })} addFields={[{ name: 'name', label: 'Organization' }, { name: 'short', label: 'Short name' }, { name: 'type', label: 'Type' }, { name: 'contact', label: 'Contact person' }, { name: 'email', label: 'Email' }, { name: 'phone', label: 'Phone' }]} />
-  else if (page === 'Users & Roles') content = <ManagementTable title="Users & Roles" description="Manage user accounts and conceptual access roles." headers={['Name', 'Username', 'Department', 'Role', 'Email', 'Status', 'Last Activity']} rows={users} onAdd={(v) => addUser({ name: v.name, username: v.username, department: v.department, role: v.role, email: v.email })} addFields={[{ name: 'name', label: 'Name' }, { name: 'username', label: 'Username' }, { name: 'department', label: 'Department' }, { name: 'role', label: 'Role' }, { name: 'email', label: 'Email' }]} />
+  else if (page === 'Users & Roles') content = <SettingsHub initialTab="users" users={users} settings={settings} masterData={masterData} onRefresh={refresh} onUpdateSettings={updateSettings} onAddUser={addUser} onAddMaster={addMasterValue} go={go} />
   else if (page === 'Master Data') content = <MasterData />
   else if (page === 'Audit Log') content = <Audit />
   else if (page === 'Notifications') content = <Notifications go={go} />
   else if (page === 'Register Letter') content = <Register go={go} />
-  else if (page === 'Settings') content = <SettingsPage />
+  else if (page === 'Settings' || page.startsWith('Settings:')) content = (
+    <SettingsHub
+      initialTab={(page.split(':')[1] as 'users' | 'roles' | 'access' | 'status' | 'alerts' | 'security' | 'definitions' | 'backup') || 'users'}
+      users={users}
+      settings={settings}
+      masterData={masterData}
+      onRefresh={refresh}
+      onUpdateSettings={updateSettings}
+      onAddUser={addUser}
+      onAddMaster={addMasterValue}
+      go={go}
+    />
+  )
   else if (page === 'AI Assistant') content = <><PageTitle title="AI Assistant" description="Ask questions about the correspondence register. Responses are mock, advisory intelligence." /><AIAssistant go={go} /></>
   else if (page === 'AI Insights') content = <><PageTitle title="AI Insights" description="Operational, risk and management observations generated from the current register." /><AIInsightsPage go={go} /></>
   else if (page === 'Letter Analysis' || page.startsWith('analysis:')) content = <><PageTitle title="Letter Analysis" description="Timeline, delays and relationship analysis for selected correspondence." /><LetterAnalysisPage selectedId={page.startsWith('analysis:') ? page.split(':')[1] : undefined} go={go} /></>
@@ -1841,12 +1884,12 @@ function Workspace() {
   else content = <Database page={page} query={query} go={go} aiSearch={aiSearch} onClearAi={() => { setAiSearch(null); setQuery('') }} refresh={refresh} />
 
   return (
-    <div className="flex min-h-screen bg-[#f5f8fb] text-slate-900">
-      <Sidebar page={page.startsWith('detail:') ? 'All Letters' : page.startsWith('analysis:') ? 'Letter Analysis' : page} setPage={setPage} mobile={mobile} setMobile={setMobile} />
+    <div className="flex h-dvh overflow-hidden bg-[#f5f8fb] text-slate-900">
+      <Sidebar page={page.startsWith('detail:') ? 'All Letters' : page.startsWith('analysis:') ? 'Letter Analysis' : page.startsWith('Settings:') ? 'Settings' : page} setPage={setPage} mobile={mobile} setMobile={setMobile} />
       {mobile && <div onClick={() => setMobile(false)} className="fixed inset-0 z-10 bg-slate-900/20 lg:hidden" />}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Header setMobile={setMobile} query={query} setQuery={(value) => { setQuery(value); if (looksLikeNaturalQuery(value)) setPage('All Letters') }} go={go} />
-        <main className="mx-auto w-full max-w-[1600px] flex-1 p-4 sm:p-7">{content}</main>
+        <main className="mx-auto min-h-0 w-full max-w-[1600px] flex-1 overflow-y-auto p-4 sm:p-7">{content}</main>
       </div>
     </div>
   )

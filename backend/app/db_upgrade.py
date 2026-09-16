@@ -31,6 +31,15 @@ def upgrade_notification_columns(engine: Engine) -> None:
             conn.execute(text(stmt))
 
 
+def upgrade_user_created_at(engine: Engine) -> None:
+    if not inspect(engine).has_table("cms_users"):
+        return
+    columns = {col["name"] for col in inspect(engine).get_columns("cms_users")}
+    if "created_at" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE cms_users ADD COLUMN created_at TIMESTAMP DEFAULT NOW()"))
+
+
 def upgrade_letter_archive_columns(engine: Engine) -> None:
     if not inspect(engine).has_table("cms_letters"):
         return

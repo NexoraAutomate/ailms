@@ -3,7 +3,7 @@ import type { Letter } from './letters'
 
 export type Department = { code: string; name: string; head: string; users: number; pending: number; status: string }
 export type Organization = { name: string; short: string; type: string; contact: string; email: string; phone: string; status: string }
-export type AppUser = { name: string; username: string; department: string; role: string; email: string; status: string; activity: string }
+export type AppUser = { id?: number; name: string; username: string; department: string; role: string; email: string; status: string; activity: string; created?: string }
 export type AuditRecord = { date: string; user: string; module: string; action: string; record: string; description: string; source: string }
 export type AppNotification = {
   id: number

@@ -19,6 +19,7 @@ from app.schemas import (
     SettingsOut,
     UserIn,
     UserOut,
+    UserUpdateIn,
 )
 from app.services import (
     add_audit,
@@ -110,6 +111,35 @@ def create_user(payload: UserIn, db: Session = Depends(get_db)) -> UserOut:
     db.commit()
     db.refresh(row)
     return serialize_user(row)
+
+
+@users_router.patch("/{user_id}", response_model=UserOut)
+def update_user(user_id: int, payload: UserUpdateIn, db: Session = Depends(get_db)) -> UserOut:
+    row = db.get(User, user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    data = payload.model_dump(exclude_unset=True, exclude={"password"})
+    for key, value in data.items():
+        setattr(row, key, value)
+    if payload.password:
+        row.last_activity = datetime.now()
+    add_audit(db, user=current_user_name(db), module="Users", action="User Updated", record=row.username, description=f"Updated account {row.username}")
+    db.commit()
+    db.refresh(row)
+    return serialize_user(row)
+
+
+@users_router.delete("/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(User, user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    if row.username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete primary administrator")
+    db.delete(row)
+    add_audit(db, user=current_user_name(db), module="Users", action="User Deleted", record=row.username, description=f"Deleted account {row.username}")
+    db.commit()
+    return {"deleted": user_id}
 
 
 @notifications_router.get("/types")

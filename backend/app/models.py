@@ -40,6 +40,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(180), default="")
     status: Mapped[str] = mapped_column(String(20), default="Active")
     last_activity: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class WorkflowTransition(Base):
@@ -355,6 +356,41 @@ class MonthlyTrend(Base):
     month: Mapped[str] = mapped_column(String(12))
     incoming: Mapped[int] = mapped_column(Integer, default=0)
     outgoing: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Role(Base):
+    __tablename__ = "cms_roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    permissions_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class StatusDefinition(Base):
+    __tablename__ = "cms_status_definitions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    category: Mapped[str] = mapped_column(String(80), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str] = mapped_column(Text, default="")
+    color: Mapped[str] = mapped_column(String(20), default="#64748b")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class UserSession(Base):
+    __tablename__ = "cms_user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(80), index=True)
+    user_display: Mapped[str] = mapped_column(String(120), default="")
+    device: Mapped[str] = mapped_column(String(40), default="Desktop")
+    browser: Mapped[str] = mapped_column(String(80), default="")
+    os_name: Mapped[str] = mapped_column(String(80), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    login_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_activity: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    status: Mapped[str] = mapped_column(String(20), default="Active", index=True)
 
 
 class AppSetting(Base):

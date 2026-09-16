@@ -148,7 +148,9 @@ def serialize_organization(organization: Organization) -> OrganizationOut:
 
 
 def serialize_user(user: User) -> UserOut:
+    created = user.created_at.strftime("%d/%m/%Y") if getattr(user, "created_at", None) else "—"
     return UserOut(
+        id=user.id,
         name=user.name,
         username=user.username,
         department=user.department,
@@ -156,6 +158,7 @@ def serialize_user(user: User) -> UserOut:
         email=user.email,
         status=user.status,
         activity=activity_label(user.last_activity),
+        created=created,
     )
 
 

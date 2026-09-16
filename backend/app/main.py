@@ -3,7 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import Base, engine, ensure_database
-from app.db_upgrade import upgrade_letter_archive_columns, upgrade_notification_columns
+from app.db_upgrade import upgrade_letter_archive_columns, upgrade_notification_columns, upgrade_user_created_at
+from app.administration_service import ensure_administration_seed, touch_session
+from app.routers.administration import router as administration_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.letters import router as letters_router
 from app.routers.workflow import router as workflow_router
@@ -79,6 +81,7 @@ app.include_router(import_router, prefix="/api")
 app.include_router(export_router, prefix="/api")
 app.include_router(bulk_router, prefix="/api")
 app.include_router(archive_router, prefix="/api")
+app.include_router(administration_router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -88,9 +91,11 @@ def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
     upgrade_notification_columns(engine)
     upgrade_letter_archive_columns(engine)
+    upgrade_user_created_at(engine)
     db = SessionLocal()
     try:
         seed_if_empty(db)
+        ensure_administration_seed(db)
         ensure_master_statuses(db)
         ensure_master_document_types(db)
         ensure_phase4b_samples(db)
@@ -98,6 +103,7 @@ def on_startup() -> None:
         from app.notification_service import backfill_notification_metadata
 
         backfill_notification_metadata(db)
+        touch_session(db, username="admin", display="Administrator")
         db.commit()
         run_reminder_cycle()
     finally:
