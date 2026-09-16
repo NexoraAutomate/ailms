@@ -6,6 +6,7 @@ from app.database import Base, engine, ensure_database
 from app.db_upgrade import upgrade_letter_archive_columns, upgrade_notification_columns, upgrade_user_created_at
 from app.administration_service import ensure_administration_seed, touch_session
 from app.routers.administration import router as administration_router
+from app.routers.ai import router as ai_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.letters import router as letters_router
 from app.routers.workflow import router as workflow_router
@@ -82,6 +83,7 @@ app.include_router(export_router, prefix="/api")
 app.include_router(bulk_router, prefix="/api")
 app.include_router(archive_router, prefix="/api")
 app.include_router(administration_router, prefix="/api")
+app.include_router(ai_router, prefix="/api")
 
 
 @app.on_event("startup")

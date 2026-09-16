@@ -1,10 +1,18 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_ROOT / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE) if _ENV_FILE.is_file() else None,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     postgres_host: str = "127.0.0.1"
     postgres_port: int = 5432
@@ -17,6 +25,14 @@ class Settings(BaseSettings):
     reminder_interval_seconds: int = 3600
     document_storage_path: str = "storage"
     max_upload_bytes: int = 25 * 1024 * 1024
+
+    llm_enabled: bool = True
+    llm_provider: str = "openai"
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4o-mini"
+    llm_timeout_seconds: int = 90
+    llm_max_tokens: int = 2048
 
     @property
     def database_url(self) -> str:

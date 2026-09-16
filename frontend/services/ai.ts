@@ -1,3 +1,4 @@
+import { api } from '@/lib/api'
 import type { Letter, Priority } from './letters'
 import type { Department, DepartmentStat } from './management'
 
@@ -115,7 +116,33 @@ export const AI_ENDPOINTS = {
   search: '/api/ai/search',
   analyze: '/api/ai/analyze-correspondence',
   insights: '/api/ai/management-insights',
+  chat: '/api/ai/chat',
+  status: '/api/ai/status',
 } as const
+
+export type AiBackendStatus = { enabled: boolean; provider: string; model: string; baseUrl?: string }
+
+let cachedAiStatus: AiBackendStatus | null = null
+
+export async function fetchAiStatus(force = false): Promise<AiBackendStatus> {
+  if (cachedAiStatus && !force) return cachedAiStatus
+  try {
+    cachedAiStatus = await api.get<AiBackendStatus>(AI_ENDPOINTS.status)
+  } catch {
+    cachedAiStatus = { enabled: false, provider: 'none', model: '' }
+  }
+  return cachedAiStatus
+}
+
+async function withLlm<T>(call: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
+  try {
+    const status = await fetchAiStatus()
+    if (status.enabled) return await call()
+  } catch {
+    /* use fallback */
+  }
+  return fallback()
+}
 
 const wait = (ms = 520) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -143,6 +170,13 @@ function topic(letter: Letter) {
 }
 
 export async function summarizeLetter(letter: Letter, variant = 0): Promise<AiSummary> {
+  return withLlm(
+    () => api.post<AiSummary>(AI_ENDPOINTS.summarize, { letterId: Number(letter.id), variant }),
+    () => summarizeLetterMock(letter, variant),
+  )
+}
+
+async function summarizeLetterMock(letter: Letter, variant = 0): Promise<AiSummary> {
   await wait()
   const kind = topic(letter)
   const extra = variant % 2 === 1 ? ' A follow-up may be required if no reply is received before the due date.' : ''
@@ -174,6 +208,16 @@ export async function summarizeLetter(letter: Letter, variant = 0): Promise<AiSu
 }
 
 export async function extractLetterInformation(letter: Letter): Promise<ExtractedField[]> {
+  return withLlm(
+    async () => {
+      const body = await api.post<{ fields: ExtractedField[] }>(AI_ENDPOINTS.extract, { letterId: Number(letter.id) })
+      return body.fields
+    },
+    () => extractLetterInformationMock(letter),
+  )
+}
+
+async function extractLetterInformationMock(letter: Letter): Promise<ExtractedField[]> {
   await wait()
   const kind = topic(letter)
   const keywords = kind === 'technical' ? 'satellite, communications, technical review' : kind === 'financial' ? 'budget, FY 2026-27, estimates' : letter.subject.split(' ').slice(0, 4).join(', ')
@@ -197,6 +241,16 @@ export async function extractLetterInformation(letter: Letter): Promise<Extracte
 }
 
 export async function classifyLetter(letter: Letter): Promise<ClassificationSuggestion[]> {
+  return withLlm(
+    async () => {
+      const body = await api.post<{ suggestions: ClassificationSuggestion[] }>(AI_ENDPOINTS.classify, { letterId: Number(letter.id) })
+      return body.suggestions
+    },
+    () => classifyLetterMock(letter),
+  )
+}
+
+async function classifyLetterMock(letter: Letter): Promise<ClassificationSuggestion[]> {
   await wait()
   const kind = topic(letter)
   const category =
@@ -218,6 +272,16 @@ export async function classifyLetter(letter: Letter): Promise<ClassificationSugg
 }
 
 export async function recommendActions(letter: Letter): Promise<ActionRecommendation[]> {
+  return withLlm(
+    async () => {
+      const body = await api.post<{ actions: ActionRecommendation[] }>(AI_ENDPOINTS.recommendActions, { letterId: Number(letter.id) })
+      return body.actions
+    },
+    () => recommendActionsMock(letter),
+  )
+}
+
+async function recommendActionsMock(letter: Letter): Promise<ActionRecommendation[]> {
   await wait()
   const due = letter.dueDate || addDays(letter.receivedDate || letter.letterDate, 5)
   return [
@@ -230,6 +294,13 @@ export async function recommendActions(letter: Letter): Promise<ActionRecommenda
 }
 
 export async function assessUrgency(letter: Letter): Promise<UrgencyAssessment> {
+  return withLlm(
+    () => api.post<UrgencyAssessment>(AI_ENDPOINTS.urgency, { letterId: Number(letter.id) }),
+    () => assessUrgencyMock(letter),
+  )
+}
+
+async function assessUrgencyMock(letter: Letter): Promise<UrgencyAssessment> {
   await wait()
   const overdue = letter.status === 'Overdue'
   const urgent = letter.priority === 'Urgent' || overdue
@@ -250,6 +321,13 @@ export async function assessUrgency(letter: Letter): Promise<UrgencyAssessment> 
 }
 
 export async function generateDraftResponse(letter: Letter, style: 'default' | 'shorten' | 'expand' | 'formal' | 'concise' = 'default'): Promise<DraftResponse> {
+  return withLlm(
+    () => api.post<DraftResponse>(AI_ENDPOINTS.draftResponse, { letterId: Number(letter.id), style }),
+    () => generateDraftResponseMock(letter, style),
+  )
+}
+
+async function generateDraftResponseMock(letter: Letter, style: 'default' | 'shorten' | 'expand' | 'formal' | 'concise' = 'default'): Promise<DraftResponse> {
   await wait(600)
   const base = `With reference to letter ${letter.number} dated ${letter.letterDate}, the undersigned acknowledges receipt of correspondence on “${letter.subject}”. The matter has been assigned to ${letter.department || 'the concerned department'} and is under examination. A substantive reply will be furnished after internal consultation.`
   const variants = {
@@ -273,6 +351,23 @@ export async function generateDraftResponse(letter: Letter, style: 'default' | '
 }
 
 export async function naturalLanguageSearch(query: string, letters: Letter[]): Promise<InterpretedQuery> {
+  return withLlm(
+    () => api.post<InterpretedQuery>(AI_ENDPOINTS.search, { query }),
+    () => naturalLanguageSearchMock(query, letters),
+  )
+}
+
+export async function assistantChat(message: string, letters: Letter[] = []): Promise<{ text: string; result?: InterpretedQuery }> {
+  return withLlm(
+    () => api.post<{ text: string; result: InterpretedQuery }>(AI_ENDPOINTS.chat, { message }),
+    async () => {
+      const result = await naturalLanguageSearchMock(message, letters)
+      return { text: result.summary, result }
+    },
+  )
+}
+
+async function naturalLanguageSearchMock(query: string, letters: Letter[]): Promise<InterpretedQuery> {
   await wait()
   const q = query.toLowerCase()
   const filters: Record<string, string> = {}
@@ -314,6 +409,13 @@ export async function naturalLanguageSearch(query: string, letters: Letter[]): P
 }
 
 export async function analyzeCorrespondence(letter: Letter, letters: Letter[]): Promise<CorrespondenceAnalysis> {
+  return withLlm(
+    () => api.post<CorrespondenceAnalysis>(AI_ENDPOINTS.analyze, { letterId: Number(letter.id) }),
+    () => analyzeCorrespondenceMock(letter, letters),
+  )
+}
+
+async function analyzeCorrespondenceMock(letter: Letter, letters: Letter[]): Promise<CorrespondenceAnalysis> {
   await wait()
   const related = letters.filter((item) => item.from === letter.from || item.department === letter.department || item.subject.split(' ')[0] === letter.subject.split(' ')[0])
   const duration = Math.max(letter.daysPending, 1)
@@ -346,6 +448,16 @@ export async function analyzeCorrespondence(letter: Letter, letters: Letter[]): 
 }
 
 export async function generateManagementInsights(letters: Letter[], departments: Department[] | DepartmentStat[]): Promise<ManagementInsight[]> {
+  return withLlm(
+    async () => {
+      const body = await api.post<{ insights: ManagementInsight[] }>(AI_ENDPOINTS.insights, {})
+      return body.insights
+    },
+    () => generateManagementInsightsMock(letters, departments),
+  )
+}
+
+async function generateManagementInsightsMock(letters: Letter[], departments: Department[] | DepartmentStat[]): Promise<ManagementInsight[]> {
   await wait()
   const overdue = letters.filter((l) => l.status === 'Overdue')
   const pending = letters.filter((l) => !['Closed', 'Completed'].includes(l.status))

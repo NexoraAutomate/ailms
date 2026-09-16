@@ -78,10 +78,11 @@ def validate_upload(file: UploadFile, size: int) -> tuple[str, str]:
     return original, ext
 
 
-def build_storage_key(*, letter_id: int, document_id: int, version_id: int, original_filename: str) -> str:
+def build_storage_key(*, letter_id: int, document_id: int, original_filename: str, version_id: int | None = None) -> str:
     safe = _safe_original_name(original_filename)
     token = uuid.uuid4().hex[:12]
-    return f"documents/{letter_id}/{document_id}/{version_id}_{token}_{safe}"
+    prefix = f"{version_id}_" if version_id is not None else ""
+    return f"documents/{letter_id}/{document_id}/{prefix}{token}_{safe}"
 
 
 def resolve_storage_path(storage_key: str) -> Path:
@@ -99,7 +100,7 @@ async def save_upload_file(
     upload: UploadFile,
     letter_id: int,
     document_id: int,
-    version_id: int,
+    version_id: int | None = None,
 ) -> tuple[str, int, str, str, str, str, str]:
     """Returns original_filename, size, file_type, mime, checksum, storage_key, stored_name."""
     content = await upload.read()

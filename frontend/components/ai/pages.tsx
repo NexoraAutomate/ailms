@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useAppData } from '@/components/app-provider'
 import { AIAdvisoryNote, AIInsightCard, AIStatusIndicator, AiBadge, SectionCard } from '@/components/ai/common'
 import { AIAnalysisPanel } from '@/components/ai/letter-tools'
-import { assistantPromptLibrary, generateManagementInsights, naturalLanguageSearch, type InterpretedQuery, type ManagementInsight } from '@/services/ai'
+import { assistantChat, assistantPromptLibrary, fetchAiStatus, generateManagementInsights, naturalLanguageSearch, type AiBackendStatus, type InterpretedQuery, type ManagementInsight } from '@/services/ai'
 import type { Letter } from '@/services/letters'
 
 type ChatItem = {
@@ -26,7 +26,12 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
   const [input, setInput] = useState('')
   const [status, setStatus] = useState<'idle' | 'generating' | 'error'>('idle')
   const [messages, setMessages] = useState<ChatItem[]>([])
+  const [aiBackend, setAiBackend] = useState<AiBackendStatus | null>(null)
   const prompts = assistantPromptLibrary()
+
+  useEffect(() => {
+    fetchAiStatus().then(setAiBackend)
+  }, [])
 
   const ask = async (question: string) => {
     const q = question.trim()
@@ -35,14 +40,20 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
     setMessages((current) => [...current, { id: `u-${Date.now()}`, role: 'user', text: q, time: nowLabel() }])
     setStatus('generating')
     try {
-      const result = await naturalLanguageSearch(q, letters)
+      const chat = await assistantChat(q, letters)
+      let text = chat.text
+      let result = chat.result
+      if (!result) {
+        result = await naturalLanguageSearch(q, letters)
+        text = result.summary
+      }
       const workload = q.toLowerCase().includes('workload') || q.toLowerCase().includes('department')
       const extra = workload
         ? departmentPerformance.slice().sort((a, b) => b.pending - a.pending)[0]
         : null
-      const text = extra
-        ? `${result.summary} ${extra.name} currently has the highest pending workload (${extra.pending}).`
-        : result.summary
+      if (extra && !aiBackend?.enabled) {
+        text = `${text} ${extra.name} currently has the highest pending workload (${extra.pending}).`
+      }
       setMessages((current) => [...current, { id: `a-${Date.now()}`, role: 'assistant', text, time: nowLabel(), result }])
       setStatus('idle')
     } catch {
@@ -68,12 +79,14 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <div>
             <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700"><Sparkles className="size-4 text-[#1769aa]" /> AI Assistant</h2>
-            <p className="text-[11px] text-slate-400">Mock intelligence over the current correspondence register</p>
+            <p className="text-[11px] text-slate-400">
+              {aiBackend?.enabled ? `Live reasoning · ${aiBackend.provider} / ${aiBackend.model}` : 'Rule-based fallback (configure LLM_API_KEY in backend .env for live model)'}
+            </p>
           </div>
           <Button size="sm" variant="outline" onClick={() => setMessages([])}>Clear conversation</Button>
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          {messages.length === 0 && <p className="text-sm text-slate-500">Ask about overdue items, department workload, or a specific organization. Responses are generated from mock rules, not a live model.</p>}
+          {messages.length === 0 && <p className="text-sm text-slate-500">Ask about overdue items, department workload, or a specific organization. Answers use the configured LLM when available, otherwise local rule-based fallback.</p>}
           {messages.map((message) => (
             <div key={message.id} className={`max-w-3xl rounded-lg p-3 ${message.role === 'user' ? 'ml-auto bg-[#0d3763] text-white' : 'bg-slate-50'}`}>
               <div className="mb-1 flex items-center justify-between gap-3">

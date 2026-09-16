@@ -72,6 +72,29 @@ def serialize_version(row: DocumentVersion) -> dict:
     }
 
 
+_UPLOAD_ROW_PLACEHOLDER = "pending"
+
+
+def _apply_upload_to_version(
+    version: DocumentVersion,
+    *,
+    original: str,
+    size: int,
+    file_type: str,
+    mime: str,
+    checksum: str,
+    storage_key: str,
+    stored_name: str,
+) -> None:
+    version.original_filename = original
+    version.filename = stored_name
+    version.file_type = file_type
+    version.mime_type = mime
+    version.file_size = size
+    version.storage_key = storage_key
+    version.checksum = checksum
+
+
 def serialize_document(db: Session, doc: Document) -> dict:
     versions = db.query(DocumentVersion).filter(DocumentVersion.document_id == doc.id).order_by(DocumentVersion.id).all()
     current = next((v for v in reversed(versions) if v.is_current), versions[-1] if versions else None)
@@ -108,6 +131,9 @@ async def create_document_with_upload(
     version = DocumentVersion(
         document_id=document.id,
         version_number="1.0",
+        filename=_UPLOAD_ROW_PLACEHOLDER,
+        original_filename=_UPLOAD_ROW_PLACEHOLDER,
+        storage_key=_UPLOAD_ROW_PLACEHOLDER,
         uploaded_by=actor,
         change_description=change_description or "Initial upload",
         status="Current",
@@ -122,13 +148,17 @@ async def create_document_with_upload(
         document_id=document.id,
         version_id=version.id,
     )
-    version.original_filename = original
-    version.filename = stored_name
-    version.file_type = file_type
-    version.mime_type = mime
-    version.file_size = size
-    version.storage_key = storage_key
-    version.checksum = checksum
+    _apply_upload_to_version(
+        version,
+        original=original,
+        size=size,
+        file_type=file_type,
+        mime=mime,
+        checksum=checksum,
+        storage_key=storage_key,
+        stored_name=stored_name,
+    )
+    db.flush()
 
     add_audit(
         db,
@@ -173,18 +203,21 @@ async def add_document_version(
         .order_by(DocumentVersion.id)
         .all()
     )
+    version_number = next_version_number([row.version_number for row in prior])
+    parent_id = prior[-1].id if prior else None
+
     for row in prior:
         if row.is_current:
             row.is_current = False
             row.status = "Historical"
 
-    version_number = next_version_number([row.version_number for row in prior])
-    parent_id = prior[-1].id if prior else None
-
     version = DocumentVersion(
         document_id=document.id,
         version_number=version_number,
         parent_version_id=parent_id,
+        filename=_UPLOAD_ROW_PLACEHOLDER,
+        original_filename=_UPLOAD_ROW_PLACEHOLDER,
+        storage_key=_UPLOAD_ROW_PLACEHOLDER,
         uploaded_by=actor,
         change_description=change_description or f"Version {version_number}",
         status="Current",
@@ -199,13 +232,17 @@ async def add_document_version(
         document_id=document.id,
         version_id=version.id,
     )
-    version.original_filename = original
-    version.filename = stored_name
-    version.file_type = file_type
-    version.mime_type = mime
-    version.file_size = size
-    version.storage_key = storage_key
-    version.checksum = checksum
+    _apply_upload_to_version(
+        version,
+        original=original,
+        size=size,
+        file_type=file_type,
+        mime=mime,
+        checksum=checksum,
+        storage_key=storage_key,
+        stored_name=stored_name,
+    )
+    db.flush()
 
     add_audit(
         db,
