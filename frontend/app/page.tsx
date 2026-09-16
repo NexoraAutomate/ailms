@@ -1130,6 +1130,7 @@ function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: (p: str
         relationshipType,
         remarks,
       })
+      setToLetterId('')
       setRemarks('')
       await load()
     } catch (err) {
@@ -1137,26 +1138,43 @@ function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: (p: str
     }
   }
 
+  const relationshipFor = (nodeId: string) => {
+    if (!thread) return 'Related'
+    const edge = thread.edges.find(
+      (e) =>
+        (e.fromLetterId === letter.id && e.toLetterId === nodeId) ||
+        (e.toLetterId === letter.id && e.fromLetterId === nodeId),
+    )
+    return edge?.relationshipType ?? 'Related'
+  }
+
+  const linkedNodes = thread?.nodes.filter((node) => node.id !== letter.id) ?? []
+
   return (
     <Card className="mt-5 p-5">
-      <h2 className="mb-3 text-sm font-bold text-slate-700">Correspondence thread</h2>
+      <h2 className="mb-1 text-sm font-bold text-slate-700">Reference & linked letters</h2>
+      <p className="mb-3 text-xs text-slate-400">Select a linked letter to open its detail record.</p>
       {loading && <p className="text-xs text-slate-500">Loading thread…</p>}
       {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
       {!loading && thread && (
         <div className="space-y-2">
-          {thread.nodes.map((node) => (
+          {linkedNodes.length === 0 && <p className="text-xs text-slate-500">No reference or linked letters yet.</p>}
+          {linkedNodes.map((node) => (
             <button
               key={node.id}
               type="button"
               onClick={() => go(node.id)}
-              className={`w-full rounded-md border px-3 py-2 text-left text-xs ${node.id === letter.id ? 'border-[#1769aa] bg-blue-50' : 'border-slate-100 bg-slate-50 hover:bg-white'}`}
+              className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs transition-colors hover:border-[#1769aa] hover:bg-white"
             >
-              <p className="font-semibold text-slate-700">{node.number} · {node.subject}</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-semibold text-slate-700">{node.number} · {node.subject}</p>
+                <Badge tone="blue">{relationshipFor(node.id)}</Badge>
+              </div>
               <p className="text-slate-500">{node.letterDate} · {node.type} · {node.status}</p>
-              <p className="text-slate-400">{node.from} → {node.to} · {node.actionStatus}</p>
+              <p className="text-slate-400">{node.from} → {node.to}</p>
+              <p className="mt-1 font-semibold text-[#1769aa] group-hover:underline">Open letter →</p>
             </button>
           ))}
-          {thread.nodes.length <= 1 && <p className="text-xs text-slate-500">No linked correspondence yet.</p>}
         </div>
       )}
       <div className="mt-4 grid gap-2 border-t border-slate-100 pt-4 sm:grid-cols-3">
@@ -1784,10 +1802,28 @@ function Database({ page, query, go, aiSearch, onClearAi, refresh }: { page: str
   )
 }
 
+type PendingReferenceLink = {
+  key: string
+  letterId: string
+  relationshipType: string
+  remarks: string
+  file: File | null
+}
+
 function Register({ go }: { go: (p: string) => void }) {
-  const { registerLetter, departments, organizations, users, masterData } = useAppData()
+  const { registerLetter, departments, organizations, users, masterData, letters } = useAppData()
   const [saved, setSaved] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const documentTypes = masterData['Document Types'] ?? ['Original Letter', 'Scanned Letter', 'Supporting Document', 'Reference Document']
+  const [letterCopyType, setLetterCopyType] = useState(documentTypes.includes('Original Letter') ? 'Original Letter' : documentTypes[0])
+  const [letterCopyFile, setLetterCopyFile] = useState<File | null>(null)
+  const [relationTypes, setRelationTypes] = useState<string[]>(['Reference', 'Related'])
+  const [refLetterId, setRefLetterId] = useState('')
+  const [refRelationshipType, setRefRelationshipType] = useState('Reference')
+  const [refRemarks, setRefRemarks] = useState('')
+  const [refFile, setRefFile] = useState<File | null>(null)
+  const [pendingReferences, setPendingReferences] = useState<PendingReferenceLink[]>([])
   const [form, setForm] = useState({
     number: '',
     letterDate: '',
@@ -1806,18 +1842,84 @@ function Register({ go }: { go: (p: string) => void }) {
     status: 'Registered',
   })
   const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
+
+  useEffect(() => {
+    listRelationTypes()
+      .then((res) => {
+        if (res.types.length) {
+          setRelationTypes(res.types)
+          setRefRelationshipType(res.types.includes('Reference') ? 'Reference' : res.types[0])
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const addPendingReference = () => {
+    if (!refLetterId) {
+      setError('Select a reference letter to link.')
+      return
+    }
+    if (pendingReferences.some((item) => item.letterId === refLetterId)) {
+      setError('That letter is already in the reference list.')
+      return
+    }
+    setPendingReferences((current) => [
+      ...current,
+      {
+        key: `${refLetterId}-${Date.now()}`,
+        letterId: refLetterId,
+        relationshipType: refRelationshipType,
+        remarks: refRemarks,
+        file: refFile,
+      },
+    ])
+    setRefLetterId('')
+    setRefRemarks('')
+    setRefFile(null)
+    setError('')
+  }
+
   const submit = async (status: LetterStatus) => {
     setError('')
     if (!form.number || !form.letterDate || !form.subject) {
       setError('Letter number, letter date and subject are required.')
       return
     }
+    setBusy(true)
     try {
-      await registerLetter({ ...form, type: form.type as Letter['type'], priority: form.priority as Letter['priority'], status, lastAction: status === 'Registered' ? 'Registered' : 'Saved as draft' })
+      const created = await registerLetter({
+        ...form,
+        type: form.type as Letter['type'],
+        priority: form.priority as Letter['priority'],
+        status,
+        lastAction: status === 'Registered' ? 'Registered' : 'Saved as draft',
+      })
+      if (letterCopyFile) {
+        await uploadLetterDocument(created.id, letterCopyFile, letterCopyType, 'Letter copy uploaded at registration')
+      }
+      for (const link of pendingReferences) {
+        await createRelation({
+          fromLetterId: Number(created.id),
+          toLetterId: Number(link.letterId),
+          relationshipType: link.relationshipType,
+          remarks: link.remarks,
+        })
+        const linked = letters.find((item) => item.id === link.letterId)
+        if (link.file) {
+          await uploadLetterDocument(
+            created.id,
+            link.file,
+            'Reference Document',
+            linked ? `Reference copy: ${linked.number}` : 'Reference letter copy',
+          )
+        }
+      }
       setSaved(true)
-      setTimeout(() => go('All Letters'), 400)
+      setTimeout(() => go(created.id), 400)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to register letter')
+    } finally {
+      setBusy(false)
     }
   }
   return (
@@ -1844,11 +1946,73 @@ function Register({ go }: { go: (p: string) => void }) {
           <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Action required</span><input value={form.actionRequired} onChange={(e) => set('actionRequired', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
           <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Initial remarks</span><textarea rows={3} value={form.remarks} onChange={(e) => set('remarks', e.target.value)} className="rounded-md border border-slate-200 px-3 py-2 text-xs" /></label>
         </div>
+        <div className="border-t border-slate-200 px-5 py-4">
+          <h2 className="text-sm font-bold text-slate-700">Letter copy</h2>
+          <p className="mt-1 text-xs text-slate-400">Optional scanned or digital copy of this letter.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-slate-600">Document type</span>
+              <select value={letterCopyType} onChange={(e) => setLetterCopyType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                {documentTypes.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5 sm:col-span-2">
+              <span className="text-xs font-semibold text-slate-600">Upload letter copy</span>
+              <input type="file" onChange={(e) => setLetterCopyFile(e.target.files?.[0] ?? null)} className="text-xs" />
+            </label>
+          </div>
+        </div>
+        <div className="border-t border-slate-200 px-5 py-4">
+          <h2 className="text-sm font-bold text-slate-700">Reference letters</h2>
+          <p className="mt-1 text-xs text-slate-400">Link existing correspondence as references. After registration you can open each linked letter from the letter detail page.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5 sm:col-span-2">
+              <span className="text-xs font-semibold text-slate-600">Reference letter</span>
+              <select value={refLetterId} onChange={(e) => setRefLetterId(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                <option value="">Select letter…</option>
+                {letters.map((l) => <option key={l.id} value={l.id}>{l.number} · {l.subject}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-slate-600">Relationship</span>
+              <select value={refRelationshipType} onChange={(e) => setRefRelationshipType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                {relationTypes.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-slate-600">Reference copy (optional)</span>
+              <input type="file" onChange={(e) => setRefFile(e.target.files?.[0] ?? null)} className="text-xs" />
+            </label>
+            <label className="flex flex-col gap-1.5 sm:col-span-2">
+              <span className="text-xs font-semibold text-slate-600">Remarks</span>
+              <input value={refRemarks} onChange={(e) => setRefRemarks(e.target.value)} placeholder="Optional link notes" className="h-10 rounded-md border border-slate-200 px-3 text-xs" />
+            </label>
+            <div className="sm:col-span-2">
+              <Button type="button" size="sm" variant="outline" onClick={addPendingReference}>Add reference letter</Button>
+            </div>
+          </div>
+          {pendingReferences.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {pendingReferences.map((item) => {
+                const linked = letters.find((l) => l.id === item.letterId)
+                return (
+                  <div key={item.key} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                    <div>
+                      <p className="font-semibold text-slate-700">{linked?.number ?? item.letterId} · {linked?.subject ?? 'Letter'}</p>
+                      <p className="text-slate-500">{item.relationshipType}{item.file ? ` · copy: ${item.file.name}` : ''}{item.remarks ? ` · ${item.remarks}` : ''}</p>
+                    </div>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setPendingReferences((current) => current.filter((row) => row.key !== item.key))}>Remove</Button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
         <datalist id="orgs">{organizations.map((org) => <option key={org.name} value={org.name} />)}</datalist>
         {error && <p className="px-5 pb-2 text-xs text-red-600">{error}</p>}
         <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
-          <Button variant="outline" onClick={() => submit('Registered')}>Save as draft</Button>
-          <Button onClick={() => submit('Registered')}>Register letter</Button>
+          <Button variant="outline" disabled={busy} onClick={() => submit('Registered')}>Save as draft</Button>
+          <Button disabled={busy} onClick={() => submit('Registered')}>Register letter</Button>
         </div>
       </Card>
       {saved && <div className="fixed bottom-5 right-5 rounded-lg bg-[#102a43] px-4 py-3 text-xs font-semibold text-white">Letter saved successfully.</div>}
