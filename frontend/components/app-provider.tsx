@@ -22,6 +22,7 @@ import {
   type DepartmentStat,
   type Organization,
 } from '@/services/management'
+import { formatDateTime } from '@/lib/datetime'
 
 type AppData = BootstrapData & {
   loading: boolean
@@ -95,7 +96,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       setAiAudit((current) => [
         {
           id: `${Date.now()}-${field}`,
-          date: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          date: formatDateTime(new Date()),
           user,
           module: 'AI Intelligence',
           action: decision === 'rejected' ? 'AI Suggestion Rejected' : 'AI Suggestion Applied',

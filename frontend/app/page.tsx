@@ -70,6 +70,7 @@ import {
   type LetterDocument,
 } from '@/services/documents'
 import { createRelation, fetchCorrespondenceThread, listRelationTypes, type CorrespondenceThread } from '@/services/correspondence'
+import { formatDateTime, formatHeaderDate } from '@/lib/datetime'
 import {
   addMeetingAction,
   createMeeting,
@@ -223,7 +224,7 @@ function Header({ setMobile, query, setQuery, go }: { setMobile: (v: boolean) =>
   const [dark, setDark] = useState(false)
   const [pwdOpen, setPwdOpen] = useState(false)
   const [newPassword, setNewPassword] = useState('')
-  const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const today = formatHeaderDate()
 
   const toggleTheme = () => {
     const next = !dark
@@ -242,7 +243,9 @@ function Header({ setMobile, query, setQuery, go }: { setMobile: (v: boolean) =>
         <Menu className="size-5 text-slate-600" />
       </button>
       <div className="hidden min-w-0 flex-1 md:block">
-        <p className="text-xs text-slate-400">{today}</p>
+        <p className="text-xs text-slate-400" suppressHydrationWarning>
+          {today}
+        </p>
         <p className="truncate text-sm font-semibold text-slate-700">{settings.systemName || 'Correspondence Management System'}</p>
       </div>
       <div className="relative flex-1 md:max-w-sm">
@@ -974,7 +977,7 @@ function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users: { nam
             {history.slice(0, 8).map((item) => (
               <div key={item.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
                 <p className="font-semibold text-slate-700">{workflowActionLabel(item.action)} · {item.fromStatus} → {item.toStatus}</p>
-                <p className="text-slate-500">{item.performedBy} · {new Date(item.createdAt).toLocaleString()}</p>
+                <p className="text-slate-500">{item.performedBy} · {formatDateTime(item.createdAt)}</p>
                 {item.remarks && <p className="mt-1 text-slate-600">{item.remarks}</p>}
               </div>
             ))}

@@ -8,6 +8,7 @@ import { AIAdvisoryNote, AIInsightCard, AIStatusIndicator, AiBadge, SectionCard 
 import { AIAnalysisPanel } from '@/components/ai/letter-tools'
 import { assistantChat, assistantPromptLibrary, fetchAiStatus, generateManagementInsights, naturalLanguageSearch, type AiBackendStatus, type InterpretedQuery, type ManagementInsight } from '@/services/ai'
 import type { Letter } from '@/services/letters'
+import { formatDateTime } from '@/lib/datetime'
 
 type ChatItem = {
   id: string
@@ -18,7 +19,7 @@ type ChatItem = {
 }
 
 function nowLabel() {
-  return new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return formatDateTime(new Date())
 }
 
 export function AIAssistant({ go }: { go: (page: string) => void }) {
