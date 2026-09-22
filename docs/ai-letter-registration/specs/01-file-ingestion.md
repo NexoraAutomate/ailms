@@ -70,9 +70,9 @@ No FK to `cms_letters`.
 
 ## I. UI behavior
 
-On **Register Letter**, add mode toggle: **Manual** (existing form) | **Upload & analyze**.
+On **Register Letter** (`/letters/register`, `components/cms/register-letter.tsx`), add mode toggle: **Manual** (existing form) | **Upload & analyze**.
 
-Upload mode: user selects file → upload → show staged id + “Start analysis” (creates job in spec 10).
+Upload mode: user selects file → upload → show staged id + “Start analysis” (creates job in spec 10). Prefer navigating to a dedicated review route when the job reaches `NEEDS_REVIEW` (see spec 07).
 
 ## J. Failure modes
 

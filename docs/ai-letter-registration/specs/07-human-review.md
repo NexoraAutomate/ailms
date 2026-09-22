@@ -43,6 +43,7 @@ Present AI proposal alongside the source document; allow edit, reject, or explic
 |-------|------|
 | API | `backend/app/routers/ai_registration.py` |
 | UI | `frontend/components/ai/registration-review.tsx` |
+| Route | `frontend/app/(cms)/letters/register/review/[jobId]/page.tsx` (proposed) |
 | Service | `frontend/services/ai-registration.ts` |
 
 ## G. Data model
@@ -93,9 +94,9 @@ Body: `{ "confirm": true }` → spec 08; returns `{ "letterId": "123", "jobStatu
 
 **Register Letter flow:**
 
-1. Upload → create job → poll status.
-2. Auto-navigate to review when `NEEDS_REVIEW`.
-3. Manual register path unchanged.
+1. From `/letters/register`, upload → create job → poll status.
+2. Auto-navigate to review when `NEEDS_REVIEW` (proposed path `/letters/register/review/{jobId}` via `useGo()` / `router.push`).
+3. Manual register path at `/letters/register` unchanged.
 
 ## J. Failure modes
 

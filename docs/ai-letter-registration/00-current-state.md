@@ -1,6 +1,6 @@
 # AI Letter Registration — Current Repository State
 
-**Status:** CURRENT STATE (as inspected 2026-09-20)  
+**Status:** CURRENT STATE (as inspected 2026-09-20; frontend routing updated 2026-09-22)  
 **Scope:** Describes what exists today. Not the proposed AI registration design.
 
 ---
@@ -10,7 +10,7 @@
 | Area | Path | Notes |
 |------|------|--------|
 | Backend API | `backend/` | FastAPI, SQLAlchemy 2, PostgreSQL via `psycopg` |
-| Frontend | `frontend/` | Next.js 16 (App Router), React 19, Tailwind 4, single-page shell in `app/page.tsx` |
+| Frontend | `frontend/` | Next.js 16 (App Router), React 19, Tailwind 4; CMS under `app/(cms)/` + `components/cms/` |
 | Workspace | `AILMS.code-workspace` | Multi-root workspace file |
 | Docker / Compose | — | **Not present** in repository |
 | AI planning docs | `docs/ai-letter-registration/` | Created by this planning phase |
@@ -19,28 +19,44 @@
 
 ## Frontend architecture
 
-- **Framework:** Next.js App Router (`frontend/app/`). Primary UI is a client component monolith: `frontend/app/page.tsx` (~2100 lines) with in-app “pages” driven by React state (not file-based routes for CMS features).
-- **API access:** `frontend/lib/api.ts` — JSON fetch to `/api/*`; `next.config.mjs` rewrites `/api/*` → `http://127.0.0.1:8000/api/*`.
-- **State:** `frontend/components/app-provider.tsx` loads letters, users, departments, etc., and exposes `registerLetter`.
+- **Framework:** Next.js App Router (`frontend/app/`). CMS screens use **file-based routes** in the `(cms)` route group (URLs unchanged by the group name). Shared chrome lives in `app/(cms)/layout.tsx` → `CmsShell` (`components/cms/shell.tsx`).
+- **Feature UI:** Screen bodies live under `frontend/components/cms/` (e.g. `register-letter.tsx`, `dashboard.tsx`, `letter-details.tsx`). Thin `page.tsx` files under `app/(cms)/…` mount those components.
+- **Navigation:** Sidebar uses `Link` + `hrefForLabel` (`lib/cms-nav.ts`). In-app helpers still call `go(target)` via `useGo()` (`hooks/use-go.ts`), which maps legacy labels / ids (`Register Letter`, bare letter id, `meeting:…`, `Settings:users`) to real paths (`/letters/register`, `/letters/{id}`, etc.).
+- **API access:** `frontend/lib/api.ts` — JSON fetch to `/api/*`; `next.config.mjs` rewrites `/api/*` → `http://127.0.0.1:8000/api/*`. `NEXT_PUBLIC_API_URL` is optional and unset by default (relative `/api` + rewrite).
+- **State:** `frontend/components/app-provider.tsx` wraps the CMS layout; loads letters, users, departments, etc., and exposes `registerLetter`. Header search/AI NL query lives in `CmsSearchProvider`.
 - **Styling:** Tailwind + shadcn-style `Button` component.
-- **Demo/marketing:** `frontend/app/demo/*` — showcase/video routes separate from production CMS shell.
+- **Demo/marketing:** `frontend/app/demo/*` — showcase/video routes **outside** the CMS layout (no shared shell/provider).
+
+### Key CMS routes (current)
+
+| Screen | Path |
+|--------|------|
+| Dashboard | `/` |
+| All Letters | `/letters` |
+| Register Letter | `/letters/register` |
+| Letter detail | `/letters/[id]` |
+| AI Assistant / Insights / Analysis | `/ai/assistant`, `/ai/insights`, `/ai/analysis` |
+| Meetings | `/meetings`, `/meetings/[id]` |
+| Import / Export | `/operations/import`, `/operations/export` |
+| Settings | `/settings`, `/settings/[tab]` |
 
 ### Letter registration (current UX)
 
-- Navigation item **Register Letter** renders `Register()` in `page.tsx`.
+- Sidebar / nav **Register Letter** → `/letters/register` → `Register` in `components/cms/register-letter.tsx`.
 - Flow today:
   1. User fills manual form (number, dates, subject, from/to, department, etc.).
   2. `POST /api/letters` creates `cms_letters` row immediately.
   3. Optional file upload **after** letter exists via `POST /api/letters/{id}/documents/upload`.
   4. Optional correspondence relations and reference document uploads.
+  5. On success, `go(created.id)` navigates to `/letters/{id}`.
 - **No OCR, no document-first staging, no human-in-the-loop AI registration.**
 
 ### Existing AI UI (advisory only)
 
-- `frontend/components/ai/letter-tools.tsx` — panels for summarize, extract, classify, etc., on **existing** letters.
+- `frontend/components/ai/letter-tools.tsx` — panels for summarize, extract, classify, etc., on **existing** letters (letter detail route).
 - `AIAnalyzeDocument` explicitly states: *“Mock document analysis… No OCR or live model is used.”* It calls `summarizeLetter` on letter metadata only, not file content.
 - `frontend/services/ai.ts` — API client + **rule-based fallbacks** when LLM unavailable.
-- AI pages: Assistant, Insights, Search — operate on register metadata, not uploaded PDF text.
+- AI routes: Assistant, Insights, Analysis — operate on register metadata, not uploaded PDF text.
 
 ---
 
@@ -74,7 +90,7 @@ OpenAPI: `http://127.0.0.1:8000/docs`
 - **Actor identity:** `current_user_name(db)` reads `AppSetting` key `currentUser` (default `"A. Rahman"`) — see `backend/app/services.py`.
 - **Users & roles:** `cms_users`, `cms_roles` with `permissions_json`; used heavily in **workflow** and **bulk** operations, not on most letter/document endpoints.
 - **Sessions:** `cms_user_sessions` tracked for administration UI; not used as API auth gate.
-- **Frontend:** No login gate in `page.tsx`; administration settings can change “current user” via settings API.
+- **Frontend:** No login gate on CMS routes; administration settings can change “current user” via settings API.
 
 **OPEN QUESTION:** Production auth model (SSO, API keys) is out of scope for this repo snapshot; AI registration plan must align with whatever auth is added later, but should use the same `current_user_name` + role checks as other mutating operations until then.
 

@@ -60,7 +60,7 @@ Errors:
 
 ## I. UI behavior
 
-On success → navigate to letter detail (`go(letterId)`), toast “Letter registered”.
+On success → navigate to letter detail (`go(letterId)` → `/letters/{id}` via `useGo` / `resolveNavHref`), toast “Letter registered”.
 
 ## J. Failure modes
 

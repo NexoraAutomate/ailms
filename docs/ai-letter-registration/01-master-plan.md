@@ -9,7 +9,7 @@
 
 ### Current architecture (summary)
 
-Single-page Next.js CMS → FastAPI → PostgreSQL + local filesystem storage. Letters are registered manually; documents attach afterward. LLM integration exists but reads **letter metadata only**; no OCR; no approval gate before persistence.
+Next.js App Router CMS (`app/(cms)/` + `components/cms/`) → FastAPI → PostgreSQL + local filesystem storage. Letters are registered manually at `/letters/register`; documents attach afterward. LLM integration exists but reads **letter metadata only**; no OCR; no approval gate before persistence.
 
 ### Target architecture (first phase)
 
@@ -200,7 +200,7 @@ For each step, the corresponding spec contains sections A–M. Below is the mast
 ### Step 11 — Review UI
 
 - **Objective:** Split view Register Letter flow: “Upload & analyze” path → review screen.
-- **Files:** New component e.g. `frontend/components/ai/registration-review.tsx`; extend `Register()` or new page state.
+- **Files:** New components e.g. `frontend/components/ai/registration-upload.tsx`, `registration-review.tsx`; extend `components/cms/register-letter.tsx` and/or add App Router pages such as `app/(cms)/letters/register/review/[jobId]/page.tsx` (prefer real routes over in-page state so review is bookmarkable).
 
 ### Step 12 — Registration commit
 
@@ -317,6 +317,7 @@ field_name, page, snippet, bbox_json, confidence — enables UI “source” lin
 - `frontend/services/ai-registration.ts`
 - `frontend/components/ai/registration-upload.tsx`
 - `frontend/components/ai/registration-review.tsx`
+- `frontend/app/(cms)/letters/register/review/[jobId]/page.tsx` (bookmarkable review)
 
 ### Fixtures
 
@@ -342,7 +343,9 @@ Already under `docs/ai-letter-registration/`.
 | `backend/app/llm_client.py` | vLLM provider, retries, logging redaction |
 | `backend/.env.example` | vLLM, OCR, AI storage |
 | `backend/requirements.txt` | OCR + PDF deps |
-| `frontend/app/page.tsx` | Register flow: AI path + review route |
+| `frontend/components/cms/register-letter.tsx` | Register flow: Manual vs Upload & analyze mode toggle |
+| `frontend/app/(cms)/letters/register/page.tsx` | Mount register UI; optional nested review routes |
+| `frontend/lib/cms-nav.ts` / `hooks/use-go.ts` | Add nav entries/hrefs for AI review if new labels/paths |
 | `frontend/components/ai/letter-tools.tsx` | Deprecate/mock note for old analyze path (optional) |
 
 **Do not modify** existing `/api/letters` contract behavior for manual registration.
