@@ -27,12 +27,16 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 25 * 1024 * 1024
 
     llm_enabled: bool = True
-    llm_provider: str = "openai"
-    llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o-mini"
-    llm_timeout_seconds: int = 90
-    llm_max_tokens: int = 2048
+    llm_provider: str = "ollama"
+    llm_api_key: str = "ollama"
+    llm_base_url: str = "http://127.0.0.1:11434/v1"
+    llm_model: str = "qwen3:8b"
+    llm_timeout_seconds: int = 120
+    llm_max_tokens: int = 4096
+    # Optional JSON object string merged into chat/completions request body (advanced).
+    llm_extra_body_json: str = ""
+    # When true, DEBUG-level logs may include document/user prompt text.
+    ai_log_document_text: bool = False
 
     @property
     def database_url(self) -> str:

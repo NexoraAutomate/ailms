@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from app.ai_service import (
     urgency,
 )
 from app.database import get_db
+from app.ai.llm_provider import get_llm_provider
 from app.llm_client import LlmNotConfiguredError, llm_is_configured
 from app.services import add_audit, current_user_name
 
@@ -40,12 +42,27 @@ class ChatIn(BaseModel):
 
 def _guard_configured() -> None:
     if not llm_is_configured():
-        raise HTTPException(status_code=503, detail="LLM not configured. Set LLM_API_KEY and LLM_MODEL in backend .env")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "LLM not configured. For Ollama set LLM_PROVIDER=ollama, LLM_BASE_URL, "
+                "and LLM_MODEL in backend .env (API key optional for local providers)."
+            ),
+        )
 
 
 @router.get("/status")
 def get_ai_status() -> dict:
     return ai_status()
+
+
+@router.get("/health/llm")
+async def get_llm_health():
+    """Probe the configured OpenAI-compatible LLM (Ollama by default)."""
+    result = await get_llm_provider().health()
+    if result.get("status") != "ok":
+        return JSONResponse(status_code=503, content=result)
+    return result
 
 
 @router.post("/summarize")
