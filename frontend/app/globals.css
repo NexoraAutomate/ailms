@@ -114,6 +114,33 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /*
+   * Remap Tailwind slate / tint tokens so existing utility classes
+   * (bg-slate-50, text-slate-700, border-slate-200, …) follow dark mode.
+   * Keep slate-900/950 dark for modal scrims (bg-slate-900/40).
+   */
+  --color-slate-50: oklch(0.22 0.01 255);
+  --color-slate-100: oklch(0.26 0.01 255);
+  --color-slate-200: oklch(1 0 0 / 12%);
+  --color-slate-300: oklch(1 0 0 / 18%);
+  --color-slate-400: oklch(0.65 0.02 255);
+  --color-slate-500: oklch(0.72 0.02 255);
+  --color-slate-600: oklch(0.82 0.01 255);
+  --color-slate-700: oklch(0.9 0.01 255);
+  --color-slate-800: oklch(0.95 0.005 255);
+  --color-blue-50: oklch(0.3 0.05 250);
+  --color-blue-100: oklch(0.32 0.06 250);
+  --color-red-50: oklch(0.28 0.06 25);
+  --color-red-100: oklch(0.32 0.08 25);
+  --color-amber-50: oklch(0.3 0.05 85);
+  --color-amber-100: oklch(0.34 0.07 85);
+  --color-emerald-50: oklch(0.28 0.05 160);
+  --color-emerald-100: oklch(0.32 0.07 160);
+  --color-indigo-50: oklch(0.28 0.06 275);
+  --color-indigo-100: oklch(0.32 0.08 275);
+  --color-violet-50: oklch(0.28 0.06 300);
+  --color-violet-100: oklch(0.32 0.08 300);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -150,6 +177,28 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+
+    --color-slate-50: oklch(0.22 0.01 255);
+    --color-slate-100: oklch(0.26 0.01 255);
+    --color-slate-200: oklch(1 0 0 / 12%);
+    --color-slate-300: oklch(1 0 0 / 18%);
+    --color-slate-400: oklch(0.65 0.02 255);
+    --color-slate-500: oklch(0.72 0.02 255);
+    --color-slate-600: oklch(0.82 0.01 255);
+    --color-slate-700: oklch(0.9 0.01 255);
+    --color-slate-800: oklch(0.95 0.005 255);
+    --color-blue-50: oklch(0.3 0.05 250);
+    --color-blue-100: oklch(0.32 0.06 250);
+    --color-red-50: oklch(0.28 0.06 25);
+    --color-red-100: oklch(0.32 0.08 25);
+    --color-amber-50: oklch(0.3 0.05 85);
+    --color-amber-100: oklch(0.34 0.07 85);
+    --color-emerald-50: oklch(0.28 0.05 160);
+    --color-emerald-100: oklch(0.32 0.07 160);
+    --color-indigo-50: oklch(0.28 0.06 275);
+    --color-indigo-100: oklch(0.32 0.08 275);
+    --color-violet-50: oklch(0.28 0.06 300);
+    --color-violet-100: oklch(0.32 0.08 300);
   }
 }
 
@@ -160,5 +209,30 @@
   html,
   body {
     @apply h-full overflow-hidden bg-background text-foreground;
+  }
+}
+
+/*
+ * Do not remap --color-white (breaks text-white on badges/buttons).
+ * Force card backgrounds for the common bg-white pattern instead.
+ * Theme class (.dark / .light) is set by the root layout script.
+ */
+@layer utilities {
+  .dark .bg-white {
+    background-color: var(--card);
+  }
+
+  .dark .bg-\[\#f5f8fb\] {
+    background-color: var(--background);
+  }
+
+  .dark .bg-\[\#dce9f7\] {
+    background-color: var(--accent);
+  }
+
+  .dark .text-\[\#102a43\],
+  .dark .text-\[\#0d3763\],
+  .dark .text-slate-900 {
+    color: var(--foreground);
   }
 }

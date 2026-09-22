@@ -46,6 +46,7 @@ import { useCmsSearch } from '@/components/cms/search-context'
 import { useGo } from '@/hooks/use-go'
 import { hrefForLabel, labelFromPathname, NAV_GROUPS } from '@/lib/cms-nav'
 import { formatHeaderDate } from '@/lib/datetime'
+import { applyTheme, getPreferredTheme } from '@/lib/theme'
 import { looksLikeNaturalQuery } from '@/services/ai'
 
 const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -166,10 +167,14 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
   const [newPassword, setNewPassword] = useState('')
   const today = formatHeaderDate()
 
+  useEffect(() => {
+    setDark(getPreferredTheme() === 'dark')
+  }, [])
+
   const toggleTheme = () => {
     const next = !dark
     setDark(next)
-    document.documentElement.classList.toggle('dark', next)
+    applyTheme(next ? 'dark' : 'light')
   }
 
   const toggleFullscreen = () => {
@@ -203,10 +208,10 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
           className="h-10 w-full rounded-md border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs outline-none ring-blue-500 focus:ring-2"
         />
       </div>
-      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={toggleFullscreen} title="Full screen">
+      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-100" onClick={toggleFullscreen} title="Full screen">
         <Maximize2 className="size-5" />
       </button>
-      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={toggleTheme} title="Toggle theme">
+      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-100" onClick={toggleTheme} title="Toggle theme">
         {dark ? <Sun className="size-5" /> : <Moon className="size-5" />}
       </button>
       <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={() => go('AI Assistant')} title="AI Assistant">

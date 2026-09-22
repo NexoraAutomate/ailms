@@ -4,13 +4,13 @@ import { BriefcaseBusiness, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 const toneClasses: Record<string, string> = {
-  slate: 'bg-slate-100 text-slate-700',
-  amber: 'bg-amber-100 text-amber-800',
-  blue: 'bg-blue-100 text-blue-800',
-  indigo: 'bg-indigo-100 text-indigo-800',
-  violet: 'bg-violet-100 text-violet-800',
-  green: 'bg-emerald-100 text-emerald-800',
-  red: 'bg-red-100 text-red-800',
+  slate: 'bg-slate-100 text-slate-700 dark:text-slate-200',
+  amber: 'bg-amber-100 text-amber-800 dark:text-amber-200',
+  blue: 'bg-blue-100 text-blue-800 dark:text-blue-200',
+  indigo: 'bg-indigo-100 text-indigo-800 dark:text-indigo-200',
+  violet: 'bg-violet-100 text-violet-800 dark:text-violet-200',
+  green: 'bg-emerald-100 text-emerald-800 dark:text-emerald-200',
+  red: 'bg-red-100 text-red-800 dark:text-red-200',
 }
 
 export function Badge({ children, tone = 'slate' }: { children: React.ReactNode; tone?: string }) {
