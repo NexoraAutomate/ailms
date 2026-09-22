@@ -26,7 +26,7 @@ Document and implement security measures for AI letter registration: untrusted d
 | Malicious file (polyglot, zip bomb) | Size limits, page limits, MIME/extension checks | Spec 01, 02 |
 | Unsafe PDF parsing | Use PyMuPDF with limits; no JS execution | Spec 02 |
 | Compromised OCR/ML packages | Pin versions; verify hashes; minimal deps | requirements.txt |
-| Excessive service privileges | Run API as non-admin; vLLM/OCR localhost only | Deploy doc |
+| Excessive service privileges | Run API as non-admin; Ollama/OCR localhost only | Deploy doc |
 | Confidential data in logs | Redaction policy (spec 09) | Config flags |
 
 ### AI must NOT

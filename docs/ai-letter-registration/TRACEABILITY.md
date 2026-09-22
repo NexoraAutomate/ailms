@@ -15,7 +15,7 @@ Legend: **Spec** = file in `docs/ai-letter-registration/specs/`
 | R-W1 | User uploads/scans document | 01 | `ingestion_service`, staged upload API | `test_ai_registration_ingestion.py` | curl upload → `stagedDocumentId`; file on disk |
 | R-W2 | OCR extracts text | 02 | `ocr_service`, worker | `test_ai_registration_ocr.py` | `ocr-output.json` with pages |
 | R-W3 | OCR normalized for LLM | 03 | `ocr_normalize.py` | `test_ai_registration_ocr_normalize.py` | `llm-input.txt` PAGE markers |
-| R-W4 | Local LLM analyzes OCR | 04, 05 | `llm_provider`, `extraction_service` | `test_ai_registration_extraction.py`, `verify_vllm.py` | `extraction-result.json` |
+| R-W4 | Local LLM analyzes OCR | 04, 05 | `llm_provider`, `extraction_service` | `test_ai_registration_extraction.py`, `verify_ollama.py` | `extraction-result.json` |
 | R-W5 | Structured fields extracted | 05 | `extraction_schema.py`, prompts v1 | schema unit tests | Pydantic validate artifact |
 | R-W6 | Fields validated | 06 | `validation_service.py` | `test_ai_registration_validation.py` | `validation-result.json` |
 | R-W7 | User reviews/edits proposal | 07 | review API + `registration-review.tsx` | manual + PATCH test | edited subject in GET |
@@ -54,16 +54,16 @@ Legend: **Spec** = file in `docs/ai-letter-registration/specs/`
 
 ---
 
-## vLLM / Qwen3-8B
+## Ollama / Qwen
 
 | ID | Requirement | Spec | Implementation | Test | Evidence |
 |----|-------------|------|----------------|------|----------|
-| R-L1 | Model download/configure | 04 | docs + HF id | manual | vLLM loads model |
-| R-L2 | vLLM startup | 04 | CLI procedure | curl `/v1/models` | 200 response |
+| R-L1 | Model download/configure | 04 | docs + Ollama tag | manual | `ollama list` shows model |
+| R-L2 | Ollama startup | 04 | CLI / Windows service | curl `/v1/models` | 200 response |
 | R-L3 | Health check | 04 | `/api/ai/health/llm` | pytest | status ok |
-| R-L4 | Test inference | 04 | `verify_vllm.py` | script exit 0 | JSON in response |
+| R-L4 | Test inference | 04 | `verify_ollama.py` | script exit 0 | JSON in response |
 | R-L5 | App connectivity | 04 | httpx client | integration | health via FastAPI |
-| R-L6 | Not hard-coded to Qwen | 04 | env `LLM_MODEL` | config test | change model string |
+| R-L6 | Not hard-coded to one model | 04 | env `LLM_MODEL` | config test | change model string |
 
 ---
 
@@ -122,7 +122,7 @@ Legend: **Spec** = file in `docs/ai-letter-registration/specs/`
 | `01-file-ingestion.md` | Staging upload |
 | `02-ocr.md` | Raw OCR |
 | `03-ocr-normalization.md` | LLM-ready text |
-| `04-llm-provider.md` | vLLM, Qwen3-8B, abstraction |
+| `04-llm-provider.md` | Ollama, Qwen tags, abstraction (optional vLLM) |
 | `05-structured-extraction.md` | Prompts, schema, evidence |
 | `06-validation.md` | Business rules |
 | `07-human-review.md` | Review UI/API |

@@ -102,7 +102,7 @@ Response excerpt:
     "extraction": "…",
     "validation": "…"
   },
-  "model": { "id": "Qwen/Qwen3-8B", "promptVersion": "registration_v1" },
+  "model": { "id": "qwen2.5:7b", "promptVersion": "registration_v1" },
   "approval": { "by": "A. Rahman", "at": "…" }
 }
 ```

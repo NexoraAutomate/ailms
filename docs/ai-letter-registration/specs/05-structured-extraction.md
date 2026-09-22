@@ -145,6 +145,6 @@ LetterExtractionResult.model_validate(json.load(open('backend/storage/ai/jobs/7/
 
 ## M. Acceptance criteria
 
-1. Given sample-01 normalized input and live vLLM, `extraction-result.json` validates against Pydantic schema.
+1. Given sample-01 normalized input and live Ollama, `extraction-result.json` validates against Pydantic schema.
 2. Given sample-05 (no deadline), `dueDate.value` is null and warning `FIELD_NOT_FOUND` present.
 3. Given sample-07, proposal does not contain attacker-controlled fields outside schema (no extra keys after validation).

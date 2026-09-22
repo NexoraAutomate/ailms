@@ -22,7 +22,7 @@ Background worker: OCR → raw artifact (ocr-output.json)
         ↓
 Normalize OCR → llm-input.json (page-aware text)
         ↓
-LLM provider (vLLM / Qwen3-8B default) → extraction-result.json (structured, untrusted)
+LLM provider (Ollama / Qwen default) → extraction-result.json (structured, untrusted)
         ↓
 Pydantic + business validation → validated proposal (NEEDS_REVIEW)
         ↓
@@ -65,7 +65,7 @@ flowchart TB
     FS[(Local storage)]
   end
   subgraph external [Local processes]
-    VLLM[vLLM OpenAI API]
+    OLLAMA[Ollama OpenAI API]
     PADDLE[PaddleOCR runtime]
   end
   UI --> ING
@@ -77,7 +77,7 @@ flowchart TB
   OCR --> FS
   JOB --> NORM
   JOB --> LLM
-  LLM --> VLLM
+  LLM --> OLLAMA
   JOB --> VAL
   UI --> REG
   REG --> PG
@@ -91,10 +91,11 @@ flowchart TB
 | PostgreSQL 16+ | Infra | All | Existing |
 | Python 3.11+ | Infra | Backend | Existing |
 | Node/pnpm | Infra | Frontend | Existing |
-| vLLM | Local service | LLM extraction | User-installed; separate port from API |
-| Qwen3-8B weights | Model files | LLM | Download step in spec `04-llm-provider.md` |
+| Ollama | Local service | LLM extraction | User-installed; default port **11434** (Windows native OK) |
+| Qwen model via Ollama | Model tag | LLM | e.g. `qwen2.5:7b` — see `04-llm-provider.md` |
 | PaddleOCR (+ optional pdf2image/PyMuPDF) | Python libs | OCR | **New** — recommended |
 | httpx | Python | LLM client | Existing |
+| (Optional) vLLM | Alternate LLM runtime | Extraction | Optional; Linux/WSL CUDA if preferred later |
 | (Optional) pdf.js or iframe preview | Frontend | Review UI | Existing preview API may suffice |
 
 ---
@@ -105,8 +106,8 @@ Each step maps to a spec file and produces a **verifiable artifact**.
 
 | Step | ID | Spec | Primary artifact |
 |------|-----|------|------------------|
-| 0 | Model & vLLM smoke test | `specs/04-llm-provider.md` | curl/OpenAI client response + `/api/ai/status` |
-| 1 | Config & provider abstraction | `specs/04-llm-provider.md` | Unit test: `vllm` provider configured without cloud key |
+| 0 | Model & Ollama smoke test | `specs/04-llm-provider.md` | curl/OpenAI client response + `/api/ai/status` |
+| 1 | Config & provider abstraction | `specs/04-llm-provider.md` | Unit test: `ollama` provider configured without cloud key |
 | 2 | DB schema for jobs & audit | `specs/09-audit-traceability.md`, `10-background-processing.md` | Migration/query shows empty tables |
 | 3 | Staged file ingestion (no letter yet) | `specs/01-file-ingestion.md` | Uploaded file + `cms_ai_staged_documents` row |
 | 4 | Job API + state machine | `specs/10-background-processing.md` | Job in `QUEUED` → API returns job id |
@@ -129,23 +130,23 @@ Steps 0–1 can run in parallel with step 2; OCR (5–6) depends on 3–4; LLM (
 
 For each step, the corresponding spec contains sections A–M. Below is the master-plan rollup.
 
-### Step 0 — vLLM + Qwen3-8B verification (pre-application)
+### Step 0 — Ollama + Qwen verification (pre-application)
 
 - **Objective:** Prove local inference before coding extraction.
-- **Why:** Model not downloaded yet; port/config risks.
+- **Why:** Confirm Ollama install, model pull, and OpenAI-compatible endpoint before wiring extraction.
 - **Files:** None in app; update `backend/.env.example` only when implementing step 1.
-- **Dependencies:** vLLM CLI, GPU/CPU RAM sufficient for 8B.
-- **Security:** vLLM bound to localhost only.
+- **Dependencies:** Ollama app; model tag that fits local VRAM (e.g. `qwen2.5:7b` on 12 GB).
+- **Security:** Ollama on localhost only (default).
 - **Verification:** Documented curl + `GET /v1/models` — see `specs/04-llm-provider.md` § L.
 - **Rollback:** N/A (no app change).
 
 ### Step 1 — LLM provider abstraction extension
 
-- **Objective:** Support `LLM_PROVIDER=vllm` with OpenAI-compatible client; health probe.
+- **Objective:** Ensure `LLM_PROVIDER=ollama` works end-to-end with OpenAI-compatible client; health probe. Keep optional `vllm` path for later.
 - **Files (proposed):** `backend/app/llm_client.py`, `backend/app/config.py`, `backend/app/ai/llm_provider.py` (new module), `backend/tests/test_llm_provider.py`.
 - **DB impact:** None.
 - **API impact:** Optional `GET /api/ai/health/llm`.
-- **Acceptance:** With vLLM running, health returns `ok` and test prompt returns JSON.
+- **Acceptance:** With Ollama running, health returns `ok` and test prompt returns JSON.
 
 ### Step 2 — Database schema
 
@@ -310,7 +311,7 @@ field_name, page, snippet, bbox_json, confidence — enables UI “source” lin
 - `backend/tests/test_ai_registration_validation.py`
 - `backend/tests/test_ai_registration_e2e.py`
 - `backend/scripts/run_ai_job.py` (CLI debug)
-- `backend/scripts/verify_vllm.py`
+- `backend/scripts/verify_ollama.py`
 
 ### Frontend
 
@@ -337,11 +338,11 @@ Already under `docs/ai-letter-registration/`.
 |------|----------------|
 | `backend/app/models.py` | New AI tables |
 | `backend/app/db_upgrade.py` | Create/alter AI tables |
-| `backend/app/config.py` | OCR paths, vLLM, worker toggles |
+| `backend/app/config.py` | OCR paths, Ollama/LLM, worker toggles |
 | `backend/app/main.py` | Register router; start AI worker |
 | `backend/app/jobs.py` | AI worker thread |
-| `backend/app/llm_client.py` | vLLM provider, retries, logging redaction |
-| `backend/.env.example` | vLLM, OCR, AI storage |
+| `backend/app/llm_client.py` | Ollama (OpenAI-compatible) client, retries, logging redaction |
+| `backend/.env.example` | Ollama (default), optional vLLM, OCR, AI storage |
 | `backend/requirements.txt` | OCR + PDF deps |
 | `frontend/components/cms/register-letter.tsx` | Register flow: Manual vs Upload & analyze mode toggle |
 | `frontend/app/(cms)/letters/register/page.tsx` | Mount register UI; optional nested review routes |
@@ -364,7 +365,7 @@ Already under `docs/ai-letter-registration/`.
 | `pillow` | Image handling |
 | `jsonschema` or pydantic only | Validation (prefer Pydantic v2 already via FastAPI) |
 
-**ASSUMPTION:** PaddleOCR chosen for offline/local alignment with vLLM; Tesseract acceptable fallback — document in `02-ocr.md`.
+**ASSUMPTION:** PaddleOCR chosen for offline/local alignment with Ollama; Tesseract acceptable fallback — document in `02-ocr.md`.
 
 ### Node
 
@@ -380,17 +381,17 @@ Already under `docs/ai-letter-registration/`.
 1. Start PostgreSQL; ensure `ailms` DB (auto-created on API start).
 2. Backend venv: `pip install -r requirements.txt` (+ OCR extras after step 5).
 3. Copy `backend/.env.example` → `.env`; set PostgreSQL credentials.
-4. Start vLLM on port **8001** (avoid clash with API 8000):
+4. Install Ollama; pull a Qwen tag that fits VRAM (default for ~12 GB):
    ```bash
-   vllm serve Qwen/Qwen3-8B --host 127.0.0.1 --port 8001
+   ollama pull qwen2.5:7b
    ```
-   **Note:** Confirm exact Hugging Face model id at implementation time (e.g. `Qwen/Qwen3-8B` or `-Instruct` variant).
+   Confirm OpenAI-compatible API on port **11434** (does not clash with FastAPI 8000).
 5. Configure backend:
    ```env
-   LLM_PROVIDER=vllm
-   LLM_BASE_URL=http://127.0.0.1:8001/v1
-   LLM_API_KEY=EMPTY
-   LLM_MODEL=Qwen/Qwen3-8B
+   LLM_PROVIDER=ollama
+   LLM_BASE_URL=http://127.0.0.1:11434/v1
+   LLM_API_KEY=ollama
+   LLM_MODEL=qwen2.5:7b
    ```
 6. Run API: `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`
 7. Frontend: `pnpm install && pnpm dev` in `frontend/`.
@@ -398,17 +399,17 @@ Already under `docs/ai-letter-registration/`.
 
 ---
 
-## 11. Qwen3-8B / vLLM verification procedure (summary)
+## 11. Ollama / Qwen verification procedure (summary)
 
 Full detail: `specs/04-llm-provider.md`.
 
-1. Download model: `huggingface-cli download Qwen/Qwen3-8B` (or vLLM auto-download on first serve).
-2. Start vLLM; `curl http://127.0.0.1:8001/v1/models`.
+1. Install Ollama; `ollama pull qwen2.5:7b` (or another configured tag).
+2. `curl http://127.0.0.1:11434/v1/models`.
 3. Chat completion with known prompt; expect non-empty JSON/text.
-4. Run `backend/scripts/verify_vllm.py` (to be added) — exits 0.
+4. Run `backend/scripts/verify_ollama.py` (to be added) — exits 0.
 5. After FastAPI wiring: `GET /api/ai/health/llm` returns `{ "status": "ok", "model": "…" }`.
 
-For Qwen3 reasoning mode: disable thinking for structured JSON via `extra_body` / chat template kwargs per vLLM docs.
+If Qwen3 thinking/reasoning tags pollute JSON: prefer `qwen2.5` Instruct-style tags or rely on `chat_json` repair.
 
 ---
 
@@ -430,12 +431,13 @@ Full detail: `specs/12-testing-and-acceptance.md`.
 
 | ID | Risk / question | Mitigation / note |
 |----|-----------------|-------------------|
-| R1 | vLLM port 8000 conflicts with FastAPI | Use 8001+ for vLLM |
-| R2 | 8B model RAM/VRAM | Quantization / smaller fallback for dev |
+| R1 | Ollama not running / model not pulled | Health check + clear UI warning; Step 0 curls |
+| R2 | Model VRAM on 12 GB GPUs | Prefer `qwen2.5:7b` (or smaller); avoid oversized tags |
 | R3 | PaddleOCR install size on Windows | Document CPU-only install; WSL optional |
 | R4 | No real API authentication | Scope jobs by `created_by`; add auth middleware later |
-| R5 | Qwen3 JSON + reasoning output | Disable thinking; strict JSON schema + repair pass |
+| R5 | Model JSON / reasoning noise | Prefer Instruct/`qwen2.5`; strict JSON schema + repair pass |
 | R6 | OCR quality on Urdu/Arabic | **OPEN QUESTION** — multilingual model selection |
+| R7 | Optional vLLM path (WSL CUDA) | Deferred; Ollama is default on Windows |
 | D1 | Draft letter row vs staged document only | **Recommend staged document only** until approve |
 | D2 | Store `summary` on letter table | Defer column; keep in proposal JSON first |
 | D3 | Separate microservice for OCR | Defer; in-process for phase 1 |

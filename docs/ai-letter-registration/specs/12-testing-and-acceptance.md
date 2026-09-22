@@ -37,7 +37,7 @@ upload → job → worker (mock) → NEEDS_REVIEW → approve → PostgreSQL
 
 File: `backend/tests/test_ai_registration_e2e.py`
 
-Optional `@pytest.mark.live` for real vLLM + PaddleOCR (developer machine only).
+Optional `@pytest.mark.live` for real Ollama + PaddleOCR (developer machine only).
 
 ### Security tests
 
@@ -97,7 +97,7 @@ Manual QA checklist (release):
 
 ## J. Failure modes
 
-- Live tests skipped if vLLM not running (`pytest -m "not live"`)
+- Live tests skipped if Ollama not running (`pytest -m "not live"`)
 
 ## K. Security controls
 
@@ -119,7 +119,7 @@ cd backend && python -m pytest tests/test_ai_registration_*.py -m "not live" -v
 cd backend && python -m pytest tests/test_ai_registration_e2e.py -m live -v
 ```
 
-Requires vLLM + OCR deps running.
+Requires Ollama + OCR deps running.
 
 **Database assertion helper:**
 

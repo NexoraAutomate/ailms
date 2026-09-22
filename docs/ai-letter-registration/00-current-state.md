@@ -163,9 +163,7 @@ All application tables use prefix `cms_*` in database `ailms` (configurable).
 | Router | `backend/app/routers/ai.py` | Returns 503 if not configured |
 | Tests | `backend/tests/test_llm.py` | Config boolean only |
 
-**vLLM / Qwen3-8B:** Not referenced in repo. User has vLLM installed locally; wiring would use OpenAI-compatible base URL (typically separate port from FastAPI `8000`).
-
-**Gap for local vLLM:** Plan should add provider `vllm` (or treat like `ollama`) so empty/dummy API key works.
+**Ollama / Qwen (planned default):** Repo already supports `LLM_PROVIDER=ollama` without a cloud API key. Planning docs and `.env.example` default to Ollama + a Qwen Ollama tag (e.g. `qwen2.5:7b`) on port **11434**. Optional `vllm` remains for Linux/WSL CUDA.
 
 ---
 
@@ -228,4 +226,4 @@ Document text is never extracted server-side today.
 1. **Document-first staging:** New tables/flow for uploads without `letter_id` vs. temporary “draft” letter rows.
 2. **Auth:** Whether AI registration endpoints will require real authentication before production.
 3. **OCR engine:** PaddleOCR vs alternatives (see spec `02-ocr.md`) — none in repo today.
-4. **vLLM port conflict:** Default vLLM serves on `8000`; FastAPI also uses `8000` — run vLLM on another port (e.g. `8001`).
+4. **Local LLM runtime:** Default is **Ollama** on Windows (port 11434). Optional vLLM on Linux/WSL must use a port other than FastAPI `8000` (e.g. `8001`).
