@@ -398,3 +398,85 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
+
+
+class AiStagedDocument(Base):
+    """Uploaded file awaiting AI registration (no letter_id until approve)."""
+
+    __tablename__ = "cms_ai_staged_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    original_filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    checksum: Mapped[str] = mapped_column(String(64), default="", index=True)
+    storage_key: Mapped[str] = mapped_column(String(512))
+    uploaded_by: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    jobs: Mapped[list["AiRegistrationJob"]] = relationship(back_populates="staged_document")
+
+
+class AiRegistrationJob(Base):
+    """AI-assisted letter registration job (state machine + artifact keys)."""
+
+    __tablename__ = "cms_ai_registration_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    staged_document_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_ai_staged_documents.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    letter_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_letters.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(40), default="QUEUED", index=True)
+    error_code: Mapped[str] = mapped_column(String(80), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    ocr_artifact_key: Mapped[str] = mapped_column(String(512), default="")
+    normalized_artifact_key: Mapped[str] = mapped_column(String(512), default="")
+    extraction_artifact_key: Mapped[str] = mapped_column(String(512), default="")
+    validation_artifact_key: Mapped[str] = mapped_column(String(512), default="")
+    proposal_json: Mapped[str] = mapped_column(Text, default="")
+    prompt_version: Mapped[str] = mapped_column(String(40), default="")
+    model_id: Mapped[str] = mapped_column(String(120), default="")
+    model_config_json: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(120), default="")
+    reviewed_by: Mapped[str] = mapped_column(String(120), default="")
+    approved_by: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    ocr_completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    extraction_completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    review_ready_at: Mapped[datetime | None] = mapped_column(DateTime)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    staged_document: Mapped[AiStagedDocument] = relationship(back_populates="jobs")
+    runs: Mapped[list["AiRun"]] = relationship(back_populates="job", cascade="all, delete-orphan")
+
+
+class AiRun(Base):
+    """Per-stage / retry run record for AI registration jobs."""
+
+    __tablename__ = "cms_ai_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_ai_registration_jobs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    stage: Mapped[str] = mapped_column(String(40), default="", index=True)
+    model_id: Mapped[str] = mapped_column(String(120), default="")
+    prompt_version: Mapped[str] = mapped_column(String(40), default="")
+    input_artifact_key: Mapped[str] = mapped_column(String(512), default="")
+    output_artifact_key: Mapped[str] = mapped_column(String(512), default="")
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="", index=True)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    job: Mapped[AiRegistrationJob] = relationship(back_populates="runs")
