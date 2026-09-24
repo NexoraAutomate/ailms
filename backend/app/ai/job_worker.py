@@ -1,8 +1,8 @@
 """AI registration background worker scaffold (full pipeline in step 9).
 
-Steps 5–6 wire OCR + normalize. The poll loop still skips claiming QUEUED jobs
-until `_PIPELINE_READY` (step 9) so jobs remain QUEUED unless stages are
-invoked via CLI or tests.
+Steps 5–7 wire OCR → normalize → extract. The poll loop still skips claiming
+QUEUED jobs until `_PIPELINE_READY` (step 9) so jobs remain QUEUED unless
+stages are invoked via CLI or tests.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.ai.extraction_service import run_extraction_stage
 from app.ai.job_states import JobStatus
 from app.ai.ocr_normalize import run_normalize_stage
 from app.ai.ocr_service import run_ocr_stage
@@ -75,14 +76,16 @@ def process_one_job(db: Session, job: AiRegistrationJob) -> None:
     """
     Run pipeline stages for a claimed job.
 
-    Steps 5–6: OCR → normalize (extract/validate in later steps).
+    Steps 5–7: OCR → normalize → extract (validate in step 8).
     """
     run_ocr_stage(db, job)
     if job.status == JobStatus.OCR_COMPLETE.value:
         run_normalize_stage(db, job)
     if job.status == JobStatus.OCR_COMPLETE.value and job.normalized_artifact_key:
+        run_extraction_stage(db, job)
+    if job.status == JobStatus.EXTRACTION_COMPLETE.value:
         logger.info(
-            "Job %s OCR+normalize complete; awaiting later pipeline stages (status=%s)",
+            "Job %s extraction complete; awaiting validation (status=%s)",
             job.id,
             job.status,
         )
@@ -102,6 +105,14 @@ def run_normalize_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
     return run_normalize_stage(db, job)
+
+
+def run_extraction_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
+    """Explicit extraction stage for CLI / tests."""
+    job = db.query(AiRegistrationJob).filter(AiRegistrationJob.id == job_id).one_or_none()
+    if job is None:
+        raise ValueError(f"Job not found: {job_id}")
+    return run_extraction_stage(db, job)
 
 
 def run_ai_registration_cycle() -> dict:

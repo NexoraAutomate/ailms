@@ -4,10 +4,12 @@
 Usage (from backend/):
   python scripts/run_ai_job.py --job-id 7 --stage ocr
   python scripts/run_ai_job.py --job-id 7 --stage normalize
+  python scripts/run_ai_job.py --job-id 7 --stage extract
 
 Stages:
   ocr — run OCR and write storage/ai/jobs/{id}/ocr-output.json
   normalize — build llm-input.json/.txt from OCR (requires OCR_COMPLETE)
+  extract — LLM structured extraction → extraction-result.json (requires llm-input)
 """
 
 from __future__ import annotations
@@ -21,7 +23,12 @@ _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
-from app.ai.job_worker import run_normalize_for_job_id, run_ocr_for_job_id  # noqa: E402
+from app.ai.extraction_service import load_extraction_artifact  # noqa: E402
+from app.ai.job_worker import (  # noqa: E402
+    run_extraction_for_job_id,
+    run_normalize_for_job_id,
+    run_ocr_for_job_id,
+)
 from app.ai.ocr_normalize import load_normalized_artifact  # noqa: E402
 from app.ai.ocr_service import load_ocr_artifact  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
@@ -35,7 +42,7 @@ def main() -> int:
     parser.add_argument("--job-id", type=int, required=True)
     parser.add_argument(
         "--stage",
-        choices=("ocr", "normalize"),
+        choices=("ocr", "normalize", "extract"),
         default="ocr",
         help="Pipeline stage to run",
     )
@@ -81,6 +88,26 @@ def main() -> int:
                 preview = (artifact.get("combinedText") or "")[:300]
                 print(f"combinedText_preview={json.dumps(preview)}")
             return 0 if job.status == "OCR_COMPLETE" and job.normalized_artifact_key else 1
+
+        if args.stage == "extract":
+            job = run_extraction_for_job_id(db, args.job_id)
+            db.commit()
+            db.refresh(job)
+            print(
+                f"jobId={job.id} status={job.status} "
+                f"extractionArtifactKey={job.extraction_artifact_key} "
+                f"promptVersion={job.prompt_version} modelId={job.model_id}"
+            )
+            if job.error_code:
+                print(f"errorCode={job.error_code} errorMessage={job.error_message}")
+            artifact = load_extraction_artifact(job.extraction_artifact_key)
+            if artifact:
+                fields = artifact.get("fields") or {}
+                number = (fields.get("number") or {}).get("value")
+                subject = (fields.get("subject") or {}).get("value")
+                print(f"number={number!r} subject={subject!r}")
+                print(f"warnings={artifact.get('warnings')}")
+            return 0 if job.status == "EXTRACTION_COMPLETE" else 1
 
         print(f"Unknown stage: {args.stage}", file=sys.stderr)
         return 2

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "promptVersion": "registration_v1",
+  "fields": {
+    "number": { "value": "MOIT/2026/1234" },
+    "letterDate": { "value": "2026-03-15" },
+    "subject": { "value": "Request for quarterly progress update" },
+    "from": { "value": "Ministry of Information Technology" },
+    "to": { "value": "Planning Division" }
+  }
+}

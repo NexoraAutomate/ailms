@@ -15,6 +15,7 @@ from app.ai.job_service import (
     serialize_job,
     serialize_job_create,
 )
+from app.ai.extraction_service import load_extraction_artifact
 from app.ai.ocr_normalize import load_normalized_artifact
 from app.ai.ocr_service import load_ocr_artifact
 from app.config import get_settings
@@ -125,4 +126,19 @@ def get_normalized_artifact(job_id: int, db: Session = Depends(get_db)) -> dict[
     artifact = load_normalized_artifact(row.normalized_artifact_key)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Normalized artifact file missing")
+    return artifact
+
+
+@router.get(
+    "/jobs/{job_id}/artifacts/extraction",
+    dependencies=[Depends(require_ai_registration_enabled)],
+)
+def get_extraction_artifact(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Return extraction-result.json when ready (404 if missing)."""
+    row = get_registration_job(db, job_id)
+    if not row.extraction_artifact_key:
+        raise HTTPException(status_code=404, detail="Extraction artifact not ready")
+    artifact = load_extraction_artifact(row.extraction_artifact_key)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Extraction artifact file missing")
     return artifact

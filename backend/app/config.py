@@ -43,6 +43,8 @@ class Settings(BaseSettings):
 
     # OCR normalization (step 6): max chars for combined LLM input text.
     llm_input_max_chars: int = 100_000
+    # Structured extraction (step 7): max chars of combined text sent to the LLM.
+    extraction_max_chars: int = 24_000
 
     llm_enabled: bool = True
     llm_provider: str = "ollama"
