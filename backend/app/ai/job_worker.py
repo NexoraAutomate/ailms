@@ -1,7 +1,8 @@
 """AI registration background worker scaffold (full pipeline in step 9).
 
-Step 4 starts the poll loop when AI_REGISTRATION_WORKER_ENABLED=true but does
-not claim QUEUED jobs yet — OCR/LLM/validation wiring lands in later steps.
+Step 5 wires the OCR stage (`run_ocr_stage`). The poll loop still skips claiming
+QUEUED jobs until `_PIPELINE_READY` (step 9) so jobs remain QUEUED unless OCR is
+invoked via CLI or tests.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.ai.job_states import JobStatus
+from app.ai.ocr_service import run_ocr_stage
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import AiRegistrationJob
@@ -70,13 +72,26 @@ def claim_next_queued_job(db: Session) -> AiRegistrationJob | None:
 
 def process_one_job(db: Session, job: AiRegistrationJob) -> None:
     """
-    Run the AI registration pipeline for a claimed job.
+    Run pipeline stages for a claimed job.
 
-    Placeholder until steps 5–8 + 9 wire OCR → normalize → extract → validate.
+    Step 5: OCR only → OCR_COMPLETE (normalize/extract/validate in later steps).
     """
-    raise NotImplementedError(
-        "AI registration pipeline not implemented yet (expected in step 9)"
-    )
+    run_ocr_stage(db, job)
+    if job.status == JobStatus.OCR_COMPLETE.value:
+        # Remaining stages (normalize → extract → validate) land in steps 6–9.
+        logger.info(
+            "Job %s OCR complete; awaiting later pipeline stages (status=%s)",
+            job.id,
+            job.status,
+        )
+
+
+def run_ocr_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
+    """Explicit OCR stage for CLI / tests (does not require worker claim)."""
+    job = db.query(AiRegistrationJob).filter(AiRegistrationJob.id == job_id).one_or_none()
+    if job is None:
+        raise ValueError(f"Job not found: {job_id}")
+    return run_ocr_stage(db, job)
 
 
 def run_ai_registration_cycle() -> dict:
@@ -86,7 +101,7 @@ def run_ai_registration_cycle() -> dict:
         return {"claimed": 0, "skipped": "worker_disabled"}
 
     if not _PIPELINE_READY:
-        # Keep jobs in QUEUED until the pipeline is wired (step 9).
+        # Keep jobs in QUEUED until the full pipeline is wired (step 9).
         return {"claimed": 0, "skipped": "pipeline_not_ready"}
 
     db = SessionLocal()

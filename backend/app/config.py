@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     ai_registration_worker_enabled: bool = False
     ai_registration_worker_poll_seconds: float = 2.0
 
+    # OCR (step 5). Engine: auto | paddleocr | pymupdf_text
+    # auto prefers paddleocr when installed, else pymupdf_text (PDF text layer).
+    ocr_engine: str = "auto"
+    ocr_dpi: int = 200
+    ocr_max_pages: int = 50
+    ocr_max_image_pixels: int = 40_000_000
+    ocr_paddle_lang: str = "en"
+
     llm_enabled: bool = True
     llm_provider: str = "ollama"
     llm_api_key: str = "ollama"

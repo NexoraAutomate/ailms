@@ -6,3 +6,8 @@ pydantic-settings>=2.6.0
 python-dotenv>=1.0.1
 python-multipart>=0.0.9
 httpx>=0.27.0
+pymupdf>=1.24.0
+pillow>=10.0.0
+# Optional heavy OCR stack (CPU). Install when the host Python/OS supports it:
+#   pip install paddlepaddle paddleocr
+# OCR_ENGINE=auto falls back to pymupdf_text (PDF embedded text) if paddleocr is missing.

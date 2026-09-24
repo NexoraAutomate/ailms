@@ -55,8 +55,14 @@ def storage_root() -> Path:
 
 def ensure_storage_dirs() -> None:
     root = storage_root()
-    for sub in ("letters", "attachments", "documents", "ai/staging"):
+    for sub in ("letters", "attachments", "documents", "ai/staging", "ai/jobs"):
         (root / sub).mkdir(parents=True, exist_ok=True)
+
+
+def build_job_artifact_key(job_id: int, filename: str) -> str:
+    """Relative storage key for an AI registration job artifact."""
+    safe = _safe_original_name(filename)
+    return f"ai/jobs/{job_id}/{safe}"
 
 
 def _safe_original_name(name: str) -> str:

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "engine": "pymupdf_text",
+  "pages": [
+    {
+      "pageNumber": 1,
+      "status": "ok",
+      "fullTextContains": ["Ref", "MOIT/2026/1234"]
+    }
+  ]
+}

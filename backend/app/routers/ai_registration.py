@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -13,6 +15,7 @@ from app.ai.job_service import (
     serialize_job,
     serialize_job_create,
 )
+from app.ai.ocr_service import load_ocr_artifact
 from app.config import get_settings
 from app.database import get_db
 from app.schemas import (
@@ -92,3 +95,18 @@ def retry_job(job_id: int, db: Session = Depends(get_db)) -> AiRegistrationJobOu
     db.commit()
     db.refresh(row)
     return AiRegistrationJobOut(**serialize_job(row))
+
+
+@router.get(
+    "/jobs/{job_id}/artifacts/ocr",
+    dependencies=[Depends(require_ai_registration_enabled)],
+)
+def get_ocr_artifact(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Return raw OCR JSON when ready (404 if missing)."""
+    row = get_registration_job(db, job_id)
+    if not row.ocr_artifact_key:
+        raise HTTPException(status_code=404, detail="OCR artifact not ready")
+    artifact = load_ocr_artifact(row.ocr_artifact_key)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="OCR artifact file missing")
+    return artifact
