@@ -4,13 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.letter_create_service import create_letter_record
 from app.models import Letter, LetterAction
 from app.schemas import LetterActionCreate, LetterActionOut, LetterCreate, LetterOut, LetterStatusUpdate, LetterUpdate
 from app.services import (
     CLOSED_STATUSES,
     add_audit,
-    add_notification,
-    bump_trend,
     current_user_name,
     serialize_letter,
 )
@@ -104,52 +103,7 @@ def get_letter(letter_id: int, db: Session = Depends(get_db)) -> LetterOut:
 
 @router.post("", response_model=LetterOut, status_code=201)
 def create_letter(payload: LetterCreate, db: Session = Depends(get_db)) -> LetterOut:
-    if db.query(Letter).filter(Letter.number == payload.number).first():
-        raise HTTPException(status_code=409, detail="Letter number already exists")
-
-    data = payload.model_dump(by_alias=False)
-    letter = Letter(
-        number=data["number"],
-        letter_date=data["letterDate"],
-        received_date=data["receivedDate"] or data["letterDate"],
-        type=data["type"],
-        subject=data["subject"],
-        sender=data["from_"],
-        recipient=data["to"],
-        department=data["department"],
-        priority=data["priority"],
-        status=data["status"],
-        due_date=data["dueDate"],
-        assigned_to=data["assignedTo"],
-        last_action=data["lastAction"] or "Registered",
-        confidentiality=data["confidentiality"],
-        action_required=data["actionRequired"],
-        remarks=data["remarks"],
-    )
-    db.add(letter)
-    db.flush()
-    bump_trend(db, letter.type, letter.letter_date)
-    user = current_user_name(db)
-    add_audit(
-        db,
-        user=user,
-        module="Letters",
-        action="Letter Registered",
-        record=letter.number,
-        description=f"{letter.type} letter registered",
-    )
-    if letter.assigned_to:
-        add_notification(
-            db,
-            title="New Assignment",
-            description=f"{letter.subject} assigned to {letter.assigned_to}.",
-            priority="High" if letter.priority == "Urgent" else "Medium",
-            letter_id=letter.id,
-            notification_type="New Assignment",
-            recipient_name=letter.assigned_to,
-            related_entity_type="letter",
-            related_entity_id=str(letter.id),
-        )
+    letter = create_letter_record(db, payload)
     db.commit()
     db.refresh(letter)
     return serialize_letter(letter)

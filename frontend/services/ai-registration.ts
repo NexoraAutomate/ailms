@@ -133,6 +133,20 @@ export async function rerunRegistrationJob(jobId: string) {
   return api.post<AiRegistrationJob>(`/api/ai-registration/jobs/${jobId}/rerun`, {})
 }
 
+export type AiRegistrationApproveResult = {
+  letterId: string
+  number: string
+  jobId: string
+  status: AiRegistrationJobStatus
+  warnings?: string[]
+}
+
+export async function approveRegistrationJob(jobId: string, confirm = true) {
+  return api.post<AiRegistrationApproveResult>(`/api/ai-registration/jobs/${jobId}/approve`, {
+    confirm,
+  })
+}
+
 /** @deprecated Prefer rerunRegistrationJob — kept for older callers. */
 export async function retryRegistrationJob(jobId: string) {
   return api.post<AiRegistrationJob>(`/api/ai-registration/jobs/${jobId}/retry`, {})

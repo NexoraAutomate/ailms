@@ -1,7 +1,7 @@
 """Human review API for AI registration jobs (master plan step 10 / spec 07).
 
 Fetch enriched proposal, patch fields with override tracking, reject, and
-request re-run — without creating a letter (approve/commit is step 12).
+request re-run. Registration commit lives in registration_commit (step 12).
 """
 
 from __future__ import annotations

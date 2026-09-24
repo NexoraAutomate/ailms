@@ -5,6 +5,7 @@ import { useAppData } from '@/components/app-provider'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { Button } from '@/components/ui/button'
 import {
+  approveRegistrationJob,
   getRegistrationJob,
   patchRegistrationProposal,
   rejectRegistrationJob,
@@ -252,6 +253,36 @@ export function RegistrationReview({
       go('/letters/register')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to re-queue analysis')
+      setBusy(false)
+    }
+  }
+
+  const approve = async () => {
+    setError('')
+    setSavedMsg('')
+    if (!editable) {
+      setError('Only jobs that need review can be approved.')
+      return
+    }
+    if (dirty) {
+      setError('Save edits before approving.')
+      return
+    }
+    if (!requiredOk) {
+      setError('Letter number, letter date, and subject are required.')
+      return
+    }
+    if (!confirmed) {
+      setError('Confirm that you have reviewed the proposal before approving.')
+      return
+    }
+    setBusy(true)
+    try {
+      const result = await approveRegistrationJob(jobId, true)
+      setSavedMsg(`Letter registered (${result.number}).`)
+      setTimeout(() => go(result.letterId), 400)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to approve registration')
       setBusy(false)
     }
   }
@@ -551,17 +582,26 @@ export function RegistrationReview({
               </Button>
               <Button
                 type="button"
-                disabled
-                title="Registration commit lands in the next implementation step"
+                disabled={busy || !editable || dirty || !requiredOk || !confirmed}
+                title={
+                  dirty
+                    ? 'Save edits before approving'
+                    : !confirmed
+                      ? 'Confirm review before approving'
+                      : !requiredOk
+                        ? 'Fill required fields first'
+                        : 'Create the official letter from this proposal'
+                }
+                onClick={approve}
               >
-                Approve &amp; register
+                {busy ? 'Registering…' : 'Approve & register'}
               </Button>
             </div>
             <p className="text-[11px] text-slate-400">
-              Approve stays disabled until registration commit is wired (step 12). Required for approval: letter number,
-              letter date, and subject
+              Required for approval: letter number, letter date, and subject
               {requiredOk ? ' — currently filled' : ' — incomplete'}
-              {confirmed ? '; review confirmed' : '; review not yet confirmed'}.
+              {confirmed ? '; review confirmed' : '; review not yet confirmed'}
+              {dirty ? '; unsaved edits' : ''}.
             </p>
           </div>
         </Card>

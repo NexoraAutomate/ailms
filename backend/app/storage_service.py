@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -150,3 +151,14 @@ async def save_upload_file(
 def can_preview(ext_or_type: str) -> bool:
     ext = ext_or_type if ext_or_type.startswith(".") else f".{ext_or_type.lower()}"
     return ext in PREVIEW_EXTENSIONS
+
+
+def copy_storage_file(*, source_key: str, dest_key: str) -> Path:
+    """Copy a stored file to a new key (preserves source for staging audit)."""
+    src = resolve_storage_path(source_key)
+    if not src.is_file():
+        raise HTTPException(status_code=404, detail="Source file missing")
+    dst = resolve_storage_path(dest_key)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return dst

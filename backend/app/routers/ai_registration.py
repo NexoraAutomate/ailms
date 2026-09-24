@@ -26,10 +26,13 @@ from app.ai.review_service import (
     reject_job,
     request_rerun,
 )
+from app.ai.registration_commit import approve_registration_job
 from app.ai.validation_service import load_validation_artifact
 from app.config import get_settings
 from app.database import get_db
 from app.schemas import (
+    AiRegistrationApproveIn,
+    AiRegistrationApproveOut,
     AiRegistrationJobCreateIn,
     AiRegistrationJobCreateOut,
     AiRegistrationJobOut,
@@ -144,6 +147,22 @@ def reject_registration_job(
     db.commit()
     db.refresh(row)
     return AiRegistrationJobOut(**enrich_job_payload(db, row))
+
+
+@router.post(
+    "/jobs/{job_id}/approve",
+    response_model=AiRegistrationApproveOut,
+    dependencies=[Depends(require_ai_registration_enabled)],
+)
+def approve_job(
+    job_id: int,
+    body: AiRegistrationApproveIn = Body(default_factory=AiRegistrationApproveIn),
+    db: Session = Depends(get_db),
+) -> AiRegistrationApproveOut:
+    """Commit registration: create letter + attach staged document (spec 08)."""
+    result = approve_registration_job(db, job_id=job_id, confirm=body.confirm)
+    db.commit()
+    return AiRegistrationApproveOut(**result)
 
 
 @router.post(

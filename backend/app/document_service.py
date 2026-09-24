@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentVersion, Letter
 from app.services import CLOSED_STATUSES, add_audit, add_notification, current_user_name
-from app.storage_service import can_preview, save_upload_file
+from app.storage_service import (
+    MIME_BY_EXT,
+    build_storage_key,
+    can_preview,
+    copy_storage_file,
+    save_upload_file,
+)
 
 
 DOCUMENT_TYPES = {
@@ -167,6 +175,92 @@ async def create_document_with_upload(
         action="Document Uploaded",
         record=letter.number,
         description=f"{document_type}: {original} (v1.0)",
+    )
+    add_notification(
+        db,
+        title="Document Uploaded",
+        description=f"{original} uploaded for {letter.number}.",
+        priority="Medium",
+        letter_id=letter.id,
+        notification_type="Document Uploaded",
+        related_entity_type="document",
+        related_entity_id=str(document.id),
+    )
+    db.flush()
+    return document
+
+
+def create_document_from_staged_file(
+    db: Session,
+    *,
+    letter_id: int,
+    document_type: str,
+    original_filename: str,
+    mime_type: str,
+    file_size: int,
+    checksum: str,
+    source_storage_key: str,
+    change_description: str = "",
+    actor: str | None = None,
+) -> Document:
+    """
+    Attach an existing staged file to a letter by copying into documents/{letter_id}/….
+
+    Staging file is preserved for audit (copy, not move).
+    """
+    letter = _get_letter(db, letter_id)
+    assert_letter_mutable(letter)
+    if document_type not in DOCUMENT_TYPES:
+        document_type = "Original Letter"
+
+    actor = actor or current_user_name(db)
+    document = Document(letter_id=letter.id, document_type=document_type)
+    db.add(document)
+    db.flush()
+
+    version = DocumentVersion(
+        document_id=document.id,
+        version_number="1.0",
+        filename=_UPLOAD_ROW_PLACEHOLDER,
+        original_filename=_UPLOAD_ROW_PLACEHOLDER,
+        storage_key=_UPLOAD_ROW_PLACEHOLDER,
+        uploaded_by=actor,
+        change_description=change_description or "Attached from AI registration staging",
+        status="Current",
+        is_current=True,
+    )
+    db.add(version)
+    db.flush()
+
+    original = Path(original_filename or "upload.bin").name
+    ext = Path(original).suffix.lower() or ".bin"
+    storage_key = build_storage_key(
+        letter_id=letter.id,
+        document_id=document.id,
+        version_id=version.id,
+        original_filename=original,
+    )
+    copy_storage_file(source_key=source_storage_key, dest_key=storage_key)
+    mime = mime_type or MIME_BY_EXT.get(ext, "application/octet-stream")
+    _apply_upload_to_version(
+        version,
+        original=original,
+        size=file_size,
+        file_type=ext.lstrip(".") or "bin",
+        mime=mime,
+        checksum=checksum or "",
+        storage_key=storage_key,
+        stored_name=Path(storage_key).name,
+    )
+    db.flush()
+
+    add_audit(
+        db,
+        user=actor,
+        module="Documents",
+        action="Document Uploaded",
+        record=letter.number,
+        description=f"{document_type}: {original} (v1.0, AI registration)",
     )
     add_notification(
         db,

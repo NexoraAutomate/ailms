@@ -452,6 +452,22 @@ class AiRegistrationRejectIn(BaseModel):
     reason: str = ""
 
 
+class AiRegistrationApproveIn(BaseModel):
+    """Body for POST /jobs/{id}/approve."""
+
+    confirm: bool = True
+
+
+class AiRegistrationApproveOut(BaseModel):
+    """Response for POST /jobs/{id}/approve (spec 08)."""
+
+    letterId: str
+    number: str
+    jobId: str
+    status: str
+    warnings: list[str] = []
+
+
 class MeetingParticipantIn(BaseModel):
     name: str
     department: str = ""
