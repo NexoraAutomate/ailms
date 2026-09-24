@@ -13,6 +13,7 @@ import app.models  # noqa: F401 — register all ORM tables with Base.metadata
 from app.administration_service import ensure_administration_seed, touch_session
 from app.routers.administration import router as administration_router
 from app.routers.ai import router as ai_router
+from app.routers.ai_registration import router as ai_registration_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.letters import router as letters_router
 from app.routers.workflow import router as workflow_router
@@ -90,6 +91,7 @@ app.include_router(bulk_router, prefix="/api")
 app.include_router(archive_router, prefix="/api")
 app.include_router(administration_router, prefix="/api")
 app.include_router(ai_router, prefix="/api")
+app.include_router(ai_registration_router, prefix="/api")
 
 
 @app.on_event("startup")

@@ -43,6 +43,9 @@ MIME_BY_EXT = {
 
 PREVIEW_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
+# OCR / AI registration staging — images + PDF only (no office formats).
+STAGED_UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+
 
 def storage_root() -> Path:
     settings = get_settings()
@@ -52,7 +55,7 @@ def storage_root() -> Path:
 
 def ensure_storage_dirs() -> None:
     root = storage_root()
-    for sub in ("letters", "attachments", "documents"):
+    for sub in ("letters", "attachments", "documents", "ai/staging"):
         (root / sub).mkdir(parents=True, exist_ok=True)
 
 
@@ -62,7 +65,12 @@ def _safe_original_name(name: str) -> str:
     return cleaned[:200] or "file"
 
 
-def validate_upload(file: UploadFile, size: int) -> tuple[str, str]:
+def validate_upload(
+    file: UploadFile,
+    size: int,
+    *,
+    allowed_extensions: set[str] | None = None,
+) -> tuple[str, str]:
     settings = get_settings()
     if size <= 0:
         raise HTTPException(status_code=422, detail="Validation failed: empty file")
@@ -71,11 +79,17 @@ def validate_upload(file: UploadFile, size: int) -> tuple[str, str]:
 
     original = _safe_original_name(file.filename or "upload.bin")
     ext = Path(original).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
+    allowed = allowed_extensions if allowed_extensions is not None else ALLOWED_EXTENSIONS
+    if ext not in allowed:
         raise HTTPException(status_code=415, detail="Unsupported file type")
 
     mime = file.content_type or MIME_BY_EXT.get(ext, "application/octet-stream")
     return original, ext
+
+
+def validate_staged_upload(file: UploadFile, size: int) -> tuple[str, str]:
+    """Validate uploads for AI registration staging (OCR-friendly types only)."""
+    return validate_upload(file, size, allowed_extensions=STAGED_UPLOAD_EXTENSIONS)
 
 
 def build_storage_key(*, letter_id: int, document_id: int, original_filename: str, version_id: int | None = None) -> str:
@@ -83,6 +97,12 @@ def build_storage_key(*, letter_id: int, document_id: int, original_filename: st
     token = uuid.uuid4().hex[:12]
     prefix = f"{version_id}_" if version_id is not None else ""
     return f"documents/{letter_id}/{document_id}/{prefix}{token}_{safe}"
+
+
+def build_staging_storage_key(*, staged_id: int, original_filename: str) -> str:
+    safe = _safe_original_name(original_filename)
+    token = uuid.uuid4().hex
+    return f"ai/staging/{staged_id}/{token}_{safe}"
 
 
 def resolve_storage_path(storage_key: str) -> Path:

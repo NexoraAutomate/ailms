@@ -392,6 +392,17 @@ class DocumentOut(BaseModel):
     currentVersion: DocumentVersionOut | None = None
 
 
+class StagedDocumentOut(BaseModel):
+    """Response for POST /api/ai-registration/staged-documents."""
+
+    stagedDocumentId: str
+    originalFilename: str
+    mimeType: str
+    fileSize: int
+    checksum: str
+    createdAt: str
+
+
 class MeetingParticipantIn(BaseModel):
     name: str
     department: str = ""

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     document_storage_path: str = "storage"
     max_upload_bytes: int = 25 * 1024 * 1024
 
+    # Feature flag: hide AI registration API/UI when false (404 on API).
+    ai_registration_enabled: bool = True
+
     llm_enabled: bool = True
     llm_provider: str = "ollama"
     llm_api_key: str = "ollama"
