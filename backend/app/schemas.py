@@ -420,7 +420,7 @@ class AiRegistrationJobCreateOut(BaseModel):
 
 
 class AiRegistrationJobOut(BaseModel):
-    """Response for GET /api/ai-registration/jobs/{id} and retry."""
+    """Response for GET /api/ai-registration/jobs/{id} and review actions."""
 
     jobId: str
     status: str
@@ -431,6 +431,11 @@ class AiRegistrationJobOut(BaseModel):
     errorMessage: str | None = None
     proposal: dict | list | None = None
     validation: dict | None = None
+    stagedDocument: dict | None = None
+    evidence: list[dict] | None = None
+    aiGenerated: list[str] | None = None
+    userOverrides: dict | None = None
+    reviewedBy: str | None = None
     workerEnabled: bool = False
     createdAt: str
     updatedAt: str | None = None
@@ -439,6 +444,12 @@ class AiRegistrationJobOut(BaseModel):
     extractionCompletedAt: str | None = None
     reviewReadyAt: str | None = None
     completedAt: str | None = None
+
+
+class AiRegistrationRejectIn(BaseModel):
+    """Body for POST /jobs/{id}/reject."""
+
+    reason: str = ""
 
 
 class MeetingParticipantIn(BaseModel):
