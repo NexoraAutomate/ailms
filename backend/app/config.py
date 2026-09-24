@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     ocr_max_image_pixels: int = 40_000_000
     ocr_paddle_lang: str = "en"
 
+    # OCR normalization (step 6): max chars for combined LLM input text.
+    llm_input_max_chars: int = 100_000
+
     llm_enabled: bool = True
     llm_provider: str = "ollama"
     llm_api_key: str = "ollama"

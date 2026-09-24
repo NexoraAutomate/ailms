@@ -1,7 +1,7 @@
 """AI registration background worker scaffold (full pipeline in step 9).
 
-Step 5 wires the OCR stage (`run_ocr_stage`). The poll loop still skips claiming
-QUEUED jobs until `_PIPELINE_READY` (step 9) so jobs remain QUEUED unless OCR is
+Steps 5–6 wire OCR + normalize. The poll loop still skips claiming QUEUED jobs
+until `_PIPELINE_READY` (step 9) so jobs remain QUEUED unless stages are
 invoked via CLI or tests.
 """
 
@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.ai.job_states import JobStatus
+from app.ai.ocr_normalize import run_normalize_stage
 from app.ai.ocr_service import run_ocr_stage
 from app.config import get_settings
 from app.database import SessionLocal
@@ -74,13 +75,14 @@ def process_one_job(db: Session, job: AiRegistrationJob) -> None:
     """
     Run pipeline stages for a claimed job.
 
-    Step 5: OCR only → OCR_COMPLETE (normalize/extract/validate in later steps).
+    Steps 5–6: OCR → normalize (extract/validate in later steps).
     """
     run_ocr_stage(db, job)
     if job.status == JobStatus.OCR_COMPLETE.value:
-        # Remaining stages (normalize → extract → validate) land in steps 6–9.
+        run_normalize_stage(db, job)
+    if job.status == JobStatus.OCR_COMPLETE.value and job.normalized_artifact_key:
         logger.info(
-            "Job %s OCR complete; awaiting later pipeline stages (status=%s)",
+            "Job %s OCR+normalize complete; awaiting later pipeline stages (status=%s)",
             job.id,
             job.status,
         )
@@ -92,6 +94,14 @@ def run_ocr_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
     return run_ocr_stage(db, job)
+
+
+def run_normalize_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
+    """Explicit normalize stage for CLI / tests."""
+    job = db.query(AiRegistrationJob).filter(AiRegistrationJob.id == job_id).one_or_none()
+    if job is None:
+        raise ValueError(f"Job not found: {job_id}")
+    return run_normalize_stage(db, job)
 
 
 def run_ai_registration_cycle() -> dict:
