@@ -13,6 +13,7 @@ from app.ai.job_states import JobStatus, assert_transition, current_stage, is_re
 from app.config import get_settings
 from app.models import AiRegistrationJob, AiStagedDocument
 from app.services import add_audit, current_user_name
+from app.storage_service import resolve_storage_path
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,31 @@ def _proposal_payload(raw: str) -> dict | list | None:
         return None
 
 
+def _validation_payload(row: AiRegistrationJob) -> dict | None:
+    """Load validation-result summary for GET job (spec 06 § H)."""
+    key = (row.validation_artifact_key or "").strip()
+    if not key:
+        return None
+    path = resolve_storage_path(key)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # Omit bulky normalizedFields from API; keep review-facing keys.
+    return {
+        "schemaVersion": data.get("schemaVersion"),
+        "jobId": data.get("jobId"),
+        "passed": data.get("passed"),
+        "blockingErrors": data.get("blockingErrors") or [],
+        "fieldIssues": data.get("fieldIssues") or {},
+        "normalizedProposal": data.get("normalizedProposal"),
+    }
+
+
 def serialize_job(row: AiRegistrationJob) -> dict:
     settings = get_settings()
     return {
@@ -46,6 +72,7 @@ def serialize_job(row: AiRegistrationJob) -> dict:
         "errorCode": row.error_code or None,
         "errorMessage": row.error_message or None,
         "proposal": _proposal_payload(row.proposal_json or ""),
+        "validation": _validation_payload(row),
         "workerEnabled": bool(settings.ai_registration_worker_enabled),
         "createdAt": _iso(row.created_at) or "",
         "updatedAt": _iso(row.updated_at),

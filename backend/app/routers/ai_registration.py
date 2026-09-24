@@ -18,6 +18,7 @@ from app.ai.job_service import (
 from app.ai.extraction_service import load_extraction_artifact
 from app.ai.ocr_normalize import load_normalized_artifact
 from app.ai.ocr_service import load_ocr_artifact
+from app.ai.validation_service import load_validation_artifact
 from app.config import get_settings
 from app.database import get_db
 from app.schemas import (
@@ -141,4 +142,19 @@ def get_extraction_artifact(job_id: int, db: Session = Depends(get_db)) -> dict[
     artifact = load_extraction_artifact(row.extraction_artifact_key)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Extraction artifact file missing")
+    return artifact
+
+
+@router.get(
+    "/jobs/{job_id}/artifacts/validation",
+    dependencies=[Depends(require_ai_registration_enabled)],
+)
+def get_validation_artifact(job_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Return validation-result.json when ready (404 if missing)."""
+    row = get_registration_job(db, job_id)
+    if not row.validation_artifact_key:
+        raise HTTPException(status_code=404, detail="Validation artifact not ready")
+    artifact = load_validation_artifact(row.validation_artifact_key)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Validation artifact file missing")
     return artifact

@@ -5,11 +5,13 @@ Usage (from backend/):
   python scripts/run_ai_job.py --job-id 7 --stage ocr
   python scripts/run_ai_job.py --job-id 7 --stage normalize
   python scripts/run_ai_job.py --job-id 7 --stage extract
+  python scripts/run_ai_job.py --job-id 7 --stage validate
 
 Stages:
   ocr — run OCR and write storage/ai/jobs/{id}/ocr-output.json
   normalize — build llm-input.json/.txt from OCR (requires OCR_COMPLETE)
   extract — LLM structured extraction → extraction-result.json (requires llm-input)
+  validate — business validation → validation-result.json + NEEDS_REVIEW
 """
 
 from __future__ import annotations
@@ -28,9 +30,11 @@ from app.ai.job_worker import (  # noqa: E402
     run_extraction_for_job_id,
     run_normalize_for_job_id,
     run_ocr_for_job_id,
+    run_validation_for_job_id,
 )
 from app.ai.ocr_normalize import load_normalized_artifact  # noqa: E402
 from app.ai.ocr_service import load_ocr_artifact  # noqa: E402
+from app.ai.validation_service import load_validation_artifact  # noqa: E402
 from app.database import SessionLocal  # noqa: E402
 from app.db_upgrade import upgrade_ai_registration_schema  # noqa: E402
 from app.database import engine  # noqa: E402
@@ -42,7 +46,7 @@ def main() -> int:
     parser.add_argument("--job-id", type=int, required=True)
     parser.add_argument(
         "--stage",
-        choices=("ocr", "normalize", "extract"),
+        choices=("ocr", "normalize", "extract", "validate"),
         default="ocr",
         help="Pipeline stage to run",
     )
@@ -108,6 +112,29 @@ def main() -> int:
                 print(f"number={number!r} subject={subject!r}")
                 print(f"warnings={artifact.get('warnings')}")
             return 0 if job.status == "EXTRACTION_COMPLETE" else 1
+
+        if args.stage == "validate":
+            job = run_validation_for_job_id(db, args.job_id)
+            db.commit()
+            db.refresh(job)
+            print(
+                f"jobId={job.id} status={job.status} "
+                f"validationArtifactKey={job.validation_artifact_key}"
+            )
+            if job.error_code:
+                print(f"errorCode={job.error_code} errorMessage={job.error_message}")
+            artifact = load_validation_artifact(job.validation_artifact_key)
+            if artifact:
+                print(f"passed={artifact.get('passed')}")
+                print(f"blockingErrors={artifact.get('blockingErrors')}")
+                print(f"fieldIssues={json.dumps(artifact.get('fieldIssues') or {})}")
+                proposal = artifact.get("normalizedProposal") or {}
+                print(
+                    f"proposal.number={proposal.get('number')!r} "
+                    f"proposal.priority={proposal.get('priority')!r} "
+                    f"proposal.department={proposal.get('department')!r}"
+                )
+            return 0 if job.status == "NEEDS_REVIEW" else 1
 
         print(f"Unknown stage: {args.stage}", file=sys.stderr)
         return 2

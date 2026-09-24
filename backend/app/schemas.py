@@ -430,6 +430,7 @@ class AiRegistrationJobOut(BaseModel):
     errorCode: str | None = None
     errorMessage: str | None = None
     proposal: dict | list | None = None
+    validation: dict | None = None
     workerEnabled: bool = False
     createdAt: str
     updatedAt: str | None = None

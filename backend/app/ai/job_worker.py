@@ -1,8 +1,8 @@
 """AI registration background worker scaffold (full pipeline in step 9).
 
-Steps 5–7 wire OCR → normalize → extract. The poll loop still skips claiming
-QUEUED jobs until `_PIPELINE_READY` (step 9) so jobs remain QUEUED unless
-stages are invoked via CLI or tests.
+Steps 5–8 wire OCR → normalize → extract → validate. The poll loop still skips
+claiming QUEUED jobs until `_PIPELINE_READY` (step 9) so jobs remain QUEUED
+unless stages are invoked via CLI or tests.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from app.ai.extraction_service import run_extraction_stage
 from app.ai.job_states import JobStatus
 from app.ai.ocr_normalize import run_normalize_stage
 from app.ai.ocr_service import run_ocr_stage
+from app.ai.validation_service import run_validation_stage
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import AiRegistrationJob
@@ -27,7 +28,7 @@ logger = logging.getLogger("ailms.ai_registration")
 _stop = threading.Event()
 _thread: threading.Thread | None = None
 
-# Flip to True in step 9 when OCR → normalize → extract → validate are wired.
+# Flip to True in step 9 when the full async claim loop is enabled.
 _PIPELINE_READY = False
 
 
@@ -76,7 +77,7 @@ def process_one_job(db: Session, job: AiRegistrationJob) -> None:
     """
     Run pipeline stages for a claimed job.
 
-    Steps 5–7: OCR → normalize → extract (validate in step 8).
+    Steps 5–8: OCR → normalize → extract → validate → NEEDS_REVIEW.
     """
     run_ocr_stage(db, job)
     if job.status == JobStatus.OCR_COMPLETE.value:
@@ -84,11 +85,9 @@ def process_one_job(db: Session, job: AiRegistrationJob) -> None:
     if job.status == JobStatus.OCR_COMPLETE.value and job.normalized_artifact_key:
         run_extraction_stage(db, job)
     if job.status == JobStatus.EXTRACTION_COMPLETE.value:
-        logger.info(
-            "Job %s extraction complete; awaiting validation (status=%s)",
-            job.id,
-            job.status,
-        )
+        run_validation_stage(db, job)
+    if job.status == JobStatus.NEEDS_REVIEW.value:
+        logger.info("Job %s ready for human review (status=%s)", job.id, job.status)
 
 
 def run_ocr_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
@@ -113,6 +112,14 @@ def run_extraction_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
     if job is None:
         raise ValueError(f"Job not found: {job_id}")
     return run_extraction_stage(db, job)
+
+
+def run_validation_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
+    """Explicit validation stage for CLI / tests."""
+    job = db.query(AiRegistrationJob).filter(AiRegistrationJob.id == job_id).one_or_none()
+    if job is None:
+        raise ValueError(f"Job not found: {job_id}")
+    return run_validation_stage(db, job)
 
 
 def run_ai_registration_cycle() -> dict:
