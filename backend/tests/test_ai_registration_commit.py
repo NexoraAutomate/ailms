@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import uuid
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -37,6 +38,10 @@ startxref
 190
 %%EOF
 """
+
+
+def _unique_number(prefix: str = "AI-REG") -> str:
+    return f"{prefix}/{uuid.uuid4().hex[:12].upper()}"
 
 
 class RegistrationCommitIntegrationTest(unittest.TestCase):
@@ -107,8 +112,9 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         *,
         proposal: dict | None = None,
         created_by: str = "tester",
-        number: str = "AI-REG/2026/9001",
+        number: str | None = None,
     ) -> AiRegistrationJob:
+        number = number or _unique_number()
         staged = self._stage_doc(uploaded_by=created_by)
         with patch("app.ai.job_service.current_user_name", return_value=created_by):
             job = create_registration_job(self.db, staged_document_id=staged.id)
@@ -136,19 +142,21 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         return job
 
     def test_no_letter_before_approve(self) -> None:
-        job = self._needs_review_job()
+        number = _unique_number("AI-PRE")
+        job = self._needs_review_job(number=number)
         self.assertIsNone(job.letter_id)
         self.assertEqual(job.status, JobStatus.NEEDS_REVIEW.value)
         count = self.db.execute(
             text("SELECT COUNT(*) FROM cms_letters WHERE number = :n"),
-            {"n": "AI-REG/2026/9001"},
+            {"n": number},
         ).scalar()
         self.assertEqual(count, 0)
 
     def test_approve_creates_letter_document_and_registers_job(self) -> None:
+        number = _unique_number("AI-OK")
         job = self._needs_review_job(
             proposal={
-                "number": "AI-REG/2026/9002",
+                "number": number,
                 "subject": "TEST-SUBJECT-123",
                 "letterDate": "2026-03-01",
                 "type": "Incoming",
@@ -165,7 +173,7 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         self.db.refresh(job)
 
         self.assertEqual(result["status"], JobStatus.REGISTERED.value)
-        self.assertEqual(result["number"], "AI-REG/2026/9002")
+        self.assertEqual(result["number"], number)
         self.assertEqual(job.status, JobStatus.REGISTERED.value)
         self.assertIsNotNone(job.letter_id)
         self.assertEqual(str(job.letter_id), result["letterId"])
@@ -175,7 +183,7 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         letter = self.db.get(Letter, job.letter_id)
         assert letter is not None
         self.assertEqual(letter.subject, "TEST-SUBJECT-123")
-        self.assertEqual(letter.number, "AI-REG/2026/9002")
+        self.assertEqual(letter.number, number)
         self.assertEqual(letter.sender, "Unit A")
 
         docs = self.db.query(Document).filter(Document.letter_id == letter.id).all()
@@ -200,8 +208,9 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         self.assertTrue(audits)
 
     def test_approve_duplicate_number_returns_409(self) -> None:
+        number = _unique_number("AI-DUP")
         existing = Letter(
-            number="AI-REG/DUP/1",
+            number=number,
             letter_date=date(2026, 1, 1),
             received_date=date(2026, 1, 1),
             type="Incoming",
@@ -211,7 +220,7 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         self.db.add(existing)
         self.db.commit()
 
-        job = self._needs_review_job(number="AI-REG/DUP/1")
+        job = self._needs_review_job(number=number)
         letter_count = self.db.query(Letter).count()
         with self.assertRaises(HTTPException) as ctx:
             approve_registration_job(self.db, job_id=job.id, confirm=True)
@@ -232,14 +241,15 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_approve_requires_confirm(self) -> None:
-        job = self._needs_review_job(number="AI-REG/2026/9003")
+        job = self._needs_review_job()
         with self.assertRaises(HTTPException) as ctx:
             approve_registration_job(self.db, job_id=job.id, confirm=False)
         self.assertEqual(ctx.exception.status_code, 422)
 
     def test_approve_links_related_letter_when_found(self) -> None:
+        related_number = _unique_number("AI-REL")
         related = Letter(
-            number="AI-REG/REL/1",
+            number=related_number,
             letter_date=date(2025, 12, 1),
             received_date=date(2025, 12, 1),
             type="Incoming",
@@ -249,15 +259,15 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         self.db.add(related)
         self.db.commit()
 
+        number = _unique_number("AI-MAIN")
         job = self._needs_review_job(
-            number="AI-REG/2026/9004",
             proposal={
-                "number": "AI-REG/2026/9004",
+                "number": number,
                 "subject": "With relation",
                 "letterDate": "2026-04-01",
                 "type": "Incoming",
                 "priority": "Routine",
-                "relatedLetterNumbers": ["AI-REG/REL/1", "MISSING-NUM"],
+                "relatedLetterNumbers": [related_number, "MISSING-NUM"],
             },
         )
         result = approve_registration_job(self.db, job_id=job.id, confirm=True)

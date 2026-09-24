@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # auto prefers paddleocr when installed, else pymupdf_text (PDF text layer).
     ocr_engine: str = "auto"
     ocr_dpi: int = 200
+    # Page cap for OCR / AI registration (spec 11 AI_REGISTRATION_MAX_PAGES).
     ocr_max_pages: int = 50
     ocr_max_image_pixels: int = 40_000_000
     ocr_paddle_lang: str = "en"
@@ -55,6 +56,9 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     # Optional JSON object string merged into chat/completions request body (advanced).
     llm_extra_body_json: str = ""
+    # Comma-separated hostnames allowed for LLM HTTP egress (empty = no host filter).
+    # Default locks local providers to loopback; add api.openai.com for cloud.
+    llm_allowed_hosts: str = "127.0.0.1,localhost"
     # When true, DEBUG-level logs may include document/user prompt text.
     ai_log_document_text: bool = False
 

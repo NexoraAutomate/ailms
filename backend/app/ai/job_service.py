@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -34,6 +35,22 @@ def _proposal_payload(raw: str) -> dict | list | None:
         return json.loads(raw)
     except json.JSONDecodeError:
         return None
+
+
+_ABS_PATH_RE = re.compile(
+    r"(?i)(?:[A-Za-z]:[\\/]|/(?:Users|home|var|tmp|opt|etc|Windows)[\\/])[^\s\"']+"
+)
+
+
+def _public_error_message(raw: str | None) -> str | None:
+    """Sanitize internal exception text before exposing it to API clients (spec 11)."""
+    if not raw or not str(raw).strip():
+        return None
+    text = str(raw).strip()
+    text = _ABS_PATH_RE.sub("[path]", text)
+    if len(text) > 500:
+        text = text[:497] + "..."
+    return text
 
 
 def _validation_payload(row: AiRegistrationJob) -> dict | None:
@@ -70,7 +87,7 @@ def serialize_job(row: AiRegistrationJob) -> dict:
         "letterId": str(row.letter_id) if row.letter_id is not None else None,
         "currentStage": current_stage(row.status),
         "errorCode": row.error_code or None,
-        "errorMessage": row.error_message or None,
+        "errorMessage": _public_error_message(row.error_message),
         "proposal": _proposal_payload(row.proposal_json or ""),
         "validation": _validation_payload(row),
         "workerEnabled": bool(settings.ai_registration_worker_enabled),
@@ -108,6 +125,11 @@ def create_registration_job(
         raise HTTPException(status_code=404, detail="Staged document not found")
 
     actor = actor or current_user_name(db)
+    # Lazy import avoids circular dependency with review_service.
+    from app.ai.review_service import assert_staged_document_access
+
+    assert_staged_document_access(db, staged, actor=actor)
+
     row = AiRegistrationJob(
         staged_document_id=staged.id,
         status=JobStatus.QUEUED.value,

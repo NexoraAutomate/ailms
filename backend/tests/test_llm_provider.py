@@ -20,6 +20,7 @@ def _settings(**overrides) -> Settings:
         llm_timeout_seconds=120,
         llm_max_tokens=4096,
         llm_extra_body_json="",
+        llm_allowed_hosts="127.0.0.1,localhost",
         ai_log_document_text=False,
     )
     base.update(overrides)
@@ -122,6 +123,31 @@ class LlmAuthHeaderTest(unittest.TestCase):
             return_value=_settings(llm_provider="vllm", llm_api_key=""),
         ):
             self.assertEqual(_auth_header_value(), "EMPTY")
+
+
+class LlmHostAllowlistTest(unittest.TestCase):
+    def test_default_allows_loopback(self):
+        from app.llm_client import assert_llm_host_allowed
+
+        assert_llm_host_allowed(_settings())
+
+    def test_rejects_non_allowlisted_host(self):
+        from app.llm_client import LlmHostNotAllowedError, assert_llm_host_allowed
+
+        with self.assertRaises(LlmHostNotAllowedError):
+            assert_llm_host_allowed(
+                _settings(llm_base_url="https://api.openai.com/v1")
+            )
+
+    def test_empty_allowlist_disables_filter(self):
+        from app.llm_client import assert_llm_host_allowed
+
+        assert_llm_host_allowed(
+            _settings(
+                llm_base_url="https://api.openai.com/v1",
+                llm_allowed_hosts="",
+            )
+        )
 
 
 if __name__ == "__main__":

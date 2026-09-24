@@ -367,7 +367,7 @@ def prepare_combined_text(
 ) -> tuple[str, bool]:
     settings = get_settings()
     budget = max_chars if max_chars is not None else settings.extraction_max_chars
-    combined = str(llm_input.get("combinedText") or "")
+    combined = _strip_control(str(llm_input.get("combinedText") or ""))
     if not combined.strip():
         raise ExtractionError("LLM_INPUT_EMPTY", "Normalized artifact has empty combinedText")
     # Prefer already-truncated normalize output, then apply extraction budget.

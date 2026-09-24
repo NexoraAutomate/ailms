@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppData } from '@/components/app-provider'
+import { AIAdvisoryNote } from '@/components/ai/common'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { Button } from '@/components/ui/button'
 import {
@@ -433,6 +434,9 @@ export function RegistrationReview({
           </Button>
         }
       />
+      <div className="mb-3">
+        <AIAdvisoryNote />
+      </div>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
         <span>
           Job <span className="font-semibold text-slate-800">{job.jobId}</span>

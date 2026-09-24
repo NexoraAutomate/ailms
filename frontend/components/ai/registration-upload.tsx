@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { AIAdvisoryNote } from '@/components/ai/common'
 import { Button } from '@/components/ui/button'
 import {
   PROCESSING_JOB_STATUSES,
@@ -189,6 +190,7 @@ export function RegistrationUpload({
 
   return (
     <div className="space-y-4">
+      <AIAdvisoryNote />
       <p className="text-xs text-slate-500">
         Upload a letter PDF or image. The file is stored for analysis; no official letter is created until you approve after
         review.

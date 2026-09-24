@@ -55,7 +55,11 @@ export function AIStatusIndicator({ status, label }: { status: AiStatus; label?:
 }
 
 export function AIAdvisoryNote() {
-  return <p className="text-[11px] leading-5 text-slate-400">AI suggestions are advisory and require user confirmation before affecting official records.</p>
+  return (
+    <p className="text-[11px] leading-5 text-slate-400">
+      AI suggestions may be wrong; verify against the document. Nothing is registered until you approve.
+    </p>
+  )
 }
 
 export function AISuggestionCard({ title, children, decision }: { title: string; children: React.ReactNode; decision?: AiDecision }) {

@@ -8,11 +8,12 @@ import logging
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import HTTPException
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,10 @@ class LlmNotConfiguredError(Exception):
     pass
 
 
+class LlmHostNotAllowedError(Exception):
+    """Raised when LLM_BASE_URL host is outside LLM_ALLOWED_HOSTS."""
+
+
 def llm_is_configured() -> bool:
     settings = get_settings()
     if not settings.llm_enabled:
@@ -35,6 +40,31 @@ def llm_is_configured() -> bool:
     if provider in _LOCAL_PROVIDERS:
         return bool(settings.llm_base_url.strip())
     return bool(settings.llm_api_key.strip())
+
+
+def allowed_llm_hosts(settings: Settings | None = None) -> set[str]:
+    """Parse LLM_ALLOWED_HOSTS; empty string means no host restriction."""
+    cfg = settings or get_settings()
+    raw = (cfg.llm_allowed_hosts or "").strip()
+    if not raw:
+        return set()
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def assert_llm_host_allowed(settings: Settings | None = None) -> None:
+    """Block LLM HTTP calls to hosts outside the configured allowlist (spec 11)."""
+    cfg = settings or get_settings()
+    allowed = allowed_llm_hosts(cfg)
+    if not allowed:
+        return
+    base = (cfg.llm_base_url or "").strip()
+    if not base:
+        return
+    host = (urlparse(base).hostname or "").strip().lower()
+    if not host or host not in allowed:
+        raise LlmHostNotAllowedError(
+            f"LLM host '{host or '(missing)'}' is not in LLM_ALLOWED_HOSTS"
+        )
 
 
 def _auth_header_value() -> str | None:
@@ -114,6 +144,10 @@ async def chat_completion(
     settings = get_settings()
     if not llm_is_configured():
         raise LlmNotConfiguredError("LLM is not configured")
+    try:
+        assert_llm_host_allowed(settings)
+    except LlmHostNotAllowedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     url = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
@@ -236,6 +270,18 @@ async def probe_llm_health() -> dict[str, Any]:
             "model": model,
             "latencyMs": 0,
             "detail": "LLM is not configured",
+        }
+
+    try:
+        assert_llm_host_allowed(settings)
+    except LlmHostNotAllowedError as exc:
+        return {
+            "status": "error",
+            "provider": provider,
+            "model": model,
+            "latencyMs": 0,
+            "detail": str(exc),
+            "errorCode": "LLM_HOST_NOT_ALLOWED",
         }
 
     base = settings.llm_base_url.rstrip("/")
