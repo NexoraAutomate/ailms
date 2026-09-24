@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     # Feature flag: hide AI registration API/UI when false (404 on API).
     ai_registration_enabled: bool = True
+    # Background worker that drains QUEUED jobs (OCR/LLM). Default false so
+    # step-4 job creation leaves jobs in QUEUED until the pipeline is ready.
+    ai_registration_worker_enabled: bool = False
+    ai_registration_worker_poll_seconds: float = 2.0
 
     llm_enabled: bool = True
     llm_provider: str = "ollama"

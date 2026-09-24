@@ -30,7 +30,7 @@ from app.routers.data_operations import (
     import_router,
 )
 from app.storage_service import ensure_storage_dirs
-from app.jobs import run_reminder_cycle, start_reminder_scheduler
+from app.jobs import run_reminder_cycle, start_background_workers
 from app.routers.management import (
     audit_router,
     departments_router,
@@ -119,7 +119,7 @@ def on_startup() -> None:
         run_reminder_cycle()
     finally:
         db.close()
-    start_reminder_scheduler(settings.reminder_interval_seconds)
+    start_background_workers()
 
 
 @app.get("/api/health")

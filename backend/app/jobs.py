@@ -1,11 +1,11 @@
-"""Background reminder processing."""
+"""Background reminder processing and AI registration worker hooks."""
 
 from __future__ import annotations
 
 import logging
 import threading
-import time
 
+from app.ai.job_worker import start_ai_registration_worker, stop_ai_registration_worker
 from app.config import get_settings
 from app.database import SessionLocal
 from app.reminder_service import process_reminders
@@ -49,3 +49,15 @@ def start_reminder_scheduler(interval_seconds: int = 3600) -> None:
 
 def stop_reminder_scheduler() -> None:
     _stop.set()
+
+
+def start_background_workers() -> None:
+    """Start reminder scheduler and optional AI registration worker."""
+    settings = get_settings()
+    start_reminder_scheduler(settings.reminder_interval_seconds)
+    start_ai_registration_worker()
+
+
+def stop_background_workers() -> None:
+    stop_reminder_scheduler()
+    stop_ai_registration_worker()

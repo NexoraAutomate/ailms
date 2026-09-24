@@ -6,9 +6,21 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.ai.ingestion_service import serialize_staged_document, stage_document_upload
+from app.ai.job_service import (
+    create_registration_job,
+    get_registration_job,
+    retry_registration_job,
+    serialize_job,
+    serialize_job_create,
+)
 from app.config import get_settings
 from app.database import get_db
-from app.schemas import StagedDocumentOut
+from app.schemas import (
+    AiRegistrationJobCreateIn,
+    AiRegistrationJobCreateOut,
+    AiRegistrationJobOut,
+    StagedDocumentOut,
+)
 
 router = APIRouter(prefix="/ai-registration", tags=["ai-registration"])
 
@@ -34,3 +46,49 @@ async def create_staged_document(
     db.commit()
     db.refresh(row)
     return StagedDocumentOut(**serialize_staged_document(row))
+
+
+@router.post(
+    "/jobs",
+    response_model=AiRegistrationJobCreateOut,
+    status_code=201,
+    dependencies=[Depends(require_ai_registration_enabled)],
+)
+def create_job(
+    body: AiRegistrationJobCreateIn,
+    db: Session = Depends(get_db),
+) -> AiRegistrationJobCreateOut:
+    """Enqueue AI registration for a staged document (status=QUEUED)."""
+    try:
+        staged_id = int(str(body.staged_document_id).strip())
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="stagedDocumentId must be an integer") from exc
+
+    row = create_registration_job(db, staged_document_id=staged_id)
+    db.commit()
+    db.refresh(row)
+    return AiRegistrationJobCreateOut(**serialize_job_create(row))
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=AiRegistrationJobOut,
+    dependencies=[Depends(require_ai_registration_enabled)],
+)
+def get_job(job_id: int, db: Session = Depends(get_db)) -> AiRegistrationJobOut:
+    """Return job status, progress hint, and proposal when ready."""
+    row = get_registration_job(db, job_id)
+    return AiRegistrationJobOut(**serialize_job(row))
+
+
+@router.post(
+    "/jobs/{job_id}/retry",
+    response_model=AiRegistrationJobOut,
+    dependencies=[Depends(require_ai_registration_enabled)],
+)
+def retry_job(job_id: int, db: Session = Depends(get_db)) -> AiRegistrationJobOut:
+    """Re-queue a FAILED or REJECTED job."""
+    row = retry_registration_job(db, job_id=job_id)
+    db.commit()
+    db.refresh(row)
+    return AiRegistrationJobOut(**serialize_job(row))

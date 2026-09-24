@@ -403,6 +403,43 @@ class StagedDocumentOut(BaseModel):
     createdAt: str
 
 
+class AiRegistrationJobCreateIn(BaseModel):
+    """Body for POST /api/ai-registration/jobs."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    staged_document_id: str = Field(alias="stagedDocumentId")
+
+
+class AiRegistrationJobCreateOut(BaseModel):
+    """Response for POST /api/ai-registration/jobs."""
+
+    jobId: str
+    status: str
+    stagedDocumentId: str
+
+
+class AiRegistrationJobOut(BaseModel):
+    """Response for GET /api/ai-registration/jobs/{id} and retry."""
+
+    jobId: str
+    status: str
+    stagedDocumentId: str
+    letterId: str | None = None
+    currentStage: str | None = None
+    errorCode: str | None = None
+    errorMessage: str | None = None
+    proposal: dict | list | None = None
+    workerEnabled: bool = False
+    createdAt: str
+    updatedAt: str | None = None
+    startedAt: str | None = None
+    ocrCompletedAt: str | None = None
+    extractionCompletedAt: str | None = None
+    reviewReadyAt: str | None = None
+    completedAt: str | None = None
+
+
 class MeetingParticipantIn(BaseModel):
     name: str
     department: str = ""
