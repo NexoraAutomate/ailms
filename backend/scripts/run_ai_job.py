@@ -6,12 +6,14 @@ Usage (from backend/):
   python scripts/run_ai_job.py --job-id 7 --stage normalize
   python scripts/run_ai_job.py --job-id 7 --stage extract
   python scripts/run_ai_job.py --job-id 7 --stage validate
+  python scripts/run_ai_job.py --job-id 7 --stage all
 
 Stages:
   ocr — run OCR and write storage/ai/jobs/{id}/ocr-output.json
   normalize — build llm-input.json/.txt from OCR (requires OCR_COMPLETE)
   extract — LLM structured extraction → extraction-result.json (requires llm-input)
   validate — business validation → validation-result.json + NEEDS_REVIEW
+  all — full pipeline (OCR → normalize → extract → validate)
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from app.ai.job_worker import (  # noqa: E402
     run_extraction_for_job_id,
     run_normalize_for_job_id,
     run_ocr_for_job_id,
+    run_pipeline_for_job_id,
     run_validation_for_job_id,
 )
 from app.ai.ocr_normalize import load_normalized_artifact  # noqa: E402
@@ -46,7 +49,7 @@ def main() -> int:
     parser.add_argument("--job-id", type=int, required=True)
     parser.add_argument(
         "--stage",
-        choices=("ocr", "normalize", "extract", "validate"),
+        choices=("ocr", "normalize", "extract", "validate", "all"),
         default="ocr",
         help="Pipeline stage to run",
     )
@@ -57,6 +60,21 @@ def main() -> int:
 
     db = SessionLocal()
     try:
+        if args.stage == "all":
+            job = run_pipeline_for_job_id(db, args.job_id)
+            db.commit()
+            db.refresh(job)
+            print(
+                f"jobId={job.id} status={job.status} "
+                f"ocr={job.ocr_artifact_key!r} "
+                f"normalized={job.normalized_artifact_key!r} "
+                f"extraction={job.extraction_artifact_key!r} "
+                f"validation={job.validation_artifact_key!r}"
+            )
+            if job.error_code:
+                print(f"errorCode={job.error_code} errorMessage={job.error_message}")
+            return 0 if job.status == "NEEDS_REVIEW" else 1
+
         if args.stage == "ocr":
             job = run_ocr_for_job_id(db, args.job_id)
             db.commit()

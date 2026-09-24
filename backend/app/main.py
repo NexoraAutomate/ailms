@@ -124,4 +124,19 @@ def on_startup() -> None:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "service": "ailms-api", "database": settings.postgres_db}
+    """Liveness probe; warns when AI jobs would remain stuck QUEUED."""
+    cfg = get_settings()
+    payload: dict = {
+        "status": "ok",
+        "service": "ailms-api",
+        "database": cfg.postgres_db,
+        "aiRegistrationEnabled": bool(cfg.ai_registration_enabled),
+        "aiRegistrationWorkerEnabled": bool(cfg.ai_registration_worker_enabled),
+    }
+    if cfg.ai_registration_enabled and not cfg.ai_registration_worker_enabled:
+        payload["warnings"] = [
+            "AI registration worker disabled; jobs remain QUEUED until "
+            "AI_REGISTRATION_WORKER_ENABLED=true"
+        ]
+    return payload
+

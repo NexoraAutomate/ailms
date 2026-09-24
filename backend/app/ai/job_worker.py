@@ -1,8 +1,8 @@
-"""AI registration background worker scaffold (full pipeline in step 9).
+"""AI registration background worker (master plan step 9 / spec 10).
 
-Steps 5–8 wire OCR → normalize → extract → validate. The poll loop still skips
-claiming QUEUED jobs until `_PIPELINE_READY` (step 9) so jobs remain QUEUED
-unless stages are invoked via CLI or tests.
+Daemon thread polls for QUEUED jobs, claims one with SKIP LOCKED (PostgreSQL),
+and runs OCR → normalize → extract → validate → NEEDS_REVIEW without blocking
+the HTTP upload/create-job path.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.ai.extraction_service import run_extraction_stage
+from app.ai.job_service import transition_job
 from app.ai.job_states import JobStatus
 from app.ai.ocr_normalize import run_normalize_stage
 from app.ai.ocr_service import run_ocr_stage
@@ -28,8 +29,15 @@ logger = logging.getLogger("ailms.ai_registration")
 _stop = threading.Event()
 _thread: threading.Thread | None = None
 
-# Flip to True in step 9 when the full async claim loop is enabled.
-_PIPELINE_READY = False
+_TERMINAL_OR_REVIEW = frozenset(
+    {
+        JobStatus.NEEDS_REVIEW.value,
+        JobStatus.FAILED.value,
+        JobStatus.REJECTED.value,
+        JobStatus.APPROVED.value,
+        JobStatus.REGISTERED.value,
+    }
+)
 
 
 def claim_next_queued_job(db: Session) -> AiRegistrationJob | None:
@@ -65,11 +73,7 @@ def claim_next_queued_job(db: Session) -> AiRegistrationJob | None:
         if job is None:
             return None
 
-    now = datetime.now(UTC).replace(tzinfo=None)
-    job.status = JobStatus.PROCESSING.value
-    job.started_at = now
-    job.updated_at = now
-    db.flush()
+    transition_job(db, job, new_status=JobStatus.PROCESSING)
     return job
 
 
@@ -77,17 +81,55 @@ def process_one_job(db: Session, job: AiRegistrationJob) -> None:
     """
     Run pipeline stages for a claimed job.
 
-    Steps 5–8: OCR → normalize → extract → validate → NEEDS_REVIEW.
+    OCR → normalize → extract → validate → NEEDS_REVIEW (or FAILED).
     """
     run_ocr_stage(db, job)
+    if job.status in _TERMINAL_OR_REVIEW:
+        if job.status == JobStatus.NEEDS_REVIEW.value:
+            logger.info("AI job %s → NEEDS_REVIEW", job.id)
+        return
+
     if job.status == JobStatus.OCR_COMPLETE.value:
         run_normalize_stage(db, job)
+    if job.status in _TERMINAL_OR_REVIEW:
+        return
+
     if job.status == JobStatus.OCR_COMPLETE.value and job.normalized_artifact_key:
         run_extraction_stage(db, job)
+    if job.status in _TERMINAL_OR_REVIEW:
+        return
+
     if job.status == JobStatus.EXTRACTION_COMPLETE.value:
         run_validation_stage(db, job)
+
     if job.status == JobStatus.NEEDS_REVIEW.value:
-        logger.info("Job %s ready for human review (status=%s)", job.id, job.status)
+        logger.info("AI job %s → NEEDS_REVIEW", job.id)
+
+
+def _fail_job_after_crash(db: Session, job_id: int, exc: BaseException) -> AiRegistrationJob | None:
+    """Mark a claimed job FAILED after an unexpected worker exception."""
+    job = db.query(AiRegistrationJob).filter(AiRegistrationJob.id == job_id).one_or_none()
+    if job is None:
+        return None
+    if job.status in _TERMINAL_OR_REVIEW:
+        return job
+    try:
+        transition_job(
+            db,
+            job,
+            new_status=JobStatus.FAILED,
+            error_code="WORKER_CRASH",
+            error_message=str(exc)[:2000] or type(exc).__name__,
+        )
+    except ValueError:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        job.status = JobStatus.FAILED.value
+        job.error_code = "WORKER_CRASH"
+        job.error_message = str(exc)[:2000] or type(exc).__name__
+        job.completed_at = now
+        job.updated_at = now
+        db.flush()
+    return job
 
 
 def run_ocr_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
@@ -122,24 +164,48 @@ def run_validation_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
     return run_validation_stage(db, job)
 
 
+def run_pipeline_for_job_id(db: Session, job_id: int) -> AiRegistrationJob:
+    """Run the full async pipeline stages for one job (CLI / tests)."""
+    job = db.query(AiRegistrationJob).filter(AiRegistrationJob.id == job_id).one_or_none()
+    if job is None:
+        raise ValueError(f"Job not found: {job_id}")
+    if job.status == JobStatus.QUEUED.value:
+        transition_job(db, job, new_status=JobStatus.PROCESSING)
+    process_one_job(db, job)
+    return job
+
+
 def run_ai_registration_cycle() -> dict:
     """Process at most one QUEUED job. Returns stats for logging."""
     settings = get_settings()
     if not settings.ai_registration_enabled or not settings.ai_registration_worker_enabled:
         return {"claimed": 0, "skipped": "worker_disabled"}
 
-    if not _PIPELINE_READY:
-        # Keep jobs in QUEUED until the full pipeline is wired (step 9).
-        return {"claimed": 0, "skipped": "pipeline_not_ready"}
-
     db = SessionLocal()
+    job_id: int | None = None
     try:
         job = claim_next_queued_job(db)
         if job is None:
             db.commit()
             return {"claimed": 0}
-        process_one_job(db, job)
+
+        job_id = job.id
+        # Persist PROCESSING before long OCR/LLM work so concurrent workers
+        # skip this row and a soft crash can still mark FAILED below.
         db.commit()
+
+        try:
+            process_one_job(db, job)
+            db.commit()
+        except Exception as exc:
+            logger.exception("AI registration pipeline crashed job_id=%s", job_id)
+            db.rollback()
+            failed = _fail_job_after_crash(db, job_id, exc)
+            db.commit()
+            status = failed.status if failed is not None else JobStatus.FAILED.value
+            return {"claimed": 1, "jobId": job_id, "status": status, "error": "WORKER_CRASH"}
+
+        logger.info("AI job %s → %s", job.id, job.status)
         return {"claimed": 1, "jobId": job.id, "status": job.status}
     except Exception:
         db.rollback()
