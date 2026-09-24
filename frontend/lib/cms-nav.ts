@@ -77,6 +77,7 @@ export function resolveNavHref(target: string): string {
 export function labelFromPathname(pathname: string): string {
   if (pathname === '/' || pathname === '') return 'Dashboard'
   if (/^\/letters\/\d+$/.test(pathname)) return 'All Letters'
+  if (pathname.startsWith('/letters/register/review')) return 'Register Letter'
   if (pathname.startsWith('/meetings/') && pathname !== '/meetings') return 'Meetings'
   if (pathname.startsWith('/ai/analysis')) return 'Letter Analysis'
   if (pathname.startsWith('/settings')) return 'Settings'

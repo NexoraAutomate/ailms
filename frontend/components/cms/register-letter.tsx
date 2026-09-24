@@ -157,7 +157,7 @@ export function Register({ go }: { go: (p: string) => void }) {
           <div className="p-5">
             <h2 className="text-sm font-bold text-slate-700">Upload &amp; analyze</h2>
             <div className="mt-4">
-              <RegistrationUpload />
+              <RegistrationUpload onNeedsReview={(job) => go(`/letters/register/review/${job.jobId}`)} />
             </div>
           </div>
         ) : (
