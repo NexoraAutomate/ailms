@@ -5,13 +5,21 @@ import { addLetterAction, createLetter, updateLetter, type Letter, type LetterIn
 import type { AiAuditEntry, AiDecision } from '@/services/ai'
 import {
   createDepartment,
+  createDepartmentLink,
   createMasterValue,
   createOrganization,
   createUser,
+  deleteDepartment,
+  deleteDepartmentLink,
+  deleteMasterValue,
+  deleteOrganization,
   fetchBootstrap,
   markAllNotificationsRead,
   markNotificationRead,
   saveSettings,
+  updateDepartment,
+  updateMasterValue,
+  updateOrganization,
   type AppNotification,
   type AppSettings,
   type AppUser,
@@ -19,7 +27,10 @@ import {
   type BootstrapData,
   type CurrentUser,
   type Department,
+  type DepartmentInput,
+  type DepartmentLink,
   type DepartmentStat,
+  type DepartmentUpdate,
   type Organization,
 } from '@/services/management'
 import { formatDateTime } from '@/lib/datetime'
@@ -32,10 +43,18 @@ type AppData = BootstrapData & {
   addAction: (letterId: string, action: string) => Promise<void>
   readNotification: (id: number) => Promise<void>
   readAllNotifications: () => Promise<void>
-  addDepartment: (input: { code: string; name: string; head?: string }) => Promise<void>
+  addDepartment: (input: DepartmentInput) => Promise<void>
+  editDepartment: (id: number, input: DepartmentUpdate) => Promise<void>
+  removeDepartment: (id: number) => Promise<void>
+  addDepartmentLink: (input: { sourceId: number; targetId: number; kind?: string }) => Promise<void>
+  removeDepartmentLink: (id: number) => Promise<void>
   addOrganization: (input: Partial<Organization> & { name: string }) => Promise<void>
+  editOrganization: (id: number, input: Partial<Omit<Organization, 'id'>>) => Promise<void>
+  removeOrganization: (id: number) => Promise<void>
   addUser: (input: { name: string; username: string; department?: string; role?: string; email?: string }) => Promise<void>
   addMasterValue: (category: string, value: string) => Promise<void>
+  editMasterValue: (id: number, input: { value?: string; status?: string }) => Promise<void>
+  removeMasterValue: (id: number) => Promise<void>
   updateSettings: (input: Partial<AppSettings>) => Promise<void>
   applyLetterField: (letterId: string, field: string, value: string, decision: AiDecision) => Promise<void>
   acceptAiAction: (letterId: string, action: string, decision: AiDecision) => Promise<void>
@@ -68,6 +87,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     const base: BootstrapData = data ?? {
       letters: [],
       departments: [],
+      departmentLinks: [],
       organizations: [],
       users: [],
       notifications: [],
@@ -145,9 +165,17 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       readNotification: (id) => withRefresh(() => markNotificationRead(id)),
       readAllNotifications: () => withRefresh(() => markAllNotificationsRead()),
       addDepartment: (input) => withRefresh(() => createDepartment(input)),
+      editDepartment: (id, input) => withRefresh(() => updateDepartment(id, input)),
+      removeDepartment: (id) => withRefresh(() => deleteDepartment(id)),
+      addDepartmentLink: (input) => withRefresh(() => createDepartmentLink(input)),
+      removeDepartmentLink: (id) => withRefresh(() => deleteDepartmentLink(id)),
       addOrganization: (input) => withRefresh(() => createOrganization(input)),
+      editOrganization: (id, input) => withRefresh(() => updateOrganization(id, input)),
+      removeOrganization: (id) => withRefresh(() => deleteOrganization(id)),
       addUser: (input) => withRefresh(() => createUser(input)),
       addMasterValue: (category, value) => withRefresh(() => createMasterValue(category, value)),
+      editMasterValue: (id, input) => withRefresh(() => updateMasterValue(id, input)),
+      removeMasterValue: (id) => withRefresh(() => deleteMasterValue(id)),
       updateSettings: (input) => withRefresh(() => saveSettings(input)),
       applyLetterField: async (letterId, field, value, decision) => {
         recordAi(letterId, field, value, decision)
@@ -178,4 +206,4 @@ export function metricValue(metrics: Record<string, string>, label: string) {
   return metrics[label] ?? metrics['Total Correspondence'] ?? '0'
 }
 
-export type { AppNotification, AppUser, AuditRecord, Department, DepartmentStat, Letter, Organization }
+export type { AppNotification, AppUser, AuditRecord, Department, DepartmentLink, DepartmentStat, Letter, Organization }

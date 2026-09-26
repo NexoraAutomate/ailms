@@ -43,6 +43,8 @@ export type Letter = {
   remarks?: string
   completionDate?: string
   isArchived?: boolean
+  /** Stored workflow status. `status` may be the derived value Overdue. */
+  baseStatus?: string
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }
@@ -102,4 +104,18 @@ export async function updateLetter(id: string, input: Partial<Letter>) {
   const payload = { ...input }
   if (!payload.dueDate) delete payload.dueDate
   return api.patch<Letter>(`/api/letters/${id}`, payload)
+}
+
+export type LetterDeleteChallenge = {
+  confirmationCode: string
+  letterIds: number[]
+  expiresInSeconds: number
+}
+
+export async function requestLetterDeleteChallenge(letterIds: number[]) {
+  return api.post<LetterDeleteChallenge>('/api/letters/delete-challenge', { letterIds })
+}
+
+export async function deleteLetters(letterIds: number[], confirmationCode: string) {
+  return api.post<{ deleted: number; letterIds: number[] }>('/api/letters/delete', { letterIds, confirmationCode })
 }

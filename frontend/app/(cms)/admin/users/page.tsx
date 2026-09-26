@@ -1,23 +1,12 @@
 'use client'
 
-import { useAppData } from '@/components/app-provider'
-import { SettingsHub } from '@/components/admin/settings-hub'
-import { useGo } from '@/hooks/use-go'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function UsersRolesRoute() {
-  const go = useGo()
-  const { users, settings, masterData, refresh, updateSettings, addUser, addMasterValue } = useAppData()
-  return (
-    <SettingsHub
-      initialTab="users"
-      users={users}
-      settings={settings}
-      masterData={masterData}
-      onRefresh={refresh}
-      onUpdateSettings={updateSettings}
-      onAddUser={addUser}
-      onAddMaster={addMasterValue}
-      go={go}
-    />
-  )
+  const router = useRouter()
+  useEffect(() => {
+    router.replace('/settings/users')
+  }, [router])
+  return <p className="p-6 text-sm text-slate-500">Redirecting to Settings…</p>
 }

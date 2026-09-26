@@ -1,5 +1,6 @@
 'use client'
 
+import type { HTMLAttributes, ReactNode } from 'react'
 import { BriefcaseBusiness, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -13,7 +14,7 @@ const toneClasses: Record<string, string> = {
   red: 'bg-red-100 text-red-800 dark:text-red-200',
 }
 
-export function Badge({ children, tone = 'slate' }: { children: React.ReactNode; tone?: string }) {
+export function Badge({ children, tone = 'slate' }: { children: ReactNode; tone?: string }) {
   return <span className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-semibold ${toneClasses[tone] ?? toneClasses.slate}`}>{children}</span>
 }
 
@@ -25,7 +26,7 @@ export function Logo() {
   )
 }
 
-export function PageTitle({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
+export function PageTitle({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
@@ -42,8 +43,8 @@ export function PageTitle({ title, description, action }: { title: string; descr
   )
 }
 
-export function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <section className={`rounded-lg border border-slate-200 bg-white shadow-sm ${className}`}>{children}</section>
+export function Card({ children, className = '', ...props }: HTMLAttributes<HTMLElement> & { children: ReactNode; className?: string }) {
+  return <section className={`rounded-lg border border-slate-200 bg-white shadow-sm ${className}`} {...props}>{children}</section>
 }
 
 export function Kpi({ label, icon, onClick, value }: { label: string; icon: React.ReactNode; onClick?: () => void; value: string }) {

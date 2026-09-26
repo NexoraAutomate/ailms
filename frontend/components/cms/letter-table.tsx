@@ -1,8 +1,9 @@
 'use client'
 
-import { MoreHorizontal, SlidersHorizontal } from 'lucide-react'
+import { SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge, Card } from '@/components/cms/ui'
+import { LetterRowActions } from '@/components/cms/letter-row-actions'
 import { priorityTone, statusTone, type Letter } from '@/services/letters'
 
 export function LetterTable({
@@ -12,6 +13,11 @@ export function LetterTable({
   selectedIds,
   onToggle,
   onToggleAll,
+  role,
+  users,
+  departments,
+  onChanged,
+  onDelete,
 }: {
   data: Letter[]
   onOpen: (id: string) => void
@@ -19,6 +25,11 @@ export function LetterTable({
   selectedIds?: Set<string>
   onToggle?: (id: string) => void
   onToggleAll?: (checked: boolean) => void
+  role: string
+  users: { name: string }[]
+  departments: { name: string }[]
+  onChanged: () => Promise<void>
+  onDelete: (letter: Letter) => void
 }) {
   const allSelected = selectable && data.length > 0 && data.every((l) => selectedIds?.has(l.id))
   return (
@@ -34,7 +45,7 @@ export function LetterTable({
         </Button>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[850px] text-left">
+        <table className="w-full min-w-[1100px] text-left">
           <thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-400">
             <tr>
               {selectable && (
@@ -42,7 +53,7 @@ export function LetterTable({
                   <input type="checkbox" checked={!!allSelected} onChange={(e) => onToggleAll?.(e.target.checked)} aria-label="Select all" />
                 </th>
               )}
-              {['Letter no.', 'Subject / source', 'Department', 'Priority', 'Status', 'Due date', 'Assigned to', ''].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}
+              {['Letter no.', 'Subject / source', 'Department', 'Priority', 'Status', 'Due date', 'Assigned to', 'Actions'].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -66,7 +77,16 @@ export function LetterTable({
                 <td className="px-4 py-3"><Badge tone={statusTone(l.status)}>{l.status}</Badge></td>
                 <td className="px-4 py-3 text-xs text-slate-600">{l.dueDate}</td>
                 <td className="px-4 py-3 text-xs text-slate-600">{l.assignedTo}</td>
-                <td className="px-4 py-3"><MoreHorizontal className="size-4 text-slate-400" /></td>
+                <td className="px-4 py-3">
+                  <LetterRowActions
+                    letter={l}
+                    role={role}
+                    users={users}
+                    departments={departments}
+                    onChanged={onChanged}
+                    onDelete={() => onDelete(l)}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>

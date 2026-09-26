@@ -6,8 +6,10 @@ import { useAppData } from '@/components/app-provider'
 import { AISearchBanner } from '@/components/ai/pages'
 import { Button } from '@/components/ui/button'
 import { Card, PageTitle } from '@/components/cms/ui'
+import { LetterDeleteDialog } from '@/components/cms/letter-delete-dialog'
 import { LetterTable } from '@/components/cms/letter-table'
 import type { InterpretedQuery } from '@/services/ai'
+import { isAdministrator } from '@/services/letter-actions'
 import type { Letter } from '@/services/letters'
 import { archiveLetters, restoreLetters, runBulkOperation } from '@/services/data-operations'
 
@@ -19,6 +21,8 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const [bulkValue, setBulkValue] = useState('')
   const [bulkMsg, setBulkMsg] = useState('')
   const [archivedLetters, setArchivedLetters] = useState<Letter[]>([])
+  const [pendingDelete, setPendingDelete] = useState<Letter[] | null>(null)
+  const isAdmin = isAdministrator(me.role)
 
   useEffect(() => {
     if (page !== 'Archive') return
@@ -45,6 +49,14 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const selectedIds = [...selected].filter((id) => data.some((l) => l.id === id))
   const numericIds = selectedIds.map((id) => Number(id))
 
+  const reload = async () => {
+    await refresh()
+    if (page === 'Archive') {
+      const { listLetters } = await import('@/services/letters')
+      setArchivedLetters(await listLetters({ view: 'archived' }))
+    }
+  }
+
   const runBulk = async () => {
     setBulkMsg('')
     if (!numericIds.length) return
@@ -67,11 +79,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
         setBulkMsg(`${result.succeeded} succeeded, ${result.failed} failed.`)
       }
       setSelected(new Set())
-      await refresh()
-      if (page === 'Archive') {
-        const { listLetters } = await import('@/services/letters')
-        setArchivedLetters(await listLetters({ view: 'archived' }))
-      }
+      await reload()
     } catch (err) {
       setBulkMsg(err instanceof Error ? err.message : 'Bulk operation failed')
     }
@@ -123,10 +131,19 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
             </select>
           )}
           <Button size="sm" onClick={runBulk}>Apply</Button>
+          {isAdmin && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setPendingDelete(data.filter((letter) => selectedIds.includes(letter.id)))}
+            >
+              Delete
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear selection</Button>
-          {bulkMsg && <span className="text-xs text-slate-500">{bulkMsg}</span>}
         </Card>
       )}
+      {bulkMsg && <p className="mb-3 text-xs text-slate-600">{bulkMsg}</p>}
       <LetterTable
         data={data}
         onOpen={(id) => go(id)}
@@ -139,7 +156,24 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
           return next
         })}
         onToggleAll={(checked) => setSelected(checked ? new Set(data.map((l) => l.id)) : new Set())}
+        role={me.role}
+        users={users}
+        departments={departments}
+        onChanged={reload}
+        onDelete={(letter) => setPendingDelete([letter])}
       />
+      {pendingDelete && pendingDelete.length > 0 && (
+        <LetterDeleteDialog
+          letters={pendingDelete}
+          onClose={() => setPendingDelete(null)}
+          onDeleted={async () => {
+            setPendingDelete(null)
+            setSelected(new Set())
+            setBulkMsg(pendingDelete.length === 1 ? 'Letter deleted.' : `${pendingDelete.length} letters deleted.`)
+            await reload()
+          }}
+        />
+      )}
     </>
   )
 }

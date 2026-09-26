@@ -7,6 +7,7 @@ from app.models import (
     AppSetting,
     AuditRecord,
     Department,
+    DepartmentLink,
     Letter,
     MonthlyTrend,
     Notification,
@@ -15,6 +16,7 @@ from app.models import (
 )
 from app.schemas import (
     AuditOut,
+    DepartmentLinkOut,
     DepartmentOut,
     LetterOut,
     NotificationOut,
@@ -114,6 +116,7 @@ def serialize_letter(letter: Letter) -> LetterOut:
         remarks=letter.remarks,
         completionDate=completion,
         isArchived=bool(getattr(letter, "is_archived", False)),
+        baseStatus=letter.status,
     )
 
 
@@ -126,17 +129,31 @@ def serialize_department(db: Session, department: Department) -> DepartmentOut:
         or 0
     )
     return DepartmentOut(
+        id=department.id,
         code=department.code,
         name=department.name,
         head=department.head,
         users=users,
         pending=pending,
         status=department.status,
+        parentId=department.parent_id,
+        posX=float(department.pos_x or 0),
+        posY=float(department.pos_y or 0),
+    )
+
+
+def serialize_department_link(link: DepartmentLink) -> DepartmentLinkOut:
+    return DepartmentLinkOut(
+        id=link.id,
+        sourceId=link.source_id,
+        targetId=link.target_id,
+        kind=link.kind,
     )
 
 
 def serialize_organization(organization: Organization) -> OrganizationOut:
     return OrganizationOut(
+        id=organization.id,
         name=organization.name,
         short=organization.short_name,
         type=organization.type,
@@ -258,6 +275,11 @@ def setting_map(db: Session) -> dict[str, str]:
 
 
 def current_user_name(db: Session) -> str:
+    from app.auth_deps import get_request_user_name
+
+    request_user = get_request_user_name()
+    if request_user:
+        return request_user
     return setting_map(db)["currentUser"]
 
 

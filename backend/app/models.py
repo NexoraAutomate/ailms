@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -14,6 +14,25 @@ class Department(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     head: Mapped[str] = mapped_column(String(120), default="")
     status: Mapped[str] = mapped_column(String(20), default="Active")
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_departments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    pos_x: Mapped[float] = mapped_column(Float, default=0.0)
+    pos_y: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class DepartmentLink(Base):
+    """Coordination edge between departments for correspondence routing."""
+
+    __tablename__ = "cms_department_links"
+    __table_args__ = (UniqueConstraint("source_id", "target_id", name="uq_dept_link_pair"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("cms_departments.id", ondelete="CASCADE"), index=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("cms_departments.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40), default="coordinates")
 
 
 class Organization(Base):
@@ -35,12 +54,15 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), default="")
     department: Mapped[str] = mapped_column(String(120), default="")
     role: Mapped[str] = mapped_column(String(80), default="Department/User")
     email: Mapped[str] = mapped_column(String(180), default="")
     status: Mapped[str] = mapped_column(String(20), default="Active")
     last_activity: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class WorkflowTransition(Base):
@@ -388,6 +410,7 @@ class UserSession(Base):
     browser: Mapped[str] = mapped_column(String(80), default="")
     os_name: Mapped[str] = mapped_column(String(80), default="")
     ip_address: Mapped[str] = mapped_column(String(64), default="")
+    token_jti: Mapped[str] = mapped_column(String(64), default="", index=True)
     login_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_activity: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     status: Mapped[str] = mapped_column(String(20), default="Active", index=True)

@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     document_storage_path: str = "storage"
     max_upload_bytes: int = 25 * 1024 * 1024
 
+    # Auth (JWT). Change JWT_SECRET in production.
+    jwt_secret: str = "ailms-dev-change-me-in-production-32b"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 480
+    # When false, API skips Bearer checks (local tests only).
+    auth_required: bool = True
+    default_user_password: str = "Password1"
+
     # Feature flag: hide AI registration API/UI when false (404 on API).
     ai_registration_enabled: bool = True
     # Background worker that drains QUEUED jobs (OCR/LLM). Default false so

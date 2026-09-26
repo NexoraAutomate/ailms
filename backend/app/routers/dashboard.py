@@ -3,13 +3,16 @@ from datetime import date
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.auth_deps import CurrentUser
+from app.auth_service import serialize_auth_user, user_initials
 from app.database import get_db
-from app.models import Approval, AuditRecord, Department, Escalation, Letter, MasterValue, MonthlyTrend, Notification, Organization, User
+from app.models import Approval, AuditRecord, Department, DepartmentLink, Escalation, Letter, MasterValue, MonthlyTrend, Notification, Organization, User
 from app.services import (
     CLOSED_STATUSES,
     PENDING_STATUSES,
     serialize_audit,
     serialize_department,
+    serialize_department_link,
     serialize_letter,
     serialize_notification,
     serialize_organization,
@@ -204,19 +207,12 @@ def reports(kind: str = "Incoming Letters Report", db: Session = Depends(get_db)
 
 
 @router.get("/me")
-def me(db: Session = Depends(get_db)) -> dict:
-    settings = setting_map(db)
-    user = db.query(User).filter(User.name == settings["currentUser"]).first()
-    return {
-        "name": settings["currentUser"],
-        "role": user.role if user else "Administrator",
-        "department": user.department if user else "",
-        "initials": "".join(part[0] for part in settings["currentUser"].replace(".", "").split()[:2]).upper(),
-    }
+def me(user: CurrentUser) -> dict:
+    return serialize_auth_user(user)
 
 
 @router.get("/bootstrap")
-def bootstrap(db: Session = Depends(get_db)) -> dict:
+def bootstrap(user: CurrentUser, db: Session = Depends(get_db)) -> dict:
     items = _letters(db)
     metrics = _metrics(items, db)
     ops = _operational_counts(db)
@@ -224,13 +220,14 @@ def bootstrap(db: Session = Depends(get_db)) -> dict:
     for row in db.query(MasterValue).filter(MasterValue.status == "Active").order_by(MasterValue.id).all():
         master.setdefault(row.category, []).append(row.value)
     settings = setting_map(db)
-    user = db.query(User).filter(User.name == settings["currentUser"]).first()
+    settings["currentUser"] = user.name
     return {
         "letters": items,
         "departments": [serialize_department(db, row) for row in db.query(Department).order_by(Department.id).all()],
+        "departmentLinks": [serialize_department_link(row) for row in db.query(DepartmentLink).order_by(DepartmentLink.id).all()],
         "organizations": [serialize_organization(row) for row in db.query(Organization).order_by(Organization.id).all()],
         "users": [serialize_user(row) for row in db.query(User).order_by(User.id).all()],
-        "notifications": _user_notifications(db, settings["currentUser"]),
+        "notifications": _user_notifications(db, user.name),
         "auditRecords": [serialize_audit(row) for row in db.query(AuditRecord).order_by(AuditRecord.created_at.desc()).all()],
         "masterData": master,
         "trend": _trend(db),
@@ -242,12 +239,15 @@ def bootstrap(db: Session = Depends(get_db)) -> dict:
         "priorityPerformance": _priority_performance(items),
         "settings": settings,
         "me": {
-            "name": settings["currentUser"],
-            "role": user.role if user else "Administrator",
-            "department": user.department if user else "",
-            "initials": "".join(part[0] for part in settings["currentUser"].replace(".", "").split()[:2]).upper(),
+            "name": user.name,
+            "role": user.role,
+            "department": user.department,
+            "initials": user_initials(user.name),
+            "username": user.username,
+            "email": user.email,
+            "id": user.id,
         },
-        "unreadCount": _user_unread_count(db, settings["currentUser"]),
+        "unreadCount": _user_unread_count(db, user.name),
         "operational": {
             "approvalPending": ops["approvalPending"],
             "escalationsOpen": ops["escalationsOpen"],

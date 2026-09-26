@@ -5,15 +5,20 @@ from app.config import get_settings
 from app.database import Base, engine, ensure_database
 from app.db_upgrade import (
     upgrade_ai_registration_schema,
+    upgrade_department_org_schema,
     upgrade_letter_archive_columns,
     upgrade_notification_columns,
+    upgrade_user_auth_schema,
     upgrade_user_created_at,
 )
 import app.models  # noqa: F401 — register all ORM tables with Base.metadata
 from app.administration_service import ensure_administration_seed, touch_session
+from app.auth_middleware import AuthMiddleware
+from app.auth_service import ensure_auth_bootstrap
 from app.routers.administration import router as administration_router
 from app.routers.ai import router as ai_router
 from app.routers.ai_registration import router as ai_registration_router
+from app.routers.auth import router as auth_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.letters import router as letters_router
 from app.routers.workflow import router as workflow_router
@@ -33,6 +38,7 @@ from app.storage_service import ensure_storage_dirs
 from app.jobs import run_reminder_cycle, start_background_workers
 from app.routers.management import (
     audit_router,
+    department_links_router,
     departments_router,
     master_router,
     notifications_router,
@@ -41,6 +47,7 @@ from app.routers.management import (
     users_router,
 )
 from app.seed import (
+    ensure_department_org_layout,
     ensure_master_document_types,
     ensure_master_statuses,
     ensure_phase4b_samples,
@@ -56,6 +63,8 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Auth is inner so CORS can decorate 401 responses from the auth gate.
+app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -69,8 +78,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix="/api")
 app.include_router(letters_router, prefix="/api")
 app.include_router(departments_router, prefix="/api")
+app.include_router(department_links_router, prefix="/api")
 app.include_router(organizations_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
@@ -100,13 +111,17 @@ def on_startup() -> None:
     ensure_storage_dirs()
     Base.metadata.create_all(bind=engine)
     upgrade_ai_registration_schema(engine)
+    upgrade_department_org_schema(engine)
     upgrade_notification_columns(engine)
     upgrade_letter_archive_columns(engine)
     upgrade_user_created_at(engine)
+    upgrade_user_auth_schema(engine)
     db = SessionLocal()
     try:
         seed_if_empty(db)
+        ensure_department_org_layout(db)
         ensure_administration_seed(db)
+        ensure_auth_bootstrap(db)
         ensure_master_statuses(db)
         ensure_master_document_types(db)
         ensure_phase4b_samples(db)

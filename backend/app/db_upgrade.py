@@ -200,6 +200,36 @@ def upgrade_user_created_at(engine: Engine) -> None:
             conn.execute(text("ALTER TABLE cms_users ADD COLUMN created_at TIMESTAMP DEFAULT NOW()"))
 
 
+def upgrade_user_auth_schema(engine: Engine) -> None:
+    """Add password and lockout columns for authentication."""
+    inspector = inspect(engine)
+    if inspector.has_table("cms_users"):
+        columns = {col["name"] for col in inspector.get_columns("cms_users")}
+        statements = []
+        if "password_hash" not in columns:
+            statements.append("ALTER TABLE cms_users ADD COLUMN password_hash VARCHAR(255) DEFAULT ''")
+        if "failed_login_attempts" not in columns:
+            statements.append("ALTER TABLE cms_users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0")
+        if "locked_until" not in columns:
+            statements.append("ALTER TABLE cms_users ADD COLUMN locked_until TIMESTAMP NULL")
+        if statements:
+            with engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+
+    if inspector.has_table("cms_user_sessions"):
+        columns = {col["name"] for col in inspector.get_columns("cms_user_sessions")}
+        if "token_jti" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE cms_user_sessions ADD COLUMN token_jti VARCHAR(64) DEFAULT ''"))
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_user_sessions_token_jti "
+                        "ON cms_user_sessions (token_jti)"
+                    )
+                )
+
+
 def upgrade_letter_archive_columns(engine: Engine) -> None:
     if not inspect(engine).has_table("cms_letters"):
         return
@@ -214,3 +244,64 @@ def upgrade_letter_archive_columns(engine: Engine) -> None:
     with engine.begin() as conn:
         for stmt in statements:
             conn.execute(text(stmt))
+
+
+def upgrade_department_org_schema(engine: Engine) -> None:
+    """Add org-chart columns and coordination links for departments."""
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_departments"):
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("cms_departments")}
+    statements = []
+    if "parent_id" not in columns:
+        statements.append(
+            "ALTER TABLE cms_departments ADD COLUMN parent_id INTEGER "
+            "REFERENCES cms_departments(id) ON DELETE SET NULL"
+        )
+    if "pos_x" not in columns:
+        statements.append("ALTER TABLE cms_departments ADD COLUMN pos_x DOUBLE PRECISION DEFAULT 0")
+    if "pos_y" not in columns:
+        statements.append("ALTER TABLE cms_departments ADD COLUMN pos_y DOUBLE PRECISION DEFAULT 0")
+
+    if statements:
+        with engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
+            if "parent_id" not in columns:
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_departments_parent_id "
+                        "ON cms_departments (parent_id)"
+                    )
+                )
+
+    if not inspector.has_table("cms_department_links"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_department_links (
+                        id SERIAL PRIMARY KEY,
+                        source_id INTEGER NOT NULL
+                            REFERENCES cms_departments(id) ON DELETE CASCADE,
+                        target_id INTEGER NOT NULL
+                            REFERENCES cms_departments(id) ON DELETE CASCADE,
+                        kind VARCHAR(40) DEFAULT 'coordinates',
+                        CONSTRAINT uq_dept_link_pair UNIQUE (source_id, target_id)
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_department_links_source_id "
+                    "ON cms_department_links (source_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_department_links_target_id "
+                    "ON cms_department_links (target_id)"
+                )
+            )
