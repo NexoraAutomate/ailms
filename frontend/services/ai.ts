@@ -447,14 +447,29 @@ async function analyzeCorrespondenceMock(letter: Letter, letters: Letter[]): Pro
   }
 }
 
+/** Coalesce concurrent dashboard/insights mounts so they share one Ollama call. */
+let managementInsightsInFlight: Promise<ManagementInsight[]> | null = null
+
 export async function generateManagementInsights(letters: Letter[], departments: Department[] | DepartmentStat[]): Promise<ManagementInsight[]> {
-  return withLlm(
-    async () => {
-      const body = await api.post<{ insights: ManagementInsight[] }>(AI_ENDPOINTS.insights, {})
-      return body.insights
-    },
-    () => generateManagementInsightsMock(letters, departments),
-  )
+  if (!managementInsightsInFlight) {
+    managementInsightsInFlight = (async () => {
+      try {
+        return await withLlm(
+          async () => {
+            const body = await api.post<{ insights: ManagementInsight[] }>(AI_ENDPOINTS.insights, {})
+            return body.insights
+          },
+          () => generateManagementInsightsMock(letters, departments),
+        )
+      } catch {
+        // Backend/proxy overload during OCR registration — fall back to local mock.
+        return generateManagementInsightsMock(letters, departments)
+      }
+    })().finally(() => {
+      managementInsightsInFlight = null
+    })
+  }
+  return managementInsightsInFlight
 }
 
 async function generateManagementInsightsMock(letters: Letter[], departments: Department[] | DepartmentStat[]): Promise<ManagementInsight[]> {

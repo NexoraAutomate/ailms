@@ -135,7 +135,19 @@ export function AIInsightsPage({ go }: { go: (page: string) => void }) {
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'error'>('analyzing')
   const [insights, setInsights] = useState<ManagementInsight[]>([])
   useEffect(() => {
-    generateManagementInsights(letters, departmentPerformance).then((rows) => { setInsights(rows); setStatus('idle') }).catch(() => setStatus('error'))
+    let cancelled = false
+    generateManagementInsights(letters, departmentPerformance)
+      .then((rows) => {
+        if (cancelled) return
+        setInsights(rows)
+        setStatus('idle')
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('error')
+      })
+    return () => {
+      cancelled = true
+    }
   }, [letters, departmentPerformance])
   const groups = ['Operational', 'Risk', 'Management'] as const
   return (
@@ -160,7 +172,17 @@ export function AIManagementInsights({ go }: { go: (page: string) => void }) {
   const { letters, departmentPerformance } = useAppData()
   const [insights, setInsights] = useState<ManagementInsight[]>([])
   useEffect(() => {
-    generateManagementInsights(letters, departmentPerformance).then((rows) => setInsights(rows.slice(0, 5)))
+    let cancelled = false
+    generateManagementInsights(letters, departmentPerformance)
+      .then((rows) => {
+        if (!cancelled) setInsights(rows.slice(0, 5))
+      })
+      .catch(() => {
+        /* dashboard widget: soft-fail while OCR/LLM is busy elsewhere */
+      })
+    return () => {
+      cancelled = true
+    }
   }, [letters, departmentPerformance])
   return (
     <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">

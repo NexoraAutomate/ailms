@@ -16,6 +16,8 @@ import {
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp'
 const POLL_MS = 2000
+/** Keep polling through OCR/LLM load spikes; ~2 min of consecutive failures before surfacing a hard error. */
+const MAX_TRANSIENT_POLL_FAILURES = 60
 const LAST_JOB_KEY = 'ailms.lastAiRegistrationJobId'
 
 function stageLabel(status: AiRegistrationJobStatus, currentStage: AiRegistrationJob['currentStage']) {
@@ -34,6 +36,19 @@ function stageLabel(status: AiRegistrationJobStatus, currentStage: AiRegistratio
   return status
 }
 
+/** Proxy/backend blips (ECONNRESET → 5xx) during heavy OCR/LLM work — keep polling. */
+function isTransientPollError(err: unknown): boolean {
+  if (!(err instanceof Error)) return true
+  const msg = err.message
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) return true
+  const statusMatch = msg.match(/Request failed \((\d+)\)/)
+  if (statusMatch) {
+    const code = Number(statusMatch[1])
+    return code === 408 || code === 429 || code >= 500
+  }
+  return /econnreset|socket hang up|timed?\s*out|gateway/i.test(msg)
+}
+
 export function RegistrationUpload({
   onStaged,
   onJobCreated,
@@ -47,10 +62,13 @@ export function RegistrationUpload({
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [pollWarning, setPollWarning] = useState('')
   const [staged, setStaged] = useState<StagedDocument | null>(null)
   const [job, setJob] = useState<AiRegistrationJobCreate | null>(null)
   const [liveJob, setLiveJob] = useState<AiRegistrationJob | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollInFlightRef = useRef(false)
+  const transientFailuresRef = useRef(0)
   const navigatedRef = useRef<string | null>(null)
 
   const stopPolling = () => {
@@ -58,6 +76,7 @@ export function RegistrationUpload({
       clearInterval(pollRef.current)
       pollRef.current = null
     }
+    pollInFlightRef.current = false
   }
 
   const rememberJob = (jobId: string) => {
@@ -91,16 +110,42 @@ export function RegistrationUpload({
 
   const startPolling = (jobId: string) => {
     stopPolling()
+    transientFailuresRef.current = 0
+    setPollWarning('')
     const tick = async () => {
+      if (pollInFlightRef.current) return
+      pollInFlightRef.current = true
       try {
         const snapshot = await getRegistrationJob(jobId)
+        transientFailuresRef.current = 0
+        setPollWarning('')
+        setError('')
         handleJobSnapshot(snapshot, { navigate: true })
         if (!PROCESSING_JOB_STATUSES.has(snapshot.status)) {
           stopPolling()
         }
       } catch (err) {
+        if (isTransientPollError(err)) {
+          transientFailuresRef.current += 1
+          setPollWarning(
+            "Temporarily can't reach the server (OCR/LLM may still be running). Retrying…",
+          )
+          if (transientFailuresRef.current >= MAX_TRANSIENT_POLL_FAILURES) {
+            setError(
+              err instanceof Error
+                ? err.message
+                : 'Lost connection while waiting for analysis. Refresh to resume.',
+            )
+            setPollWarning('')
+            stopPolling()
+          }
+          return
+        }
         setError(err instanceof Error ? err.message : 'Failed to poll job status')
+        setPollWarning('')
         stopPolling()
+      } finally {
+        pollInFlightRef.current = false
       }
     }
     void tick()
@@ -126,7 +171,14 @@ export function RegistrationUpload({
         if (PROCESSING_JOB_STATUSES.has(snapshot.status)) {
           startPolling(snapshot.jobId)
         }
-      } catch {
+      } catch (err) {
+        if (cancelled) return
+        // Job may still be processing after a proxy blip — resume polling rather than dropping it.
+        if (isTransientPollError(err)) {
+          setJob({ jobId: lastId, status: 'PROCESSING', stagedDocumentId: '' })
+          startPolling(lastId)
+          return
+        }
         /* stale job id — ignore */
       }
     }
@@ -139,6 +191,7 @@ export function RegistrationUpload({
 
   const upload = async () => {
     setError('')
+    setPollWarning('')
     if (!file) {
       setError('Select a PDF or image file to upload.')
       return
@@ -160,6 +213,7 @@ export function RegistrationUpload({
 
   const startAnalysis = async () => {
     setError('')
+    setPollWarning('')
     if (!staged) {
       setError('Upload a document before starting analysis.')
       return
@@ -206,6 +260,7 @@ export function RegistrationUpload({
             setJob(null)
             setLiveJob(null)
             setError('')
+            setPollWarning('')
             navigatedRef.current = null
             stopPolling()
           }}
@@ -213,6 +268,7 @@ export function RegistrationUpload({
         />
       </label>
       {error && <p className="text-xs text-red-600">{error}</p>}
+      {!error && pollWarning && <p className="text-xs text-amber-700">{pollWarning}</p>}
       {staged && (
         <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-700">
           <p className="font-semibold text-slate-800">Staged for analysis</p>
