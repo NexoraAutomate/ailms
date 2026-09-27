@@ -100,6 +100,7 @@ class Letter(Base):
     confidentiality: Mapped[str] = mapped_column(String(40), default="Normal")
     action_required: Mapped[str] = mapped_column(String(200), default="")
     remarks: Mapped[str] = mapped_column(Text, default="")
+    body_text: Mapped[str] = mapped_column(Text, default="")
     completion_date: Mapped[date | None] = mapped_column(Date)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -66,7 +66,7 @@ def list_letters(
     elif not include_archived:
         query = query.filter(Letter.is_archived.is_(False))
     rows = query.order_by(Letter.id.desc()).all()
-    items = [serialize_letter(row) for row in rows]
+    items = [serialize_letter(row, include_body=False) for row in rows]
 
     if view == "incoming":
         items = [item for item in items if item.type == "Incoming"]
@@ -149,6 +149,7 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
         "assignedTo": "assigned_to",
         "lastAction": "last_action",
         "actionRequired": "action_required",
+        "bodyText": "body_text",
     }
     if "status" in data:
         _apply_status(letter, data.pop("status"))

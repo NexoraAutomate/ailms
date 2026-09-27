@@ -43,6 +43,7 @@ def create_letter_record(
         confidentiality=data["confidentiality"],
         action_required=data["actionRequired"],
         remarks=data["remarks"],
+        body_text=data.get("bodyText") or "",
     )
     db.add(letter)
     db.flush()

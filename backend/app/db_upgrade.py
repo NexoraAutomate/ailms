@@ -246,6 +246,16 @@ def upgrade_letter_archive_columns(engine: Engine) -> None:
             conn.execute(text(stmt))
 
 
+def upgrade_letter_body_text_column(engine: Engine) -> None:
+    if not inspect(engine).has_table("cms_letters"):
+        return
+    columns = {col["name"] for col in inspect(engine).get_columns("cms_letters")}
+    if "body_text" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE cms_letters ADD COLUMN body_text TEXT DEFAULT ''"))
+
+
 def upgrade_department_org_schema(engine: Engine) -> None:
     """Add org-chart columns and coordination links for departments."""
     inspector = inspect(engine)

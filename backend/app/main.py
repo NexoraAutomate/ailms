@@ -7,6 +7,7 @@ from app.db_upgrade import (
     upgrade_ai_registration_schema,
     upgrade_department_org_schema,
     upgrade_letter_archive_columns,
+    upgrade_letter_body_text_column,
     upgrade_notification_columns,
     upgrade_user_auth_schema,
     upgrade_user_created_at,
@@ -114,6 +115,7 @@ def on_startup() -> None:
     upgrade_department_org_schema(engine)
     upgrade_notification_columns(engine)
     upgrade_letter_archive_columns(engine)
+    upgrade_letter_body_text_column(engine)
     upgrade_user_created_at(engine)
     upgrade_user_auth_schema(engine)
     db = SessionLocal()
@@ -127,8 +129,10 @@ def on_startup() -> None:
         ensure_phase4b_samples(db)
         ensure_phase4d_samples(db)
         from app.notification_service import backfill_notification_metadata
+        from app.ai.registration_commit import backfill_letter_body_text
 
         backfill_notification_metadata(db)
+        backfill_letter_body_text(db)
         touch_session(db, username="admin", display="Administrator")
         db.commit()
         run_reminder_cycle()

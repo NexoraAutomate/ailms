@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.job_service import get_registration_job, transition_job
 from app.ai.job_states import JobStatus
+from app.ai.ocr_normalize import load_normalized_artifact
 from app.ai.review_service import assert_job_access
 from app.ai.validation_service import check_duplicate_number, strip_html
 from app.correspondence_service import create_relation
@@ -29,6 +30,47 @@ from app.services import add_audit, add_notification
 logger = logging.getLogger(__name__)
 
 _APPROVE_STATUSES = frozenset({JobStatus.NEEDS_REVIEW.value, JobStatus.APPROVED.value})
+
+
+def _body_text_from_job(job: Any, *, warn_missing: bool = True) -> str:
+    """Load normalized OCR combined text for durable storage on the letter."""
+    key = str(getattr(job, "normalized_artifact_key", "") or "").strip()
+    if not key:
+        return ""
+    artifact = load_normalized_artifact(key)
+    if not artifact:
+        if warn_missing:
+            logger.warning("Missing normalized artifact for job body_text key=%s", key)
+        return ""
+    return str(artifact.get("combinedText") or "").strip()
+
+
+def backfill_letter_body_text(db: Session) -> int:
+    """Copy OCR combinedText onto letters that were registered before body_text existed."""
+    from app.models import AiRegistrationJob
+
+    jobs = (
+        db.query(AiRegistrationJob)
+        .filter(
+            AiRegistrationJob.letter_id.isnot(None),
+            AiRegistrationJob.normalized_artifact_key != "",
+        )
+        .all()
+    )
+    updated = 0
+    for job in jobs:
+        letter = db.get(Letter, job.letter_id)
+        if letter is None or (getattr(letter, "body_text", "") or "").strip():
+            continue
+        body = _body_text_from_job(job, warn_missing=False)
+        if not body:
+            continue
+        letter.body_text = body
+        updated += 1
+    if updated:
+        db.flush()
+        logger.info("Backfilled body_text on %s letter(s)", updated)
+    return updated
 
 
 def _parse_proposal(raw: str) -> dict[str, Any]:
@@ -62,7 +104,11 @@ def _merge_remarks(proposal: dict[str, Any]) -> str:
     return remarks[:4000]
 
 
-def build_letter_create_from_proposal(proposal: dict[str, Any]) -> LetterCreate:
+def build_letter_create_from_proposal(
+    proposal: dict[str, Any],
+    *,
+    body_text: str = "",
+) -> LetterCreate:
     """Map AI/human proposal (camelCase) onto LetterCreate."""
     number = _as_str(proposal.get("number"))
     subject = _as_str(proposal.get("subject"))
@@ -90,6 +136,7 @@ def build_letter_create_from_proposal(proposal: dict[str, Any]) -> LetterCreate:
         "confidentiality": _as_str(proposal.get("confidentiality")) or "Normal",
         "actionRequired": _as_str(proposal.get("actionRequired"))[:200],
         "remarks": _merge_remarks(proposal),
+        "bodyText": body_text,
     }
     try:
         return LetterCreate.model_validate(payload)
@@ -100,9 +147,14 @@ def build_letter_create_from_proposal(proposal: dict[str, Any]) -> LetterCreate:
         ) from exc
 
 
-def assert_proposal_ready_for_registration(db: Session, proposal: dict[str, Any]) -> LetterCreate:
+def assert_proposal_ready_for_registration(
+    db: Session,
+    proposal: dict[str, Any],
+    *,
+    body_text: str = "",
+) -> LetterCreate:
     """Re-validate proposal before commit (duplicate number → 409; other failures → 422)."""
-    letter_payload = build_letter_create_from_proposal(proposal)
+    letter_payload = build_letter_create_from_proposal(proposal, body_text=body_text)
 
     if check_duplicate_number(db, letter_payload.number):
         raise HTTPException(
@@ -203,7 +255,8 @@ def approve_registration_job(
     if not proposal:
         raise HTTPException(status_code=422, detail="Job has no proposal to register")
 
-    letter_payload = assert_proposal_ready_for_registration(db, proposal)
+    body_text = _body_text_from_job(job)
+    letter_payload = assert_proposal_ready_for_registration(db, proposal, body_text=body_text)
 
     staged = (
         db.query(AiStagedDocument)

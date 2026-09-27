@@ -38,10 +38,19 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
     const q = question.trim()
     if (!q) return
     setInput('')
-    setMessages((current) => [...current, { id: `u-${Date.now()}`, role: 'user', text: q, time: nowLabel() }])
+    const userMessage: ChatItem = { id: `u-${Date.now()}`, role: 'user', text: q, time: nowLabel() }
+    const priorMessages = messages
+    setMessages((current) => [...current, userMessage])
     setStatus('generating')
     try {
-      const chat = await assistantChat(q, letters)
+      const contextLetterIds = [...priorMessages]
+        .reverse()
+        .find((item) => item.role === 'assistant' && (item.result?.letters?.length ?? 0) > 0)
+        ?.result?.letters.map((letter) => String(letter.id)) ?? []
+      const history = [...priorMessages, userMessage]
+        .slice(-6)
+        .map((item) => ({ role: item.role, content: item.text }))
+      const chat = await assistantChat(q, letters, { history, contextLetterIds })
       let text = chat.text
       let result = chat.result
       if (!result) {

@@ -185,6 +185,7 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
         self.assertEqual(letter.subject, "TEST-SUBJECT-123")
         self.assertEqual(letter.number, number)
         self.assertEqual(letter.sender, "Unit A")
+        self.assertEqual(letter.body_text or "", "")
 
         docs = self.db.query(Document).filter(Document.letter_id == letter.id).all()
         self.assertEqual(len(docs), 1)
@@ -206,6 +207,34 @@ class RegistrationCommitIntegrationTest(unittest.TestCase):
             .all()
         )
         self.assertTrue(audits)
+
+    def test_approve_stores_ocr_body_text(self) -> None:
+        number = _unique_number("AI-BODY")
+        job = self._needs_review_job(number=number)
+        ocr_body = (
+            "=== PAGE 1 ===\n"
+            "GRANT OF INCREASE IN PENSION TO CIVIL PENSIONERS\n"
+            "The Government sanctions a 3.5% increase in net pension."
+        )
+        artifact_key = f"ai/jobs/{job.id}/llm-input.json"
+        artifact_path = self._storage / artifact_key
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(
+            json.dumps({"combinedText": ocr_body}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        job.normalized_artifact_key = artifact_key
+        self.db.commit()
+        self.db.refresh(job)
+
+        result = approve_registration_job(self.db, job_id=job.id, confirm=True)
+        self.db.commit()
+
+        letter = self.db.get(Letter, int(result["letterId"]))
+        assert letter is not None
+        self.assertIn("PENSION", letter.body_text)
+        self.assertIn("3.5%", letter.body_text)
+        self.assertTrue(letter.body_text.startswith("=== PAGE 1 ==="))
 
     def test_approve_duplicate_number_returns_409(self) -> None:
         number = _unique_number("AI-DUP")

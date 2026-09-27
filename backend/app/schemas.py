@@ -28,6 +28,7 @@ class LetterOut(BaseModel):
     confidentiality: str = "Normal"
     actionRequired: str = ""
     remarks: str = ""
+    bodyText: str = ""
     completionDate: str = "—"
     isArchived: bool = False
     baseStatus: str = ""
@@ -52,6 +53,7 @@ class LetterCreate(BaseModel):
     confidentiality: str = "Normal"
     actionRequired: str = ""
     remarks: str = ""
+    bodyText: str = ""
 
     @field_validator("receivedDate", "dueDate", mode="before")
     @classmethod
@@ -78,6 +80,7 @@ class LetterUpdate(BaseModel):
     confidentiality: str | None = None
     actionRequired: str | None = None
     remarks: str | None = None
+    bodyText: str | None = None
 
     @field_validator("letterDate", "receivedDate", "dueDate", mode="before")
     @classmethod

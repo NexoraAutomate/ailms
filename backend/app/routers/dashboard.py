@@ -38,7 +38,7 @@ def _user_unread_count(db: Session, user_name: str) -> int:
 
 def _letters(db: Session) -> list:
     rows = db.query(Letter).filter(Letter.is_archived.is_(False)).order_by(Letter.id.desc()).all()
-    return [serialize_letter(row) for row in rows]
+    return [serialize_letter(row, include_body=False) for row in rows]
 
 
 def _operational_counts(db: Session) -> dict[str, int]:

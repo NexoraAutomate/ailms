@@ -36,8 +36,17 @@ class SearchIn(BaseModel):
     query: str
 
 
+class ChatHistoryItem(BaseModel):
+    role: str
+    content: str = ""
+
+
 class ChatIn(BaseModel):
     message: str
+    history: list[ChatHistoryItem] = Field(default_factory=list)
+    context_letter_ids: list[int] = Field(default_factory=list, alias="contextLetterIds")
+
+    model_config = {"populate_by_name": True}
 
 
 def _guard_configured() -> None:
@@ -131,4 +140,10 @@ async def api_chat(body: ChatIn, db: Session = Depends(get_db)) -> dict:
     _guard_configured()
     if not body.message.strip():
         raise HTTPException(status_code=422, detail="Message is required")
-    return await assistant_chat(db, body.message.strip())
+    history = [{"role": item.role, "content": item.content} for item in body.history]
+    return await assistant_chat(
+        db,
+        body.message.strip(),
+        history=history,
+        context_letter_ids=list(body.context_letter_ids),
+    )

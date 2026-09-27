@@ -357,21 +357,154 @@ export async function naturalLanguageSearch(query: string, letters: Letter[]): P
   )
 }
 
-export async function assistantChat(message: string, letters: Letter[] = []): Promise<{ text: string; result?: InterpretedQuery }> {
+export type ChatHistoryItem = { role: 'user' | 'assistant'; content: string }
+
+export type AssistantChatOptions = {
+  history?: ChatHistoryItem[]
+  contextLetterIds?: string[]
+}
+
+export async function assistantChat(
+  message: string,
+  letters: Letter[] = [],
+  options: AssistantChatOptions = {},
+): Promise<{ text: string; result?: InterpretedQuery }> {
+  const history = options.history ?? []
+  const contextLetterIds = options.contextLetterIds ?? []
   return withLlm(
-    () => api.post<{ text: string; result: InterpretedQuery }>(AI_ENDPOINTS.chat, { message }),
+    () =>
+      api.post<{ text: string; result: InterpretedQuery }>(AI_ENDPOINTS.chat, {
+        message,
+        history,
+        contextLetterIds: contextLetterIds.map(Number).filter((id) => Number.isFinite(id)),
+      }),
     async () => {
-      const result = await naturalLanguageSearchMock(message, letters)
-      return { text: result.summary, result }
+      const result = await naturalLanguageSearchMock(message, letters, contextLetterIds)
+      return { text: mockAssistantReply(message, result), result }
     },
   )
 }
 
-async function naturalLanguageSearchMock(query: string, letters: Letter[]): Promise<InterpretedQuery> {
+function mockAssistantReply(message: string, result: InterpretedQuery): string {
+  const matched = result.letters
+  const q = message.toLowerCase()
+  if (!matched.length) return result.summary
+
+  if (/summar|overview|brief|explain|describe|content|says|mention|provide|what does/.test(q)) {
+    const letter = matched[0]
+    const base = (letter.bodyText || '').trim() || (letter.remarks || '').trim() || letter.subject
+    const wordCap = q.match(/(?:not more than|under|max(?:imum)?|up to)\s+(\d+)\s+words?/)
+    const singleSentence = /single sentence|one sentence|in a sentence/.test(q)
+    if (wordCap || singleSentence) {
+      const limit = wordCap ? Number(wordCap[1]) : 15
+      const words = base.split(/\s+/).filter(Boolean).slice(0, Math.max(limit, 1))
+      let text = words.join(' ')
+      if (!/[.!?]$/.test(text)) text += '.'
+      return text
+    }
+    return base.length > 600 ? `${base.slice(0, 600).trim()}…` : base
+  }
+
+  return result.summary
+}
+
+const SEARCH_STOPWORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'am',
+  'do', 'does', 'did', 'have', 'has', 'had', 'will', 'would', 'could', 'should',
+  'can', 'may', 'might', 'must', 'shall', 'i', 'me', 'my', 'we', 'our', 'you',
+  'your', 'he', 'she', 'it', 'they', 'them', 'their', 'this', 'that', 'these',
+  'those', 'what', 'which', 'who', 'whom', 'where', 'when', 'why', 'how',
+  'about', 'above', 'after', 'against', 'along', 'among', 'around', 'as', 'at',
+  'before', 'behind', 'below', 'beside', 'between', 'by', 'down', 'during',
+  'for', 'from', 'in', 'into', 'near', 'of', 'on', 'onto', 'over', 'through',
+  'to', 'toward', 'under', 'up', 'with', 'without', 'and', 'but', 'or', 'nor',
+  'not', 'no', 'yes', 'if', 'then', 'than', 'so', 'any', 'all', 'some', 'there',
+  'here', 'please', 'show', 'find', 'list', 'get', 'give', 'tell', 'search',
+  'look', 'see', 'related', 'regarding', 'concerning', 'letter', 'letters',
+  'correspondence', 'file', 'files', 'document', 'documents', 'query', 'question',
+  'summary', 'summarize', 'summarise', 'sentence', 'sentences', 'word', 'words',
+  'single', 'detail', 'details', 'explain', 'describe', 'brief', 'short', 'concise',
+  'overview', 'more', 'only', 'just', 'one', 'two', 'three',
+  'pertaining', 'relating', 'relate', 'relates', 'related', 'involve', 'involves',
+  'involving', 'concern', 'concerns', 'mention', 'mentions', 'mentioned', 'containing',
+  'include', 'includes', 'including', 'associated', 'regarding', 'concerning',
+  'towards', 'toward', 'onto', 'into', 'within', 'among', 'across', 'around',
+  'against', 'whether', 'exist', 'exists', 'available',
+])
+
+const FOLLOWUP_RE =
+  /\b(?:that|this|the|those|these|same|previous|above)\s+(?:letter|letters|one|ones|file|files|correspondence|document|documents)\b|\b(?:it|them|its)\b/i
+
+function isFollowupQuestion(message: string): boolean {
+  if (FOLLOWUP_RE.test(message)) return true
+  return searchKeywords(message).length === 0
+}
+
+function searchKeywords(query: string): string[] {
+  const tokens = query.toLowerCase().match(/[a-z0-9][a-z0-9./_-]*/g) ?? []
+  const seen = new Set<string>()
+  const keywords: string[] = []
+  for (const token of tokens) {
+    if (SEARCH_STOPWORDS.has(token) || token.length < 2 || seen.has(token)) continue
+    seen.add(token)
+    keywords.push(token)
+  }
+  return keywords
+}
+
+function letterSearchBlob(letter: Letter): string {
+  return Object.values(letter).map((value) => String(value ?? '')).join(' ').toLowerCase()
+}
+
+function textMatchLetters(query: string, letters: Letter[]): Letter[] {
+  const q = query.toLowerCase().trim()
+  if (!q) return []
+  const keywords = searchKeywords(query)
+  const phraseHits = letters.filter((letter) => letterSearchBlob(letter).includes(q))
+  if (phraseHits.length && (keywords.length <= 1 || q.split(/\s+/).length <= 4)) {
+    return phraseHits
+  }
+  if (!keywords.length) return phraseHits
+
+  const scored = letters
+    .map((letter) => {
+      const blob = letterSearchBlob(letter)
+      const hitCount = keywords.reduce((count, token) => count + (blob.includes(token) ? 1 : 0), 0)
+      return { letter, hitCount }
+    })
+    .filter((item) => item.hitCount > 0)
+
+  const full = scored.filter((item) => item.hitCount === keywords.length).map((item) => item.letter)
+  if (full.length) return full
+
+  return scored
+    .sort((a, b) => b.hitCount - a.hitCount || Number(b.letter.id) - Number(a.letter.id))
+    .map((item) => item.letter)
+}
+
+async function naturalLanguageSearchMock(
+  query: string,
+  letters: Letter[],
+  contextLetterIds: string[] = [],
+): Promise<InterpretedQuery> {
   await wait()
   const q = query.toLowerCase()
   const filters: Record<string, string> = {}
   let rows = [...letters]
+
+  if (isFollowupQuestion(query) && contextLetterIds.length) {
+    const idSet = new Set(contextLetterIds.map(String))
+    rows = letters.filter((letter) => idSet.has(String(letter.id)))
+    if (rows.length) {
+      filters.Context = 'previous conversation'
+      return {
+        query,
+        filters,
+        letters: rows,
+        summary: 'Using letter(s) from the prior conversation turn.',
+      }
+    }
+  }
 
   if (q.includes('overdue')) { filters.Status = 'Overdue'; rows = rows.filter((l) => l.status === 'Overdue') }
   if (q.includes('awaiting response')) { filters.Status = 'Awaiting Response'; rows = rows.filter((l) => l.status === 'Awaiting Response') }
@@ -393,8 +526,15 @@ async function naturalLanguageSearchMock(query: string, letters: Letter[]): Prom
   }
 
   if (Object.keys(filters).length === 0 && q.trim()) {
-    rows = letters.filter((l) => Object.values(l).some((value) => String(value).toLowerCase().includes(q)))
-    if (rows.length) filters.Text = query
+    const keywords = searchKeywords(query)
+    rows = textMatchLetters(query, letters)
+    if (!rows.length && contextLetterIds.length && isFollowupQuestion(query)) {
+      const idSet = new Set(contextLetterIds.map(String))
+      rows = letters.filter((letter) => idSet.has(String(letter.id)))
+      if (rows.length) filters.Context = 'previous conversation'
+    } else if (rows.length) {
+      filters.Keywords = keywords.join(', ') || query
+    }
   }
 
   const summary = q.includes('workload')

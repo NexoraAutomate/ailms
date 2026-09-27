@@ -41,6 +41,8 @@ export type Letter = {
   confidentiality?: string
   actionRequired?: string
   remarks?: string
+  /** Full OCR / letter body text used by AI Q&A. */
+  bodyText?: string
   completionDate?: string
   isArchived?: boolean
   /** Stored workflow status. `status` may be the derived value Overdue. */
