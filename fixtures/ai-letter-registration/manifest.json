@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    "sample-01-typed-letter.pdf": "fa3f87cceab82bcf646ecc5cdeb3d0377a56aca24599a7115ff07d0871451068",
+    "sample-02-scanned-letter.pdf": "c5a35fc885952c7d89b6d117317d20b811ac6b09b0b0be8ea14b34546ce2e163",
+    "sample-03-table-letter.pdf": "8f3bbf1c513ddf7e89c327653b644f91ea65620a3ce2a1d074eaf52ade5ebbe2",
+    "sample-04-no-deadline.pdf": "e6d130dfefed64ab0a12b0abdc9d47cf14ccbf825bfc14f633ecaf9db55bbd1e",
+    "sample-05-ambiguous-date.pdf": "471c93566ea099f8d7ad90873670426a9ef82975d0a11cdc1ecc76dd45ea7408",
+    "sample-06-multipage.pdf": "f28b971d78fb4f63dbad88dc7369ca7e8f04218972876990764bdf8abd52db14",
+    "sample-07-prompt-injection.pdf": "f1ee9194d34eda06555250dafb02e746b6d8647d98a142ac3d704b77ab1b0c98"
+  }
+}

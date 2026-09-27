@@ -86,11 +86,20 @@ class PaddleOcrEngine:
                 "or set OCR_ENGINE=pymupdf_text",
             ) from exc
 
+        # Windows + Paddle 3.x: oneDNN/PIR path raises NotImplementedError on infer.
+        try:
+            import paddle  # type: ignore[import-untyped]
+
+            paddle.set_flags({"FLAGS_use_mkldnn": False})
+        except Exception:
+            pass
+
         self._ocr = PaddleOCR(
             lang=lang,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
+            enable_mkldnn=False,
         )
         self.version = getattr(PaddleOCR, "__module__", "paddleocr")
         try:
@@ -108,12 +117,13 @@ class PaddleOcrEngine:
 
         rgb = image.convert("RGB")
         arr = np.array(rgb)
-        # Prefer classic API when present; else 3.x predict.
-        if hasattr(self._ocr, "ocr"):
-            raw = self._ocr.ocr(arr)
-            return _parse_paddle_ocr_v2(raw)
-        raw = self._ocr.predict(arr)
-        return _parse_paddle_predict(raw)
+        # Prefer 3.x predict (dict with rec_texts). Classic `.ocr` still exists in 3.x
+        # but returns the same shape — avoid parsing it with the v2 nested-list parser.
+        if hasattr(self._ocr, "predict"):
+            raw = self._ocr.predict(arr)
+            return _parse_paddle_predict(raw)
+        raw = self._ocr.ocr(arr)
+        return _parse_paddle_ocr_v2(raw)
 
 
 class PyMuPdfTextEngine:

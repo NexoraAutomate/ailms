@@ -20,8 +20,8 @@ Legend: **Spec** = file in `docs/ai-letter-registration/specs/`
 | R-W6 | Fields validated | 06 | `validation_service.py` | `test_ai_registration_validation.py` | `validation-result.json` |
 | R-W7 | User reviews/edits proposal | 07 | review API + `registration-review.tsx` | manual + PATCH test | edited subject in GET |
 | R-W8 | Human approval mandatory | 07, 08 | approve endpoint only commits | `test_ai_registration_e2e.py` | no letter before approve SQL |
-| R-W9 | Official record in PostgreSQL | 08 | `registration_commit.py` | e2e test | `cms_letters` row |
-| R-W10 | Document + artifacts traceable | 09 | artifacts + audit | audit GET + ls artifacts | 4 JSON files + audit rows |
+| R-W9 | Official record in PostgreSQL | 08 | `registration_commit.py` | `test_ai_registration_e2e.py` + `run_acceptance_ai_registration.py` | `cms_letters` row + job `REGISTERED` |
+| R-W10 | Document + artifacts traceable | 09 | artifacts + audit | e2e artifact asserts | 4 JSON files + document row |
 
 ---
 
