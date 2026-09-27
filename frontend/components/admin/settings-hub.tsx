@@ -2,21 +2,23 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AlertCircle,
   Bell,
   Database,
   Gauge,
-  KeyRound,
   Lock,
+  Pencil,
   RefreshCw,
   Shield,
   ShieldCheck,
   Tag,
   Trash2,
-  User,
   Users,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { IconActionButton } from '@/components/ui/icon-action-button'
+import { MasterData } from '@/components/cms/master-data-page'
+import { OrganizationsManager } from '@/components/cms/organizations-page'
+import dynamic from 'next/dynamic'
 import type { AppSettings, AppUser } from '@/services/management'
 import {
   createRole,
@@ -45,6 +47,18 @@ import {
   type StatusBadge,
   type UserStats,
 } from '@/services/administration'
+
+const DepartmentOrgChart = dynamic(
+  () => import('@/components/cms/department-org-chart').then((m) => m.DepartmentOrgChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[min(55vh,560px)] items-center justify-center rounded-lg border border-slate-200 bg-white text-sm text-slate-500">
+        Loading organization chart…
+      </div>
+    ),
+  },
+)
 
 type TabId = 'users' | 'roles' | 'access' | 'status' | 'alerts' | 'security' | 'definitions' | 'backup'
 
@@ -94,11 +108,11 @@ export function SettingsHub({
   initialTab = 'users',
   users,
   settings,
-  masterData,
+  masterData: _masterData,
   onRefresh,
   onUpdateSettings,
   onAddUser,
-  onAddMaster,
+  onAddMaster: _onAddMaster,
   go,
 }: {
   initialTab?: TabId
@@ -112,6 +126,15 @@ export function SettingsHub({
   go: (page: string) => void
 }) {
   const [tab, setTab] = useState<TabId>(initialTab)
+
+  useEffect(() => {
+    setTab(initialTab)
+  }, [initialTab])
+
+  const selectTab = (id: TabId) => {
+    setTab(id)
+    go(`Settings:${id}`)
+  }
   const [stats, setStats] = useState<UserStats | null>(null)
   const [userQuery, setUserQuery] = useState('')
   const [userStatus, setUserStatus] = useState('All statuses')
@@ -212,7 +235,7 @@ export function SettingsHub({
           <button
             key={id}
             type="button"
-            onClick={() => setTab(id)}
+            onClick={() => selectTab(id)}
             className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs font-semibold ${tab === id ? 'bg-slate-100 text-[#0d3763]' : 'text-slate-600 hover:bg-slate-50'}`}
           >
             <Icon className="size-3.5" />
@@ -265,7 +288,7 @@ export function SettingsHub({
                     <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 ${u.status === 'Active' ? 'text-emerald-700' : 'text-red-600'}`}>● {u.status}</span></td>
                     <td className="px-4 py-3">{u.created || '—'}</td>
                     <td className="px-4 py-3">
-                      <Button size="sm" variant="outline" onClick={() => setEditUser(u)}>Edit</Button>
+                      <IconActionButton label="Edit" icon={Pencil} onClick={() => setEditUser(u)} />
                     </td>
                   </tr>
                 ))}
@@ -293,9 +316,9 @@ export function SettingsHub({
                     <td className="px-4 py-3 font-semibold">{r.name}</td>
                     <td className="px-4 py-3 text-slate-600">{r.description}</td>
                     <td className="px-4 py-3">{r.permissionCount}</td>
-                    <td className="px-4 py-3 flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => { setSelectedRoleId(r.id); setTab('access') }}>Edit</Button>
-                      <Button size="sm" variant="outline" className="text-red-600" onClick={async () => { await deleteRole(r.id); await load() }}>Delete</Button>
+                    <td className="px-4 py-3 flex gap-0.5">
+                      <IconActionButton label="Edit" icon={Pencil} onClick={() => { setSelectedRoleId(r.id); selectTab('access') }} />
+                      <IconActionButton label="Delete" icon={Trash2} tone="danger" onClick={async () => { await deleteRole(r.id); await load() }} />
                     </td>
                   </tr>
                 ))}
@@ -374,7 +397,7 @@ export function SettingsHub({
                   <div key={s.id} className="rounded-lg border border-slate-200 bg-white p-4">
                     <div className="flex items-start justify-between">
                       <span className="rounded-md px-2 py-1 text-[11px] font-bold text-white" style={{ backgroundColor: s.color }}>{s.name}</span>
-                      <button type="button" className="text-red-500" onClick={async () => { await deleteStatusDefinition(s.id); setStatuses(await fetchStatusDefinitions()) }}><Trash2 className="size-3.5" /></button>
+                      <IconActionButton label="Delete" icon={Trash2} tone="danger" onClick={async () => { await deleteStatusDefinition(s.id); setStatuses(await fetchStatusDefinitions()) }} />
                     </div>
                     <p className="mt-2 text-xs text-slate-500">{s.description}</p>
                   </div>
@@ -485,37 +508,35 @@ export function SettingsHub({
       )}
 
       {tab === 'definitions' && (
-        <div className="rounded-lg border border-slate-200 bg-white p-5">
-          <h3 className="text-sm font-bold text-slate-700">System definitions</h3>
-          <p className="text-xs text-slate-500">Organization profile and master data categories.</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {([
-              ['organizationName', 'Organization name'],
-              ['systemName', 'System name'],
-              ['defaultDueDays', 'Default due days'],
-            ] as const).map(([key, label]) => (
-              <label key={key} className="text-xs">
-                <span className="font-semibold text-slate-600">{label}</span>
-                <input defaultValue={settings[key]} onBlur={(e) => onUpdateSettings({ [key]: e.target.value })} className="mt-1 h-10 w-full rounded-md border border-slate-200 px-3" />
-              </label>
-            ))}
-          </div>
-          <div className="mt-6">
-            <p className="mb-2 text-xs font-semibold text-slate-600">Quick add master value</p>
-            <div className="flex gap-2">
-              <select id="master-cat" className="h-10 rounded-md border border-slate-200 px-3 text-xs">
-                {Object.keys(masterData).map((c) => <option key={c}>{c}</option>)}
-              </select>
-              <input id="master-val" placeholder="New value" className="h-10 flex-1 rounded-md border border-slate-200 px-3 text-xs" />
-              <Button size="sm" onClick={async () => {
-                const cat = (document.getElementById('master-cat') as HTMLSelectElement).value
-                const val = (document.getElementById('master-val') as HTMLInputElement).value
-                if (!val) return
-                await onAddMaster(cat, val)
-                setMsg('Master value added.')
-              }}>Add</Button>
+        <div className="space-y-8">
+          <div className="rounded-lg border border-slate-200 bg-white p-5">
+            <h3 className="text-sm font-bold text-slate-700">System profile</h3>
+            <p className="text-xs text-slate-500">Organization and system defaults.</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {([
+                ['organizationName', 'Organization name'],
+                ['systemName', 'System name'],
+                ['defaultDueDays', 'Default due days'],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="text-xs">
+                  <span className="font-semibold text-slate-600">{label}</span>
+                  <input defaultValue={settings[key]} onBlur={(e) => onUpdateSettings({ [key]: e.target.value })} className="mt-1 h-10 w-full rounded-md border border-slate-200 px-3" />
+                </label>
+              ))}
             </div>
           </div>
+
+          <section>
+            <MasterData embedded />
+          </section>
+
+          <section>
+            <DepartmentOrgChart embedded />
+          </section>
+
+          <section>
+            <OrganizationsManager embedded />
+          </section>
         </div>
       )}
 

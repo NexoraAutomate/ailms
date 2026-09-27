@@ -20,7 +20,7 @@ export const NAV_GROUPS = [
   { label: 'Management', items: ['Analytics', 'Reports'] as const },
   {
     label: 'Administration',
-    items: ['Departments', 'Organizations', 'Users & Roles', 'Master Data', 'Audit Log'] as const,
+    items: ['Audit Log'] as const,
   },
   { label: 'System', items: ['Notifications', 'Settings'] as const },
 ] as const
@@ -45,10 +45,10 @@ const LABEL_TO_HREF: Record<string, string> = {
   'Export Center': '/operations/export',
   Analytics: '/analytics',
   Reports: '/reports',
-  Departments: '/admin/departments',
-  Organizations: '/admin/organizations',
-  'Users & Roles': '/admin/users',
-  'Master Data': '/admin/master-data',
+  Departments: '/settings/definitions',
+  Organizations: '/settings/definitions',
+  'Users & Roles': '/settings/users',
+  'Master Data': '/settings/definitions',
   'Audit Log': '/admin/audit',
   Notifications: '/notifications',
   Settings: '/settings',

@@ -1,18 +1,12 @@
 'use client'
 
-import { useAppData } from '@/components/app-provider'
-import { ManagementTable } from '@/components/cms/management-table'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function DepartmentsRoute() {
-  const { departments, addDepartment } = useAppData()
-  return (
-    <ManagementTable
-      title="Departments"
-      description="Manage organizational departments and workload ownership."
-      headers={['Code', 'Department Name', 'Head / Responsible Officer', 'Active Users', 'Pending Letters', 'Status']}
-      rows={departments}
-      onAdd={(v) => addDepartment({ code: v.code, name: v.name, head: v.head })}
-      addFields={[{ name: 'code', label: 'Code' }, { name: 'name', label: 'Department name' }, { name: 'head', label: 'Head / responsible officer' }]}
-    />
-  )
+  const router = useRouter()
+  useEffect(() => {
+    router.replace('/settings/definitions')
+  }, [router])
+  return <p className="p-6 text-sm text-slate-500">Redirecting to Settings → Definitions…</p>
 }

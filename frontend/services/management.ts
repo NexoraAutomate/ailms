@@ -1,8 +1,43 @@
 import { api } from '@/lib/api'
 import type { Letter } from './letters'
 
-export type Department = { code: string; name: string; head: string; users: number; pending: number; status: string }
-export type Organization = { name: string; short: string; type: string; contact: string; email: string; phone: string; status: string }
+export type Department = {
+  id: number
+  code: string
+  name: string
+  head: string
+  users: number
+  pending: number
+  status: string
+  parentId?: number | null
+  posX?: number
+  posY?: number
+}
+
+export type DepartmentLink = {
+  id: number
+  sourceId: number
+  targetId: number
+  kind: string
+}
+
+export type Organization = {
+  id?: number
+  name: string
+  short: string
+  type: string
+  contact: string
+  email: string
+  phone: string
+  status: string
+}
+
+export type MasterValueItem = {
+  id: number
+  category: string
+  value: string
+  status: string
+}
 export type AppUser = { id?: number; name: string; username: string; department: string; role: string; email: string; status: string; activity: string; created?: string }
 export type AuditRecord = { date: string; user: string; module: string; action: string; record: string; description: string; source: string }
 export type AppNotification = {
@@ -27,11 +62,20 @@ export type DepartmentStat = { name: string; assigned: number; pending: number; 
 export type StatusSlice = { name: string; value: number; tone: string }
 export type PrioritySlice = { label: string; value: string; tone: string }
 export type AppSettings = { organizationName: string; systemName: string; defaultDueDays: string; currentUser: string }
-export type CurrentUser = { name: string; role: string; department: string; initials: string }
+export type CurrentUser = {
+  name: string
+  role: string
+  department: string
+  initials: string
+  username?: string
+  email?: string
+  id?: number
+}
 
 export type BootstrapData = {
   letters: Letter[]
   departments: Department[]
+  departmentLinks: DepartmentLink[]
   organizations: Organization[]
   users: AppUser[]
   notifications: AppNotification[]
@@ -53,20 +97,68 @@ export async function fetchBootstrap() {
   return api.get<BootstrapData>('/api/bootstrap')
 }
 
-export async function createDepartment(input: { code: string; name: string; head?: string; status?: string }) {
+export type DepartmentInput = {
+  code: string
+  name: string
+  head?: string
+  status?: string
+  parentId?: number | null
+  posX?: number
+  posY?: number
+}
+
+export type DepartmentUpdate = Partial<DepartmentInput>
+
+export async function createDepartment(input: DepartmentInput) {
   return api.post<Department>('/api/departments', input)
+}
+
+export async function updateDepartment(id: number, input: DepartmentUpdate) {
+  return api.patch<Department>(`/api/departments/${id}`, input)
+}
+
+export async function deleteDepartment(id: number) {
+  return api.delete<void>(`/api/departments/${id}`)
+}
+
+export async function createDepartmentLink(input: { sourceId: number; targetId: number; kind?: string }) {
+  return api.post<DepartmentLink>('/api/department-links', input)
+}
+
+export async function deleteDepartmentLink(id: number) {
+  return api.delete<void>(`/api/department-links/${id}`)
 }
 
 export async function createOrganization(input: Partial<Organization> & { name: string }) {
   return api.post<Organization>('/api/organizations', input)
 }
 
+export async function updateOrganization(id: number, input: Partial<Omit<Organization, 'id'>>) {
+  return api.patch<Organization>(`/api/organizations/${id}`, input)
+}
+
+export async function deleteOrganization(id: number) {
+  return api.delete<void>(`/api/organizations/${id}`)
+}
+
 export async function createUser(input: { name: string; username: string; department?: string; role?: string; email?: string; status?: string }) {
   return api.post<AppUser>('/api/users', input)
 }
 
-export async function createMasterValue(category: string, value: string) {
-  return api.post('/api/master-data', { category, value })
+export async function fetchMasterItems() {
+  return api.get<MasterValueItem[]>('/api/master-data/items')
+}
+
+export async function createMasterValue(category: string, value: string, status = 'Active') {
+  return api.post<MasterValueItem>('/api/master-data', { category, value, status })
+}
+
+export async function updateMasterValue(id: number, input: { value?: string; status?: string }) {
+  return api.patch<MasterValueItem>(`/api/master-data/${id}`, input)
+}
+
+export async function deleteMasterValue(id: number) {
+  return api.delete<void>(`/api/master-data/${id}`)
 }
 
 export { fetchNotifications, fetchNotificationSummary, fetchNotificationTypes, markAllNotificationsRead, markNotificationRead, openNotificationTarget } from '@/services/notifications'

@@ -7,6 +7,7 @@ from app.models import (
     Approval,
     AuditRecord,
     Department,
+    DepartmentLink,
     Escalation,
     Letter,
     LetterMeetingLink,
@@ -80,6 +81,36 @@ DEPARTMENTS = [
     ("HR", "Human Resources", "F. Ali"),
 ]
 
+# Default org-chart layout (canvas positions) and reporting lines under Coordination.
+DEPARTMENT_LAYOUT = {
+    "Coordination": (420, 40),
+    "Technical": (80, 220),
+    "Finance": (280, 220),
+    "Operations": (480, 220),
+    "Administration": (680, 220),
+    "External Relations": (180, 420),
+    "Policy": (420, 420),
+    "Human Resources": (660, 420),
+}
+
+DEPARTMENT_PARENTS = {
+    "Technical": "Coordination",
+    "Finance": "Coordination",
+    "Operations": "Coordination",
+    "Administration": "Coordination",
+    "External Relations": "Coordination",
+    "Policy": "Coordination",
+    "Human Resources": "Administration",
+}
+
+DEPARTMENT_COORDINATION = [
+    ("Technical", "Operations"),
+    ("Technical", "External Relations"),
+    ("Finance", "Administration"),
+    ("Operations", "Policy"),
+    ("External Relations", "Policy"),
+]
+
 ORGANIZATIONS = [
     ("Ministry of Defence", "MOD", "Government", "Secretary Office", "secretary@mod.gov", "+92 51 9000", "Active"),
     ("SUPARCO", "SUPARCO", "Research", "Director General", "info@suparco.gov", "+92 21 9927", "Active"),
@@ -130,7 +161,21 @@ def seed_if_empty(db: Session) -> None:
             db.add(MasterValue(category=category, value=value))
 
     for code, name, head in DEPARTMENTS:
-        db.add(Department(code=code, name=name, head=head))
+        pos = DEPARTMENT_LAYOUT.get(name, (0, 0))
+        db.add(Department(code=code, name=name, head=head, pos_x=pos[0], pos_y=pos[1]))
+
+    db.flush()
+    by_name = {row.name: row for row in db.query(Department).all()}
+    for child_name, parent_name in DEPARTMENT_PARENTS.items():
+        child = by_name.get(child_name)
+        parent = by_name.get(parent_name)
+        if child and parent:
+            child.parent_id = parent.id
+    for source_name, target_name in DEPARTMENT_COORDINATION:
+        source = by_name.get(source_name)
+        target = by_name.get(target_name)
+        if source and target:
+            db.add(DepartmentLink(source_id=source.id, target_id=target.id, kind="coordinates"))
 
     for name, short, org_type, contact, email, phone, status in ORGANIZATIONS:
         db.add(Organization(name=name, short_name=short, type=org_type, contact=contact, email=email, phone=phone, status=status))
@@ -254,6 +299,34 @@ def ensure_phase4d_samples(db: Session) -> None:
                     remarks="Linked during coordination review",
                 )
             )
+
+
+def ensure_department_org_layout(db: Session) -> None:
+    """Backfill org-chart positions, parents, and coordination links on existing DBs."""
+    departments = {row.name: row for row in db.query(Department).all()}
+    if not departments:
+        return
+
+    for name, (x, y) in DEPARTMENT_LAYOUT.items():
+        row = departments.get(name)
+        if not row:
+            continue
+        if (row.pos_x or 0) == 0 and (row.pos_y or 0) == 0:
+            row.pos_x = x
+            row.pos_y = y
+
+    for child_name, parent_name in DEPARTMENT_PARENTS.items():
+        child = departments.get(child_name)
+        parent = departments.get(parent_name)
+        if child and parent and child.parent_id is None:
+            child.parent_id = parent.id
+
+    if db.query(DepartmentLink).count() == 0:
+        for source_name, target_name in DEPARTMENT_COORDINATION:
+            source = departments.get(source_name)
+            target = departments.get(target_name)
+            if source and target:
+                db.add(DepartmentLink(source_id=source.id, target_id=target.id, kind="coordinates"))
 
 
 def ensure_master_document_types(db: Session) -> None:

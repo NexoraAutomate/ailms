@@ -6,7 +6,19 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.letter_create_service import create_letter_record
 from app.models import Letter, LetterAction
-from app.schemas import LetterActionCreate, LetterActionOut, LetterCreate, LetterOut, LetterStatusUpdate, LetterUpdate
+from app.letter_delete_service import delete_letters, issue_delete_challenge, remove_letter_files
+from app.schemas import (
+    LetterActionCreate,
+    LetterActionOut,
+    LetterCreate,
+    LetterDeleteChallengeIn,
+    LetterDeleteChallengeOut,
+    LetterDeleteIn,
+    LetterDeleteOut,
+    LetterOut,
+    LetterStatusUpdate,
+    LetterUpdate,
+)
 from app.services import (
     CLOSED_STATUSES,
     add_audit,
@@ -94,6 +106,20 @@ def list_letters(
             if needle in " ".join(str(value) for value in item.model_dump(by_alias=True).values()).lower()
         ]
     return items
+
+
+@router.post("/delete-challenge", response_model=LetterDeleteChallengeOut)
+def create_delete_challenge(payload: LetterDeleteChallengeIn, db: Session = Depends(get_db)) -> LetterDeleteChallengeOut:
+    code, ids, expires = issue_delete_challenge(db, payload.letterIds)
+    return LetterDeleteChallengeOut(confirmationCode=code, letterIds=list(ids), expiresInSeconds=expires)
+
+
+@router.post("/delete", response_model=LetterDeleteOut)
+def remove_letters(payload: LetterDeleteIn, db: Session = Depends(get_db)) -> LetterDeleteOut:
+    deleted_ids, storage_keys = delete_letters(db, payload.letterIds, payload.confirmationCode)
+    db.commit()
+    remove_letter_files(storage_keys)
+    return LetterDeleteOut(deleted=len(deleted_ids), letterIds=deleted_ids)
 
 
 @router.get("/{letter_id}", response_model=LetterOut)

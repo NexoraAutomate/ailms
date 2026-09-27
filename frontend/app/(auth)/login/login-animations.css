@@ -1,0 +1,133 @@
+@keyframes login-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes login-ai-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(1.12);
+  }
+}
+
+/* Seamless 360° HUD orbit — photo ring+icons layer */
+@keyframes ai-holo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ai-holo-core-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes bm-current-pulse {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+
+@keyframes bm-node-glow {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(125, 211, 252, 0.85));
+  }
+}
+
+.bm-current-pulse {
+  animation: bm-current-pulse 1.1s linear infinite;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 5px var(--bm-accent));
+}
+
+.bm-child[data-active] {
+  animation: bm-node-glow 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bm-current-pulse,
+  .bm-child[data-active] {
+    animation: none !important;
+  }
+}
+
+.login-marquee {
+  animation: login-marquee-scroll 28s linear infinite;
+  will-change: transform;
+}
+
+.login-ai-pulse {
+  animation: login-ai-pulse 4.5s ease-in-out infinite;
+}
+
+.ai-holo {
+  --ai-holo-spin-duration: 36s;
+}
+
+.ai-holo-spin {
+  animation: ai-holo-spin var(--ai-holo-spin-duration) linear infinite;
+  will-change: transform;
+  transform-origin: center center;
+}
+
+.ai-holo-core-bloom {
+  animation: ai-holo-core-pulse 3.2s ease-in-out infinite;
+  transform-origin: center center;
+}
+
+.login-reveal-in {
+  animation: login-reveal-in 0.55s ease-out both;
+}
+
+.login-footer-marquee-text {
+  color: #ffffff;
+  mix-blend-mode: difference;
+}
+
+.login-marquee-mask {
+  overflow: hidden;
+  max-width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-marquee,
+  .login-ai-pulse,
+  .ai-holo-spin,
+  .ai-holo-core-bloom,
+  .login-reveal-in {
+    animation: none !important;
+  }
+
+  .login-footer-marquee-text {
+    mix-blend-mode: normal;
+    color: #0d3763;
+  }
+}

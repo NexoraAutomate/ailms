@@ -1,9 +1,26 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import type { ComponentType } from 'react'
+import {
+  Archive,
+  ArrowUpRight,
+  CheckCircle2,
+  CornerUpLeft,
+  MessageSquare,
+  Pencil,
+  RefreshCw,
+  Send,
+  ShieldCheck,
+  Trash2,
+  UserPlus,
+  UserRoundCog,
+  X,
+  XCircle,
+} from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Badge, Card } from '@/components/cms/ui'
 import { formatDateTime } from '@/lib/datetime'
 import { statusTone, type Letter, type LetterStatus } from '@/services/letters'
@@ -29,6 +46,26 @@ import {
 } from '@/services/documents'
 import { createRelation, fetchCorrespondenceThread, listRelationTypes, type CorrespondenceThread } from '@/services/correspondence'
 import { listMeetings, type Meeting } from '@/services/meetings'
+
+const WORKFLOW_ICONS: Record<string, ComponentType<{ className?: string }>> = {
+  assign: UserPlus,
+  forward: Send,
+  reassign: UserRoundCog,
+  add_action: MessageSquare,
+  request_response: MessageSquare,
+  request_clarification: CornerUpLeft,
+  mark_complete: CheckCircle2,
+  submit_for_approval: ShieldCheck,
+  approve: CheckCircle2,
+  reject: XCircle,
+  return_for_revision: RefreshCw,
+  escalate: ArrowUpRight,
+  reopen: RefreshCw,
+  close: XCircle,
+  archive: Archive,
+  edit: Pencil,
+  delete: Trash2,
+}
 
 export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users: { name: string }[]; onDone: () => Promise<void> }) {
   const [actions, setActions] = useState<string[]>([])
@@ -98,21 +135,20 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
       {!loading && actions.length === 0 && <p className="text-xs text-slate-500">No workflow actions are available for this status.</p>}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-0.5">
         {actions.map((action) => (
-          <Button
+          <IconActionButton
             key={action}
-            size="sm"
-            variant="outline"
+            label={workflowActionLabel(action)}
+            icon={WORKFLOW_ICONS[action] ?? MessageSquare}
+            tone={action === 'reject' || action === 'delete' ? 'danger' : 'default'}
             onClick={() => {
               setRemarks('')
               setAssignedTo(letter.assignedTo || '')
               if (needsAssign(action) || needsRemarks(action) || needsEscalation(action)) setDialog({ action })
               else void run(action)
             }}
-          >
-            {workflowActionLabel(action)}
-          </Button>
+          />
         ))}
       </div>
       {history.length > 0 && (
@@ -134,7 +170,7 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
           <Card className="w-full max-w-lg p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-bold text-slate-700">{workflowActionLabel(dialog.action)}</h2>
-              <button onClick={() => setDialog(null)}><X className="size-4 text-slate-400" /></button>
+              <IconActionButton label="Close" icon={X} onClick={() => setDialog(null)} />
             </div>
             {(needsAssign(dialog.action) || needsEscalation(dialog.action)) && (
               <label className="mb-3 flex flex-col gap-1">

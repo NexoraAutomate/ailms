@@ -30,6 +30,7 @@ class LetterOut(BaseModel):
     remarks: str = ""
     completionDate: str = "—"
     isArchived: bool = False
+    baseStatus: str = ""
 
 
 class LetterCreate(BaseModel):
@@ -103,20 +104,70 @@ class LetterActionOut(BaseModel):
     createdAt: datetime
 
 
+class LetterDeleteChallengeIn(BaseModel):
+    letterIds: list[int] = Field(min_length=1)
+
+
+class LetterDeleteChallengeOut(BaseModel):
+    confirmationCode: str
+    letterIds: list[int]
+    expiresInSeconds: int
+
+
+class LetterDeleteIn(BaseModel):
+    letterIds: list[int] = Field(min_length=1)
+    confirmationCode: str = Field(min_length=1)
+
+
+class LetterDeleteOut(BaseModel):
+    deleted: int
+    letterIds: list[int]
+
+
 class DepartmentIn(BaseModel):
     code: str
     name: str
     head: str = ""
     status: str = "Active"
+    parentId: int | None = None
+    posX: float = 0
+    posY: float = 0
+
+
+class DepartmentUpdateIn(BaseModel):
+    code: str | None = None
+    name: str | None = None
+    head: str | None = None
+    status: str | None = None
+    parentId: int | None = None
+    posX: float | None = None
+    posY: float | None = None
 
 
 class DepartmentOut(BaseModel):
+    id: int
     code: str
     name: str
     head: str
     users: int
     pending: int
     status: str
+    parentId: int | None = None
+    posX: float = 0
+    posY: float = 0
+
+
+class DepartmentLinkIn(BaseModel):
+    sourceId: int
+    targetId: int
+    kind: str = "coordinates"
+
+
+class DepartmentLinkOut(BaseModel):
+    id: int
+    sourceId: int
+    targetId: int
+    kind: str
 
 
 class OrganizationIn(BaseModel):
@@ -130,6 +181,7 @@ class OrganizationIn(BaseModel):
 
 
 class OrganizationOut(BaseModel):
+    id: int
     name: str
     short: str
     type: str
@@ -139,6 +191,16 @@ class OrganizationOut(BaseModel):
     status: str
 
 
+class OrganizationUpdateIn(BaseModel):
+    name: str | None = None
+    short: str | None = None
+    type: str | None = None
+    contact: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    status: str | None = None
+
+
 class UserIn(BaseModel):
     name: str
     username: str
@@ -146,6 +208,7 @@ class UserIn(BaseModel):
     role: str = "Department/User"
     email: str = ""
     status: str = "Active"
+    password: str | None = None
 
 
 class UserUpdateIn(BaseModel):
@@ -169,6 +232,50 @@ class UserOut(BaseModel):
     status: str
     activity: str
     created: str = ""
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class SignupIn(BaseModel):
+    name: str
+    username: str
+    password: str
+    email: str = ""
+    department: str = ""
+
+
+class ChangePasswordIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    currentPassword: str
+    newPassword: str
+
+
+class AuthUserOut(BaseModel):
+    id: int
+    name: str
+    username: str
+    role: str
+    department: str
+    email: str
+    status: str
+    initials: str
+
+
+class AuthTokenOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    accessToken: str
+    tokenType: str = "bearer"
+    expiresAt: str
+    user: AuthUserOut
+
+
+class MessageOut(BaseModel):
+    message: str
 
 
 class RoleIn(BaseModel):
@@ -241,6 +348,11 @@ class MasterValueIn(BaseModel):
     category: str
     value: str
     status: str = "Active"
+
+
+class MasterValueUpdateIn(BaseModel):
+    value: str | None = None
+    status: str | None = None
 
 
 class MasterValueOut(BaseModel):

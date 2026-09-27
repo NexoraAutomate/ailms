@@ -79,10 +79,11 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
 }
 
 function Sidebar({ mobile, setMobile }: { mobile: boolean; setMobile: (v: boolean) => void }) {
-  const { unreadCount } = useAppData()
+  const { unreadCount, me } = useAppData()
   const pathname = usePathname()
   const page = labelFromPathname(pathname)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+  const isAdmin = me.role.trim().toLowerCase() === 'administrator'
 
   useEffect(() => {
     const group = NAV_GROUPS.find((g) => g.items.some((label) => page === label))
@@ -94,6 +95,11 @@ function Sidebar({ mobile, setMobile }: { mobile: boolean; setMobile: (v: boolea
   const toggleGroup = (label: string, items: readonly string[]) => {
     setOpenGroups((prev) => ({ ...prev, [label]: !(prev[label] ?? groupContainsPage(items)) }))
   }
+
+  const visibleGroups = NAV_GROUPS.filter((group) => {
+    if (group.label === 'Administration' && !isAdmin) return false
+    return true
+  })
 
   return (
     <aside className={`${mobile ? 'fixed inset-y-0 left-0 z-20 flex w-72' : 'hidden lg:flex lg:h-dvh lg:w-64 lg:shrink-0'} flex-col border-r border-slate-200 bg-white`}>
@@ -110,7 +116,7 @@ function Sidebar({ mobile, setMobile }: { mobile: boolean; setMobile: (v: boolea
         )}
       </div>
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-4">
-        {NAV_GROUPS.map((group) => {
+        {visibleGroups.map((group) => {
           const expanded = isOpen(group.label, group.items)
           const active = groupContainsPage(group.items)
           return (
@@ -164,7 +170,10 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dark, setDark] = useState(false)
   const [pwdOpen, setPwdOpen] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
+  const [pwdError, setPwdError] = useState<string | null>(null)
+  const [pwdBusy, setPwdBusy] = useState(false)
   const today = formatHeaderDate()
 
   useEffect(() => {
@@ -180,6 +189,28 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen?.()
     else document.exitFullscreen?.()
+  }
+
+  const handleLogout = async () => {
+    setMenuOpen(false)
+    const { logout } = await import('@/services/auth')
+    await logout()
+    window.location.href = '/login'
+  }
+
+  const handleChangePassword = async () => {
+    setPwdError(null)
+    setPwdBusy(true)
+    try {
+      const { changePassword, logout } = await import('@/services/auth')
+      await changePassword(currentPassword, newPassword)
+      await logout()
+      window.location.href = '/login?next=/'
+    } catch (err) {
+      setPwdError(err instanceof Error ? err.message : 'Unable to update password')
+    } finally {
+      setPwdBusy(false)
+    }
   }
 
   return (
@@ -239,7 +270,7 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
             <div className="absolute right-0 top-full z-30 mt-2 w-56 rounded-lg border border-slate-200 bg-white py-2 shadow-lg">
               <div className="border-b border-slate-100 px-4 pb-2">
                 <p className="text-xs font-bold text-slate-800">{me.name}</p>
-                <p className="text-[11px] text-slate-400">{settings.currentUser || me.name.toLowerCase().replace(/\s+/g, '-')}</p>
+                <p className="text-[11px] text-slate-400">{me.username || settings.currentUser || me.name}</p>
               </div>
               <button
                 type="button"
@@ -256,6 +287,9 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
                 className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
                 onClick={() => {
                   setMenuOpen(false)
+                  setPwdError(null)
+                  setCurrentPassword('')
+                  setNewPassword('')
                   setPwdOpen(true)
                 }}
               >
@@ -264,12 +298,9 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
               <button
                 type="button"
                 className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-red-600 hover:bg-red-50"
-                onClick={() => {
-                  setMenuOpen(false)
-                  go('Settings:security')
-                }}
+                onClick={() => void handleLogout()}
               >
-                <LogOut className="size-4" /> Logout (demo)
+                <LogOut className="size-4" /> Sign out
               </button>
             </div>
           </>
@@ -279,13 +310,23 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-xl">
             <h3 className="text-sm font-bold text-slate-800">Change password</h3>
-            <p className="mt-1 text-xs text-slate-500">Policy is enforced when full authentication is enabled.</p>
+            <p className="mt-1 text-xs text-slate-500">You will be signed out after a successful update.</p>
+            {pwdError && <p className="mt-3 text-xs text-red-600">{pwdError}</p>}
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="mt-4 h-10 w-full rounded-md border border-slate-200 px-3 text-xs"
+              placeholder="Current password"
+              autoComplete="current-password"
+            />
             <input
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="mt-4 h-10 w-full rounded-md border border-slate-200 px-3 text-xs"
+              className="mt-2 h-10 w-full rounded-md border border-slate-200 px-3 text-xs"
               placeholder="New password"
+              autoComplete="new-password"
             />
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setPwdOpen(false)}>
@@ -293,12 +334,10 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
               </Button>
               <Button
                 size="sm"
-                onClick={() => {
-                  setPwdOpen(false)
-                  setNewPassword('')
-                }}
+                disabled={pwdBusy || !currentPassword || !newPassword}
+                onClick={() => void handleChangePassword()}
               >
-                Update
+                {pwdBusy ? 'Updating…' : 'Update'}
               </Button>
             </div>
           </div>

@@ -3,10 +3,23 @@
 import { useState } from 'react'
 import { MoreHorizontal, Plus, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 
-export function FormDialog({ title, fields, onClose, onSubmit }: { title: string; fields: { name: string; label: string; required?: boolean }[]; onClose: () => void; onSubmit: (values: Record<string, string>) => Promise<void> }) {
-  const [values, setValues] = useState<Record<string, string>>({})
+export function FormDialog({
+  title,
+  fields,
+  onClose,
+  onSubmit,
+  initialValues,
+}: {
+  title: string
+  fields: { name: string; label: string; required?: boolean }[]
+  onClose: () => void
+  onSubmit: (values: Record<string, string>) => Promise<void>
+  initialValues?: Record<string, string>
+}) {
+  const [values, setValues] = useState<Record<string, string>>(initialValues ?? {})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   return (
@@ -14,7 +27,7 @@ export function FormDialog({ title, fields, onClose, onSubmit }: { title: string
       <Card className="w-full max-w-lg p-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-bold text-slate-700">{title}</h2>
-          <button onClick={onClose}><X className="size-4 text-slate-400" /></button>
+          <button type="button" onClick={onClose} title="Close" aria-label="Close"><X className="size-4 text-slate-400" /></button>
         </div>
         <div className="grid gap-3">
           {fields.map((field) => (
@@ -70,7 +83,7 @@ export function ManagementTable({ title, description, headers, rows, onAdd, addT
                   {Object.values(r).map((v, j) => (
                     <td className="px-4 py-3 text-slate-600" key={j}>{j === Object.values(r).length - 1 && ['Active', 'Inactive'].includes(String(v)) ? <Badge tone={v === 'Active' ? 'green' : 'slate'}>{String(v)}</Badge> : String(v)}</td>
                   ))}
-                  <td className="px-4 py-3"><button className="rounded p-1 text-slate-400 hover:bg-slate-100"><MoreHorizontal className="size-4" /></button></td>
+                  <td className="px-4 py-3"><IconActionButton label="More" icon={MoreHorizontal} /></td>
                 </tr>
               ))}
             </tbody>
