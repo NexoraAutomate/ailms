@@ -36,6 +36,8 @@ export type Letter = {
   status: LetterStatus
   dueDate: string
   assignedTo: string
+  createdBy?: string
+  assignedBy?: string
   lastAction: string
   daysPending: number
   confidentiality?: string
@@ -47,6 +49,8 @@ export type Letter = {
   isArchived?: boolean
   /** Stored workflow status. `status` may be the derived value Overdue. */
   baseStatus?: string
+  /** False in Archive catalog when the letter is not meant for the viewer. */
+  accessible?: boolean
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }
@@ -77,11 +81,17 @@ export const statusTone = (status: LetterStatus) =>
 
 export const priorityTone = (priority: Priority) => ({ Routine: 'slate', Important: 'amber', Urgent: 'red' }[priority])
 
-export async function listLetters(params?: { q?: string; view?: string; includeArchived?: boolean }) {
+export async function listLetters(params?: {
+  q?: string
+  view?: string
+  includeArchived?: boolean
+  scope?: 'owned' | 'catalog'
+}) {
   const search = new URLSearchParams()
   if (params?.q) search.set('q', params.q)
   if (params?.view) search.set('view', params.view)
   if (params?.includeArchived) search.set('include_archived', 'true')
+  if (params?.scope) search.set('scope', params.scope)
   const suffix = search.toString() ? `?${search.toString()}` : ''
   return api.get<Letter[]>(`/api/letters${suffix}`)
 }

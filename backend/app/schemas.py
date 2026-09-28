@@ -23,6 +23,8 @@ class LetterOut(BaseModel):
     status: str
     dueDate: str
     assignedTo: str
+    createdBy: str = ""
+    assignedBy: str = ""
     lastAction: str
     daysPending: int
     confidentiality: str = "Normal"
@@ -32,6 +34,8 @@ class LetterOut(BaseModel):
     completionDate: str = "—"
     isArchived: bool = False
     baseStatus: str = ""
+    # False when listed in the Archive catalog but not meant for the viewer.
+    accessible: bool = True
 
 
 class LetterCreate(BaseModel):

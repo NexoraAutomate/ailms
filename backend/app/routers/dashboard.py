@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth_deps import CurrentUser
 from app.auth_service import serialize_auth_user, user_initials
 from app.database import get_db
+from app.letter_access import is_administrator, owned_letter_filter
 from app.models import Approval, AuditRecord, Department, DepartmentLink, Escalation, Letter, MasterValue, MonthlyTrend, Notification, Organization, User
 from app.services import (
     CLOSED_STATUSES,
@@ -36,9 +37,12 @@ def _user_unread_count(db: Session, user_name: str) -> int:
     return notifications_for_user_query(db, user_name).filter(Notification.read.is_(False)).count()
 
 
-def _letters(db: Session) -> list:
-    rows = db.query(Letter).filter(Letter.is_archived.is_(False)).order_by(Letter.id.desc()).all()
-    return [serialize_letter(row, include_body=False) for row in rows]
+def _letters(db: Session, user_name: str, role: str) -> list:
+    query = db.query(Letter).filter(Letter.is_archived.is_(False))
+    if not is_administrator(role):
+        query = query.filter(owned_letter_filter(user_name))
+    rows = query.order_by(Letter.id.desc()).all()
+    return [serialize_letter(row, include_body=False, accessible=True) for row in rows]
 
 
 def _operational_counts(db: Session) -> dict[str, int]:
@@ -163,8 +167,8 @@ def _priority_performance(items: list) -> list[dict]:
 
 
 @router.get("/dashboard")
-def dashboard(db: Session = Depends(get_db)) -> dict:
-    items = _letters(db)
+def dashboard(user: CurrentUser, db: Session = Depends(get_db)) -> dict:
+    items = _letters(db, user.name, user.role)
     metrics = _metrics(items, db)
     return {
         "metrics": metrics,
@@ -177,8 +181,8 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/analytics")
-def analytics(db: Session = Depends(get_db)) -> dict:
-    items = _letters(db)
+def analytics(user: CurrentUser, db: Session = Depends(get_db)) -> dict:
+    items = _letters(db, user.name, user.role)
     metrics = _metrics(items, db)
     return {
         "metrics": metrics,
@@ -190,8 +194,8 @@ def analytics(db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/reports")
-def reports(kind: str = "Incoming Letters Report", db: Session = Depends(get_db)) -> dict:
-    items = _letters(db)
+def reports(user: CurrentUser, kind: str = "Incoming Letters Report", db: Session = Depends(get_db)) -> dict:
+    items = _letters(db, user.name, user.role)
     filtered = items
     if kind == "Incoming Letters Report":
         filtered = [item for item in items if item.type == "Incoming"]
@@ -213,7 +217,7 @@ def me(user: CurrentUser) -> dict:
 
 @router.get("/bootstrap")
 def bootstrap(user: CurrentUser, db: Session = Depends(get_db)) -> dict:
-    items = _letters(db)
+    items = _letters(db, user.name, user.role)
     metrics = _metrics(items, db)
     ops = _operational_counts(db)
     master: dict[str, list[str]] = {}

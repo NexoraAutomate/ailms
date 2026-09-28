@@ -244,11 +244,19 @@ def _letter_search_blob(row: Letter) -> str:
 
 def _text_match_letters(db: Session, query: str, limit: int = 50) -> list[Letter]:
     """Match letters by phrase or keyword tokens (not the raw question string)."""
+    from app.letter_access import is_administrator, owned_letter_filter, resolve_user_role
+    from app.services import current_user_name
+
     q = query.lower().strip()
     if not q:
         return []
 
-    rows = db.query(Letter).filter(Letter.is_archived.is_(False)).all()
+    actor = current_user_name(db)
+    role = resolve_user_role(db, actor)
+    query_rows = db.query(Letter).filter(Letter.is_archived.is_(False))
+    if not is_administrator(role):
+        query_rows = query_rows.filter(owned_letter_filter(actor))
+    rows = query_rows.all()
     keywords = _search_keywords(query)
 
     # Short queries (e.g. "pension increase") can match as a phrase first.
@@ -340,7 +348,15 @@ def _letter_payload(letter: Letter) -> dict[str, Any]:
 
 
 def _register_snapshot(db: Session, limit: int = 100) -> list[dict[str, Any]]:
-    rows = db.query(Letter).filter(Letter.is_archived.is_(False)).order_by(Letter.id.desc()).limit(limit).all()
+    from app.letter_access import is_administrator, owned_letter_filter, resolve_user_role
+    from app.services import current_user_name
+
+    actor = current_user_name(db)
+    role = resolve_user_role(db, actor)
+    query = db.query(Letter).filter(Letter.is_archived.is_(False))
+    if not is_administrator(role):
+        query = query.filter(owned_letter_filter(actor))
+    rows = query.order_by(Letter.id.desc()).limit(limit).all()
     out: list[dict[str, Any]] = []
     for row in rows:
         out.append(

@@ -230,6 +230,8 @@ def execute_transition(
     from_status = stored_status(letter)
     if assigned_to is not None:
         letter.assigned_to = assigned_to
+        if action in {"assign", "reassign"}:
+            letter.assigned_by = actor_name
     if department is not None:
         letter.department = department
 

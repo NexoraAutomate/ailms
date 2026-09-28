@@ -92,7 +92,12 @@ def effective_status(letter: Letter) -> str:
     return letter.status
 
 
-def serialize_letter(letter: Letter, *, include_body: bool = True) -> LetterOut:
+def serialize_letter(
+    letter: Letter,
+    *,
+    include_body: bool = True,
+    accessible: bool = True,
+) -> LetterOut:
     status = effective_status(letter)
     completion = iso(letter.completion_date) if letter.status in CLOSED_STATUSES else "—"
     return LetterOut(
@@ -109,6 +114,8 @@ def serialize_letter(letter: Letter, *, include_body: bool = True) -> LetterOut:
         status=status,
         dueDate=iso(letter.due_date),
         assignedTo=letter.assigned_to,
+        createdBy=getattr(letter, "created_by", "") or "",
+        assignedBy=getattr(letter, "assigned_by", "") or "",
         lastAction=letter.last_action,
         daysPending=days_pending(letter),
         confidentiality=letter.confidentiality,
@@ -118,6 +125,7 @@ def serialize_letter(letter: Letter, *, include_body: bool = True) -> LetterOut:
         completionDate=completion,
         isArchived=bool(getattr(letter, "is_archived", False)),
         baseStatus=letter.status,
+        accessible=accessible,
     )
 
 

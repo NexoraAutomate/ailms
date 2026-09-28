@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
+  Archive,
   BarChart3,
   Bell,
   BriefcaseBusiness,
@@ -58,6 +59,7 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Monitoring: SlidersHorizontal,
   Create: FilePlus2,
   Track: Table2,
+  Archive: Archive,
   'All Letters': Table2,
   Incoming: Inbox,
   Outgoing: Send,
@@ -65,7 +67,7 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Pending: ClipboardList,
   Overdue: CircleAlert,
   Closed: CheckCircle2,
-  Archive: BriefcaseBusiness,
+  Archived: BriefcaseBusiness,
   'AI Assistant': Sparkles,
   'Letter Analysis': LineChart,
   'AI Insights': Lightbulb,

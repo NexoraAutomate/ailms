@@ -256,6 +256,82 @@ def upgrade_letter_body_text_column(engine: Engine) -> None:
         conn.execute(text("ALTER TABLE cms_letters ADD COLUMN body_text TEXT DEFAULT ''"))
 
 
+def upgrade_letter_ownership_columns(engine: Engine) -> None:
+    """Add created_by / assigned_by for per-user letter visibility."""
+    if not inspect(engine).has_table("cms_letters"):
+        return
+    columns = {col["name"] for col in inspect(engine).get_columns("cms_letters")}
+    statements = []
+    if "created_by" not in columns:
+        statements.append("ALTER TABLE cms_letters ADD COLUMN created_by VARCHAR(120) DEFAULT ''")
+    if "assigned_by" not in columns:
+        statements.append("ALTER TABLE cms_letters ADD COLUMN assigned_by VARCHAR(120) DEFAULT ''")
+    if not statements:
+        return
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_cms_letters_created_by ON cms_letters (created_by)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_cms_letters_assigned_by ON cms_letters (assigned_by)"
+            )
+        )
+
+
+def backfill_letter_ownership(db) -> None:
+    """Best-effort fill created_by / assigned_by from audit and workflow history."""
+    from app.models import AuditRecord, Letter, WorkflowTransition
+
+    # created_by from Letter Registered audits
+    audits = (
+        db.query(AuditRecord)
+        .filter(AuditRecord.action == "Letter Registered", AuditRecord.record != "")
+        .order_by(AuditRecord.id.asc())
+        .all()
+    )
+    number_to_creator: dict[str, str] = {}
+    for row in audits:
+        if row.record and row.user and row.record not in number_to_creator:
+            number_to_creator[row.record] = row.user
+
+    if number_to_creator:
+        letters = db.query(Letter).filter(Letter.created_by == "").all()
+        for letter in letters:
+            creator = number_to_creator.get(letter.number)
+            if creator:
+                letter.created_by = creator
+
+    # assigned_by from latest assign/reassign transition
+    transitions = (
+        db.query(WorkflowTransition)
+        .filter(WorkflowTransition.action.in_(["assign", "reassign"]))
+        .order_by(WorkflowTransition.id.desc())
+        .all()
+    )
+    letter_assigner: dict[int, str] = {}
+    for row in transitions:
+        if row.letter_id not in letter_assigner and row.performed_by:
+            letter_assigner[row.letter_id] = row.performed_by
+
+    if letter_assigner:
+        letters = db.query(Letter).filter(Letter.assigned_by == "", Letter.id.in_(list(letter_assigner.keys()))).all()
+        for letter in letters:
+            assigner = letter_assigner.get(letter.id)
+            if assigner:
+                letter.assigned_by = assigner
+
+    # If still blank but has assignee, treat creator as assigner when known
+    for letter in db.query(Letter).filter(Letter.assigned_by == "", Letter.assigned_to != "").all():
+        if letter.created_by:
+            letter.assigned_by = letter.created_by
+
+
+
 def upgrade_department_org_schema(engine: Engine) -> None:
     """Add org-chart columns and coordination links for departments."""
     inspector = inspect(engine)

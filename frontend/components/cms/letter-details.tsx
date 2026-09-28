@@ -1,12 +1,12 @@
 'use client'
 
-import { useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Lock, Sparkles } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { AIAnalyzeDocument, AIIntelligencePanel } from '@/components/ai/letter-tools'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
-import { priorityTone, statusTone } from '@/services/letters'
+import { getLetter, priorityTone, statusTone, type Letter } from '@/services/letters'
 import {
   ApprovalEscalationPanel,
   CorrespondenceThreadPanel,
@@ -18,8 +18,56 @@ import {
 export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   const { letters, users, refresh, addAction, applyLetterField, acceptAiAction } = useAppData()
   const [action, setAction] = useState('')
-  const letter = letters.find((item) => item.id === id)
+  const cached = letters.find((item) => item.id === id) ?? null
+  const [letter, setLetter] = useState<Letter | null>(cached)
+  const [loading, setLoading] = useState(!cached)
+  const [denied, setDenied] = useState(false)
+
+  useEffect(() => {
+    const fromCache = letters.find((item) => item.id === id) ?? null
+    if (fromCache) {
+      setLetter(fromCache)
+      setLoading(false)
+      setDenied(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setDenied(false)
+    getLetter(id)
+      .then((row) => {
+        if (!cancelled) {
+          setLetter(row)
+          setLoading(false)
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : String(err)
+        setDenied(/403|access|forbidden/i.test(message))
+        setLetter(null)
+        setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id, letters])
+
+  if (loading) return <p className="text-sm text-slate-500">Loading letter…</p>
+  if (denied) {
+    return (
+      <Card className="flex flex-col items-start gap-3 p-8">
+        <div className="flex items-center gap-2 text-slate-600">
+          <Lock className="size-5" />
+          <h2 className="text-sm font-bold">Letter locked</h2>
+        </div>
+        <p className="text-sm text-slate-500">This correspondence is not marked to you, so detail access is restricted.</p>
+        <Button variant="outline" onClick={() => go('Archive')}>Back to Archive</Button>
+      </Card>
+    )
+  }
   if (!letter) return <p className="text-sm text-slate-500">Letter not found.</p>
+
   return (
     <>
       <button onClick={() => go('All Letters')} className="mb-4 text-xs font-semibold text-[#1769aa]">← Back to letter database</button>

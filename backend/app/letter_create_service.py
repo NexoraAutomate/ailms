@@ -26,6 +26,7 @@ def create_letter_record(
 
     data = payload.model_dump(by_alias=False)
     actor = actor or current_user_name(db)
+    assigned_to = data["assignedTo"] or ""
     letter = Letter(
         number=data["number"],
         letter_date=data["letterDate"],
@@ -38,7 +39,9 @@ def create_letter_record(
         priority=data["priority"],
         status=data["status"],
         due_date=data["dueDate"],
-        assigned_to=data["assignedTo"],
+        assigned_to=assigned_to,
+        created_by=actor,
+        assigned_by=actor if assigned_to else "",
         last_action=data["lastAction"] or "Registered",
         confidentiality=data["confidentiality"],
         action_required=data["actionRequired"],

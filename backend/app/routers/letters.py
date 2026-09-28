@@ -4,6 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.letter_access import (
+    assert_letter_access,
+    is_administrator,
+    owned_letter_filter,
+    resolve_user_role,
+    user_can_access_letter,
+)
 from app.letter_create_service import create_letter_record
 from app.models import Letter, LetterAction
 from app.letter_delete_service import delete_letters, issue_delete_challenge, remove_letter_files
@@ -55,18 +62,36 @@ def list_letters(
     department: str | None = None,
     assigned_to: str | None = None,
     view: str | None = Query(default=None),
+    scope: str = Query(default="owned", pattern="^(owned|catalog)$"),
     include_archived: bool = Query(default=False),
     date_from: date | None = None,
     date_to: date | None = None,
     db: Session = Depends(get_db),
 ) -> list[LetterOut]:
+    actor = current_user_name(db)
+    role = resolve_user_role(db, actor)
+    admin = is_administrator(role)
+
     query = db.query(Letter)
     if view == "archived":
         query = query.filter(Letter.is_archived.is_(True))
+    elif scope == "catalog":
+        pass
     elif not include_archived:
         query = query.filter(Letter.is_archived.is_(False))
+
+    if scope == "owned" and not admin:
+        query = query.filter(owned_letter_filter(actor))
+
     rows = query.order_by(Letter.id.desc()).all()
-    items = [serialize_letter(row, include_body=False) for row in rows]
+    items = [
+        serialize_letter(
+            row,
+            include_body=False,
+            accessible=admin or user_can_access_letter(db, row, actor, role),
+        )
+        for row in rows
+    ]
 
     if view == "incoming":
         items = [item for item in items if item.type == "Incoming"]
@@ -81,7 +106,7 @@ def list_letters(
     elif view == "archived":
         items = [item for item in items if item.isArchived]
     elif view == "mine":
-        owner = assigned_to or current_user_name(db)
+        owner = assigned_to or actor
         items = [item for item in items if item.assignedTo == owner]
 
     if type:
@@ -124,7 +149,11 @@ def remove_letters(payload: LetterDeleteIn, db: Session = Depends(get_db)) -> Le
 
 @router.get("/{letter_id}", response_model=LetterOut)
 def get_letter(letter_id: int, db: Session = Depends(get_db)) -> LetterOut:
-    return serialize_letter(_get_letter(db, letter_id))
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    role = resolve_user_role(db, actor)
+    assert_letter_access(db, letter, actor, role)
+    return serialize_letter(letter, accessible=True)
 
 
 @router.post("", response_model=LetterOut, status_code=201)
@@ -138,6 +167,7 @@ def create_letter(payload: LetterCreate, db: Session = Depends(get_db)) -> Lette
 @router.patch("/{letter_id}", response_model=LetterOut)
 def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(get_db)) -> LetterOut:
     letter = _get_letter(db, letter_id)
+    assert_letter_access(db, letter, current_user_name(db))
     assert_active_letter(letter)
     data = payload.model_dump(exclude_unset=True, by_alias=False)
     mapping = {
@@ -153,8 +183,12 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
     }
     if "status" in data:
         _apply_status(letter, data.pop("status"))
+    actor = current_user_name(db)
     for key, value in data.items():
-        setattr(letter, mapping.get(key, key), value)
+        attr = mapping.get(key, key)
+        if attr == "assigned_to" and value is not None and value != letter.assigned_to:
+            letter.assigned_by = actor
+        setattr(letter, attr, value)
     add_audit(
         db,
         user=current_user_name(db),
@@ -171,6 +205,7 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
 @router.patch("/{letter_id}/status", response_model=LetterOut)
 def update_letter_status(letter_id: int, payload: LetterStatusUpdate, db: Session = Depends(get_db)) -> LetterOut:
     letter = _get_letter(db, letter_id)
+    assert_letter_access(db, letter, current_user_name(db))
     assert_active_letter(letter)
     _apply_status(letter, payload.status)
     letter.last_action = f"Status changed to {payload.status}"
@@ -189,7 +224,8 @@ def update_letter_status(letter_id: int, payload: LetterStatusUpdate, db: Sessio
 
 @router.get("/{letter_id}/actions", response_model=list[LetterActionOut])
 def list_actions(letter_id: int, db: Session = Depends(get_db)) -> list[LetterActionOut]:
-    _get_letter(db, letter_id)
+    letter = _get_letter(db, letter_id)
+    assert_letter_access(db, letter, current_user_name(db))
     rows = db.query(LetterAction).filter(LetterAction.letter_id == letter_id).order_by(LetterAction.id.desc()).all()
     return [
         LetterActionOut(
@@ -207,6 +243,7 @@ def list_actions(letter_id: int, db: Session = Depends(get_db)) -> list[LetterAc
 @router.post("/{letter_id}/actions", response_model=LetterActionOut, status_code=201)
 def add_action(letter_id: int, payload: LetterActionCreate, db: Session = Depends(get_db)) -> LetterActionOut:
     letter = _get_letter(db, letter_id)
+    assert_letter_access(db, letter, current_user_name(db))
     assert_active_letter(letter)
     try:
         execute_transition(

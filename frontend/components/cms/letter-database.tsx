@@ -21,39 +21,70 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const [bulkValue, setBulkValue] = useState('')
   const [bulkMsg, setBulkMsg] = useState('')
   const [archivedLetters, setArchivedLetters] = useState<Letter[]>([])
+  const [catalogLetters, setCatalogLetters] = useState<Letter[]>([])
   const [pendingDelete, setPendingDelete] = useState<Letter[] | null>(null)
   const isAdmin = isAdministrator(me.role)
+  const isCatalog = page === 'Letter Archive'
+  const isSoftArchive = page === 'Archived'
 
   useEffect(() => {
-    if (page !== 'Archive') return
-    import('@/services/letters').then(({ listLetters }) => listLetters({ view: 'archived' }).then(setArchivedLetters))
-  }, [page, letters])
+    if (isSoftArchive) {
+      import('@/services/letters').then(({ listLetters }) => listLetters({ view: 'archived' }).then(setArchivedLetters))
+    }
+  }, [isSoftArchive, letters])
 
-  const source = page === 'Archive' ? archivedLetters : aiSearch ? aiSearch.letters : letters
+  useEffect(() => {
+    if (!isCatalog) return
+    import('@/services/letters').then(({ listLetters }) =>
+      listLetters({ scope: 'catalog' }).then(setCatalogLetters),
+    )
+  }, [isCatalog, letters])
+
+  const source = isCatalog
+    ? catalogLetters
+    : isSoftArchive
+      ? archivedLetters
+      : aiSearch
+        ? aiSearch.letters
+        : letters
+
   const data = source.filter((l) => {
     const q = aiSearch || !query || Object.values(l).some((v) => String(v).toLowerCase().includes(query.toLowerCase()))
-    const archiveOk = page === 'Archive' ? !!l.isArchived : !l.isArchived
+    const archiveOk = isSoftArchive ? !!l.isArchived : isCatalog ? true : !l.isArchived
     const matchesPage =
       page === 'All Letters' ||
+      page === 'Letter Archive' ||
       (page === 'Incoming' && l.type === 'Incoming') ||
       (page === 'Outgoing' && l.type === 'Outgoing') ||
       (page === 'Overdue' && l.status === 'Overdue') ||
       (page === 'Closed' && l.status === 'Closed') ||
-      (page === 'Archive' && l.isArchived) ||
+      (page === 'Archived' && l.isArchived) ||
       (page === 'Pending' && !['Closed', 'Completed', 'Archived'].includes(l.status)) ||
       (page === 'My Actions' && l.assignedTo === me.name) ||
       (page === 'Monitoring' && (l.status === 'Overdue' || l.daysPending >= 7 || !['Closed', 'Completed', 'Archived'].includes(l.status)))
     return q && archiveOk && matchesPage && (filter === 'All' || l.priority === filter)
   })
-  const title = page === 'All Letters' ? 'Letter database' : page
-  const selectedIds = [...selected].filter((id) => data.some((l) => l.id === id))
+
+  const title = page === 'All Letters' ? 'Letter database' : page === 'Letter Archive' ? 'Archive' : page
+  const description = isCatalog
+    ? 'Search the full correspondence register. Letters not marked to you are locked.'
+    : 'Search, filter and manage correspondence assigned or created by you.'
+  const selectedIds = [...selected].filter((id) => {
+    const row = data.find((l) => l.id === id)
+    return row && (row.accessible !== false)
+  })
   const numericIds = selectedIds.map((id) => Number(id))
+  const selectable = !isCatalog || isAdmin
 
   const reload = async () => {
     await refresh()
-    if (page === 'Archive') {
+    if (isSoftArchive) {
       const { listLetters } = await import('@/services/letters')
       setArchivedLetters(await listLetters({ view: 'archived' }))
+    }
+    if (isCatalog) {
+      const { listLetters } = await import('@/services/letters')
+      setCatalogLetters(await listLetters({ scope: 'catalog' }))
     }
   }
 
@@ -62,7 +93,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
     if (!numericIds.length) return
     try {
       if (bulkOp === 'archive') {
-        if (page === 'Archive') {
+        if (isSoftArchive) {
           await restoreLetters(numericIds)
           setBulkMsg('Restored selected letters.')
         } else {
@@ -87,15 +118,26 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
 
   return (
     <>
-      <PageTitle title={title} description="Search, filter and manage all registered correspondence." action={<Button onClick={() => go('Register Letter')}><Plus data-icon="inline-start" />Register letter</Button>} />
-      <AISearchBanner result={aiSearch} onClear={onClearAi} go={go} />
+      <PageTitle
+        title={title}
+        description={description}
+        action={
+          !isCatalog ? (
+            <Button onClick={() => go('Register Letter')}>
+              <Plus data-icon="inline-start" />
+              Register letter
+            </Button>
+          ) : undefined
+        }
+      />
+      {!isCatalog && <AISearchBanner result={aiSearch} onClear={onClearAi} go={go} />}
       <div className="mb-4 flex flex-wrap gap-2">
         <select value={filter} onChange={(e) => setFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
           <option>All</option><option>Routine</option><option>Important</option><option>Urgent</option>
         </select>
         <Button variant="ghost" size="sm" onClick={() => setFilter('All')}>Clear</Button>
       </div>
-      {selectedIds.length > 0 && (
+      {selectable && selectedIds.length > 0 && (
         <Card className="mb-4 flex flex-wrap items-center gap-2 p-3">
           <span className="text-xs font-semibold text-slate-600">{selectedIds.length} selected</span>
           <select value={bulkOp} onChange={(e) => { setBulkOp(e.target.value); setBulkValue('') }} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
@@ -104,7 +146,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
             <option value="change_department">Change department</option>
             <option value="change_priority">Change priority</option>
             <option value="change_status">Change status</option>
-            <option value="archive">{page === 'Archive' ? 'Restore from archive' : 'Archive'}</option>
+            <option value="archive">{isSoftArchive ? 'Restore from archive' : 'Archive'}</option>
           </select>
           {['assign', 'reassign'].includes(bulkOp) && (
             <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
@@ -147,7 +189,8 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
       <LetterTable
         data={data}
         onOpen={(id) => go(id)}
-        selectable
+        selectable={selectable}
+        lockInaccessible={isCatalog}
         selectedIds={selected}
         onToggle={(id) => setSelected((current) => {
           const next = new Set(current)
@@ -155,7 +198,10 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
           else next.add(id)
           return next
         })}
-        onToggleAll={(checked) => setSelected(checked ? new Set(data.map((l) => l.id)) : new Set())}
+        onToggleAll={(checked) => {
+          const openIds = data.filter((l) => l.accessible !== false).map((l) => l.id)
+          setSelected(checked ? new Set(openIds) : new Set())
+        }}
         role={me.role}
         users={users}
         departments={departments}

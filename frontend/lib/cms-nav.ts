@@ -4,7 +4,7 @@ export const NAV_GROUPS = [
   { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Monitoring'] as const },
   {
     label: 'Letters',
-    items: ['Create', 'Track'] as const,
+    items: ['Create', 'Track', 'Archive'] as const,
   },
   { label: 'AI Intelligence', items: ['AI Assistant', 'Letter Analysis', 'AI Insights'] as const },
   { label: 'Operations', items: ['Meetings', 'Import Center', 'Export Center'] as const },
@@ -24,7 +24,7 @@ export const LETTERS_TRACK_VIEWS = [
   'Pending',
   'Overdue',
   'Closed',
-  'Archive',
+  'Archived',
 ] as const
 
 export type LettersTrackView = (typeof LETTERS_TRACK_VIEWS)[number]
@@ -35,6 +35,7 @@ const LABEL_TO_HREF: Record<string, string> = {
   Monitoring: '/letters/monitoring',
   Create: '/letters/register',
   Track: '/letters',
+  Archive: '/letters/archive',
   'All Letters': '/letters',
   Incoming: '/letters/incoming',
   Outgoing: '/letters/outgoing',
@@ -42,7 +43,7 @@ const LABEL_TO_HREF: Record<string, string> = {
   Pending: '/letters/pending',
   Overdue: '/letters/overdue',
   Closed: '/letters/closed',
-  Archive: '/letters/archive',
+  Archived: '/letters/archived',
   'AI Assistant': '/ai/assistant',
   'Letter Analysis': '/ai/analysis',
   'AI Insights': '/ai/insights',
@@ -88,9 +89,10 @@ export function isLettersSection(pathname: string): boolean {
   return true
 }
 
-export function lettersPrimaryFromPathname(pathname: string): 'Create' | 'Track' | null {
+export function lettersPrimaryFromPathname(pathname: string): 'Create' | 'Track' | 'Archive' | null {
   if (!isLettersSection(pathname)) return null
   if (pathname.startsWith('/letters/register')) return 'Create'
+  if (pathname === '/letters/archive') return 'Archive'
   return 'Track'
 }
 
@@ -109,6 +111,7 @@ export function labelFromPathname(pathname: string): string {
   if (pathname === '/letters/my-actions') return 'My Actions'
   if (pathname === '/letters/monitoring') return 'Monitoring'
   if (pathname.startsWith('/letters/register')) return 'Create'
+  if (pathname === '/letters/archive') return 'Archive'
   if (isLettersSection(pathname)) return 'Track'
   if (pathname.startsWith('/meetings/') && pathname !== '/meetings') return 'Meetings'
   if (pathname.startsWith('/ai/analysis')) return 'Letter Analysis'

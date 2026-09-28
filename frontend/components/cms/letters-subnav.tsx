@@ -24,7 +24,7 @@ const TRACK_ICONS: Record<string, React.ComponentType<{ className?: string }>> =
   Pending: ClipboardList,
   Overdue: CircleAlert,
   Closed: CheckCircle2,
-  Archive: BriefcaseBusiness,
+  Archived: BriefcaseBusiness,
 }
 
 /** Secondary letter filters under the header when Track is active. */

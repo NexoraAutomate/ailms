@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.letter_access import assert_letter_access
 from app.models import Letter, WorkflowTransition
 from app.schemas import WorkflowActionOut, WorkflowExecuteIn, WorkflowTransitionOut
 from app.services import current_user_name, serialize_letter
@@ -21,6 +22,7 @@ def _get_letter(db: Session, letter_id: int) -> Letter:
 def list_available_actions(letter_id: int, db: Session = Depends(get_db)) -> WorkflowActionOut:
     letter = _get_letter(db, letter_id)
     actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
     return WorkflowActionOut(
         letterId=str(letter.id),
         currentStatus=letter.status,
@@ -30,7 +32,8 @@ def list_available_actions(letter_id: int, db: Session = Depends(get_db)) -> Wor
 
 @router.get("/letters/{letter_id}/history", response_model=list[WorkflowTransitionOut])
 def workflow_history(letter_id: int, db: Session = Depends(get_db)) -> list[WorkflowTransitionOut]:
-    _get_letter(db, letter_id)
+    letter = _get_letter(db, letter_id)
+    assert_letter_access(db, letter, current_user_name(db))
     rows = (
         db.query(WorkflowTransition)
         .filter(WorkflowTransition.letter_id == letter_id)
@@ -48,6 +51,7 @@ def run_workflow_action(
 ) -> WorkflowTransitionOut:
     letter = _get_letter(db, letter_id)
     actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
     transition = execute_transition(
         db,
         letter=letter,
@@ -75,6 +79,7 @@ def run_workflow_and_return_letter(
 ) -> dict:
     letter = _get_letter(db, letter_id)
     actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
     transition = execute_transition(
         db,
         letter=letter,
