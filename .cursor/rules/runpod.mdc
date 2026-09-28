@@ -1,0 +1,20 @@
+---
+description: Runpod setup and AILMS LLM offload conventions
+alwaysApply: true
+---
+
+# Runpod
+
+- Spell the product **Runpod** (one capital R). "RunPod" is deprecated.
+- For any Runpod setup or platform work: fetch https://docs.runpod.io/agent-setup.md and follow it.
+- Prefer the Runpod docs MCP (`https://docs.runpod.io/mcp`) when available.
+
+## This project (AILMS)
+
+- Serverless endpoint ID: `br96s8zyygjs24` (queue-based / QB vLLM worker, `MODEL_NAME=Qwen/Qwen3-8B`).
+- Public job API (not assumed `/openai/v1`):
+  - `POST https://api.runpod.ai/v2/{ENDPOINT_ID}/run`
+  - `POST https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync`
+  - `GET https://api.runpod.ai/v2/{ENDPOINT_ID}/status/{REQUEST_ID}`
+- LLM switch: `LLM_PROVIDER=runpod` (remote) vs `ollama` / `vllm` (local GPU). OCR stays local.
+- Auth: `RUNPOD_API_KEY` + `RUNPOD_ENDPOINT_ID` in `backend/.env`.

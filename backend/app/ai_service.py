@@ -319,12 +319,18 @@ def _brief_letters_for_prompt(letters: list[dict[str, Any]], limit: int = 5) -> 
 
 def ai_status() -> dict[str, Any]:
     settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
-    return {
+    provider = settings.llm_provider.strip().lower()
+    payload: dict[str, Any] = {
         "enabled": llm_is_configured(),
         "provider": settings.llm_provider,
         "model": settings.llm_model,
         "baseUrl": settings.llm_base_url,
     }
+    if provider == "runpod":
+        payload["endpointId"] = settings.runpod_endpoint_id
+        payload["baseUrl"] = f"https://api.runpod.ai/v2/{settings.runpod_endpoint_id}"
+        payload["useAsync"] = settings.runpod_use_async
+    return payload
 
 
 def _letter_payload(letter: Letter) -> dict[str, Any]:
