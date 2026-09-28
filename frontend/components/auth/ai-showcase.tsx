@@ -9,9 +9,12 @@ const AI_STEPS = [
   'Extracting entities & deadlines…',
   'Classifying priority with Smart Analysis…',
   'Drafting management insights…',
+  'Preparing for review…',
+  'Reviewing draft…',
+  'Summarizing insights…',
 ]
 
-const STEP_MS = 1200
+const STEP_MS = 800
 const HOLD_MS = 1600
 const RESTART_MS = 1400
 
@@ -72,7 +75,7 @@ export default function AiShowcase({
 
   return (
     <div className={`w-full max-w-full overflow-hidden rounded-xl border border-sky-300/25 bg-[#061830]/55 ${className}`.trim()}>
-      {showHologram && <AiHologramOrbit className="mx-auto max-h-[min(52vw,22rem)] w-full max-w-md" />}
+      {showHologram && <AiHologramOrbit className="mx-auto max-h-[min(52vw,22rem)] w-full max-w-full" />}
 
       {showThinking && (
         <div className={`min-h-34 px-3 py-3 ${showHologram ? 'border-t border-white/10' : ''}`.trim()}>
@@ -83,7 +86,7 @@ export default function AiShowcase({
             glyph="sparkle"
             color="#e0f2fe"
             glyphColor="#7dd3fc"
-            fontSize={13}
+            fontSize={10}
             collapseOnSettle={false}
             collapsible={false}
             working={working}

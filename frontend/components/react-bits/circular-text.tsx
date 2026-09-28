@@ -110,7 +110,7 @@ const CircularText: React.FC<CircularTextProps> = ({
         return (
           <span
             key={i}
-            className="absolute inset-0 inline-block text-[0.7em] transition-all duration-500 ease-[cubic-bezier(0,0,0,1)]"
+            className="absolute inset-0 inline-block text-[0.9em] transition-all duration-500 ease-[cubic-bezier(0,0,0,1)]"
             style={{ transform, WebkitTransform: transform }}
           >
             {letter}

@@ -69,8 +69,22 @@ const BRANCH_ITEMS = [
   },
 ]
 
-/** Reveal order for left showcase (keeps layout calm at narrow widths). */
-const REVEAL_MS = 12000
+/**
+ * How long each login showcase segment stays on screen (milliseconds).
+ * Edit these values to set duration per animation — one panel replaces the next.
+ *
+ * 1 hologram video | 2 AI Thinking | 3 Letter flow | 4 True Focus | 5 Branched menu | 6 Circular text
+ */
+const SHOWCASE_DURATION_MS = {
+  1: 15_000, // AI hologram video
+  2: 7_500, // AI Thinking
+  3: 13_620, // Letter flow
+  4: 11_000, // True Focus
+  5: 8_000, // Branched menu (capabilities)
+  6: 8_000, // Circular text
+} as const
+
+type ShowcaseStep = keyof typeof SHOWCASE_DURATION_MS
 
 function LoginForm() {
   const router = useRouter()
@@ -187,16 +201,17 @@ function FullWidthMarquee() {
 }
 
 function ShowcaseColumn() {
-  const [step, setStep] = useState(1)
-  const totalSteps = 6
+  const [step, setStep] = useState<ShowcaseStep>(1)
+  const totalSteps = 6 as const
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       return
     }
+    const durationMs = SHOWCASE_DURATION_MS[step]
     const id = setTimeout(() => {
-      setStep((s) => (s >= totalSteps ? 1 : s + 1))
-    }, REVEAL_MS)
+      setStep((s) => (s >= totalSteps ? 1 : ((s + 1) as ShowcaseStep)))
+    }, durationMs)
     return () => clearTimeout(id)
   }, [step, totalSteps])
 
@@ -246,7 +261,7 @@ function ShowcaseColumn() {
       {/* One panel at a time — each step replaces the previous */}
       <div className="relative mt-4 min-h-[22rem] min-w-0 flex-1 pb-2">
         {step === 1 && (
-          <div key="holo" className="login-reveal-in absolute inset-x-0 top-0">
+          <div key="holo" className="login-reveal-in absolute inset-x-0 top-2">
             <AiShowcase showHologram showThinking={false} />
           </div>
         )}
@@ -271,7 +286,7 @@ function ShowcaseColumn() {
               blurAmount={4}
               borderColor="#7dd3fc"
               glowColor="rgba(125, 211, 252, 0.55)"
-              animationDuration={0.55}
+              animationDuration={0.8}
               pauseBetweenAnimations={1.05}
               className="!justify-start gap-x-3 gap-y-2"
               wordClassName="text-sm font-bold tracking-tight text-white xl:text-base"
@@ -279,7 +294,7 @@ function ShowcaseColumn() {
           </div>
         )}
 
-        {step === 5 && (
+        {step === 5  && (
           <div key="branch" className="login-reveal-in absolute inset-x-0 top-0 overflow-hidden">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-200/70">Capabilities</p>
             <BranchedMenu
@@ -289,7 +304,7 @@ function ShowcaseColumn() {
               autoCycle
               autoCycleSection={0}
               autoCycleInterval={2800}
-              drawDuration={900}
+              drawDuration={600}
               color="#e0f2fe"
               accentColor="#7dd3fc"
               lineColor="rgba(125, 211, 252, 0.35)"
@@ -306,7 +321,7 @@ function ShowcaseColumn() {
           <div key="circular" className="login-reveal-in absolute inset-x-0 top-0 flex justify-center pt-4">
             <CircularText
               text="AI • SMART ANALYSIS • AILMS • OCR • "
-              spinDuration={16}
+              spinDuration={15}
               onHover="speedUp"
               className="size-36 shrink-0 text-[10px] font-bold tracking-wide text-sky-100/90"
             />
