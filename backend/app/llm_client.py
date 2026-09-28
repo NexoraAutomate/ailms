@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Local OpenAI-compatible runtimes do not require a cloud API key.
 _LOCAL_PROVIDERS = frozenset({"ollama", "vllm"})
+_RUNPOD_PROVIDER = "runpod"
 _RETRY_STATUS = frozenset({502, 503})
 _RETRY_BACKOFF_SECONDS = (1.0, 3.0)
 _MAX_ATTEMPTS = 1 + len(_RETRY_BACKOFF_SECONDS)
@@ -37,6 +38,10 @@ def llm_is_configured() -> bool:
     if not settings.llm_enabled:
         return False
     provider = settings.llm_provider.strip().lower()
+    if provider == _RUNPOD_PROVIDER:
+        from app.runpod_client import runpod_is_configured
+
+        return runpod_is_configured(settings)
     if provider in _LOCAL_PROVIDERS:
         return bool(settings.llm_base_url.strip())
     return bool(settings.llm_api_key.strip())
@@ -54,6 +59,10 @@ def allowed_llm_hosts(settings: Settings | None = None) -> set[str]:
 def assert_llm_host_allowed(settings: Settings | None = None) -> None:
     """Block LLM HTTP calls to hosts outside the configured allowlist (spec 11)."""
     cfg = settings or get_settings()
+    provider = cfg.llm_provider.strip().lower()
+    # Runpod client hardcodes api.runpod.ai — no user-controlled base URL to allowlist.
+    if provider == _RUNPOD_PROVIDER:
+        return
     allowed = allowed_llm_hosts(cfg)
     if not allowed:
         return
@@ -148,6 +157,17 @@ async def chat_completion(
         assert_llm_host_allowed(settings)
     except LlmHostNotAllowedError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if settings.llm_provider.strip().lower() == _RUNPOD_PROVIDER:
+        from app.runpod_client import chat_completion_runpod
+
+        _log_prompt_preview(system, user)
+        return await chat_completion_runpod(
+            system=system,
+            user=user,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     url = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
@@ -256,9 +276,10 @@ async def chat_json(*, system: str, user: str, temperature: float = 0.15) -> Any
 
 
 async def probe_llm_health() -> dict[str, Any]:
-    """Lightweight health probe against the configured OpenAI-compatible base URL.
+    """Lightweight health probe against the configured LLM backend.
 
-    Prefers ``GET /models``; falls back to a tiny chat completion if models is unavailable.
+    OpenAI-compatible providers: prefers ``GET /models``, then a tiny chat completion.
+    Runpod: ``GET /v2/{endpoint}/health``.
     """
     settings = get_settings()
     provider = settings.llm_provider.strip().lower()
@@ -283,6 +304,11 @@ async def probe_llm_health() -> dict[str, Any]:
             "detail": str(exc),
             "errorCode": "LLM_HOST_NOT_ALLOWED",
         }
+
+    if provider == _RUNPOD_PROVIDER:
+        from app.runpod_client import probe_runpod_health
+
+        return await probe_runpod_health()
 
     base = settings.llm_base_url.rstrip("/")
     timeout = httpx.Timeout(min(settings.llm_timeout_seconds, 30.0))

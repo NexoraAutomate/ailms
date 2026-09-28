@@ -65,10 +65,19 @@ class Settings(BaseSettings):
     # Optional JSON object string merged into chat/completions request body (advanced).
     llm_extra_body_json: str = ""
     # Comma-separated hostnames allowed for LLM HTTP egress (empty = no host filter).
-    # Default locks local providers to loopback; add api.openai.com for cloud.
+    # Default locks local providers to loopback; add api.openai.com / api.runpod.ai for cloud.
     llm_allowed_hosts: str = "127.0.0.1,localhost"
     # When true, DEBUG-level logs may include document/user prompt text.
     ai_log_document_text: bool = False
+
+    # Runpod Serverless queue-based vLLM (LLM_PROVIDER=runpod).
+    runpod_api_key: str = ""
+    runpod_endpoint_id: str = "br96s8zyygjs24"
+    # Prefer async: /run + poll /status. Cold starts for 8B models often exceed /runsync.
+    runpod_use_async: bool = True
+    runpod_poll_interval_seconds: float = 2.0
+    # Cover cold start (model download/load) + generation; raise if jobs still time out.
+    runpod_max_wait_seconds: int = 900
 
     @property
     def database_url(self) -> str:

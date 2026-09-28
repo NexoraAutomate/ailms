@@ -54,8 +54,9 @@ def _guard_configured() -> None:
         raise HTTPException(
             status_code=503,
             detail=(
-                "LLM not configured. For Ollama set LLM_PROVIDER=ollama, LLM_BASE_URL, "
-                "and LLM_MODEL in backend .env (API key optional for local providers)."
+                "LLM not configured. For local Ollama set LLM_PROVIDER=ollama, "
+                "LLM_BASE_URL, and LLM_MODEL. For Runpod set LLM_PROVIDER=runpod, "
+                "RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and LLM_MODEL."
             ),
         )
 
@@ -67,7 +68,7 @@ def get_ai_status() -> dict:
 
 @router.get("/health/llm")
 async def get_llm_health():
-    """Probe the configured OpenAI-compatible LLM (Ollama by default)."""
+    """Probe the configured LLM backend (Ollama/OpenAI-compatible or Runpod)."""
     result = await get_llm_provider().health()
     if result.get("status") != "ok":
         return JSONResponse(status_code=503, content=result)

@@ -22,6 +22,11 @@ def _settings(**overrides) -> Settings:
         llm_extra_body_json="",
         llm_allowed_hosts="127.0.0.1,localhost",
         ai_log_document_text=False,
+        runpod_api_key="",
+        runpod_endpoint_id="br96s8zyygjs24",
+        runpod_use_async=False,
+        runpod_poll_interval_seconds=1.5,
+        runpod_max_wait_seconds=300,
     )
     base.update(overrides)
     return Settings(**base)
@@ -53,6 +58,30 @@ class LlmProviderConfigTest(unittest.TestCase):
                 llm_api_key="",
                 llm_base_url="https://api.openai.com/v1",
                 llm_model="gpt-4o-mini",
+            ),
+        ):
+            self.assertFalse(llm_is_configured())
+
+    def test_runpod_requires_api_key_and_endpoint(self):
+        with patch(
+            "app.llm_client.get_settings",
+            return_value=_settings(
+                llm_provider="runpod",
+                llm_api_key="",
+                llm_base_url="",
+                llm_model="Qwen/Qwen3-8B",
+                runpod_api_key="rpa_x",
+                runpod_endpoint_id="br96s8zyygjs24",
+            ),
+        ):
+            self.assertTrue(llm_is_configured())
+
+        with patch(
+            "app.llm_client.get_settings",
+            return_value=_settings(
+                llm_provider="runpod",
+                runpod_api_key="",
+                runpod_endpoint_id="br96s8zyygjs24",
             ),
         ):
             self.assertFalse(llm_is_configured())
