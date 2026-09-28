@@ -4,16 +4,7 @@ export const NAV_GROUPS = [
   { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Monitoring'] as const },
   {
     label: 'Letters',
-    items: [
-      'All Letters',
-      'Incoming',
-      'Outgoing',
-      'Register Letter',
-      'Pending',
-      'Overdue',
-      'Closed',
-      'Archive',
-    ] as const,
+    items: ['Create', 'Track'] as const,
   },
   { label: 'AI Intelligence', items: ['AI Assistant', 'Letter Analysis', 'AI Insights'] as const },
   { label: 'Operations', items: ['Meetings', 'Import Center', 'Export Center'] as const },
@@ -25,10 +16,25 @@ export const NAV_GROUPS = [
   { label: 'System', items: ['Notifications', 'Settings'] as const },
 ] as const
 
+/** Secondary letter filters shown under the header when Track is active. */
+export const LETTERS_TRACK_VIEWS = [
+  'All Letters',
+  'Incoming',
+  'Outgoing',
+  'Pending',
+  'Overdue',
+  'Closed',
+  'Archive',
+] as const
+
+export type LettersTrackView = (typeof LETTERS_TRACK_VIEWS)[number]
+
 const LABEL_TO_HREF: Record<string, string> = {
   Dashboard: '/',
   'My Actions': '/letters/my-actions',
   Monitoring: '/letters/monitoring',
+  Create: '/letters/register',
+  Track: '/letters',
   'All Letters': '/letters',
   Incoming: '/letters/incoming',
   Outgoing: '/letters/outgoing',
@@ -58,6 +64,8 @@ const PATH_TO_LABEL: Record<string, string> = Object.fromEntries(
   Object.entries(LABEL_TO_HREF).map(([label, href]) => [href, label]),
 )
 
+const WORKSPACE_LETTER_PATHS = new Set(['/letters/my-actions', '/letters/monitoring'])
+
 /** Resolve legacy go() targets (labels, detail:id, meeting:id, Settings:tab, bare ids) to hrefs. */
 export function resolveNavHref(target: string): string {
   if (!target) return '/'
@@ -74,10 +82,34 @@ export function resolveNavHref(target: string): string {
   return '/'
 }
 
+export function isLettersSection(pathname: string): boolean {
+  if (!pathname.startsWith('/letters')) return false
+  if (WORKSPACE_LETTER_PATHS.has(pathname)) return false
+  return true
+}
+
+export function lettersPrimaryFromPathname(pathname: string): 'Create' | 'Track' | null {
+  if (!isLettersSection(pathname)) return null
+  if (pathname.startsWith('/letters/register')) return 'Create'
+  return 'Track'
+}
+
+export function lettersTrackViewFromPathname(pathname: string): LettersTrackView | null {
+  if (lettersPrimaryFromPathname(pathname) !== 'Track') return null
+  if (pathname === '/letters' || /^\/letters\/\d+$/.test(pathname)) return 'All Letters'
+  const label = PATH_TO_LABEL[pathname]
+  if (label && (LETTERS_TRACK_VIEWS as readonly string[]).includes(label)) {
+    return label as LettersTrackView
+  }
+  return 'All Letters'
+}
+
 export function labelFromPathname(pathname: string): string {
   if (pathname === '/' || pathname === '') return 'Dashboard'
-  if (/^\/letters\/\d+$/.test(pathname)) return 'All Letters'
-  if (pathname.startsWith('/letters/register/review')) return 'Register Letter'
+  if (pathname === '/letters/my-actions') return 'My Actions'
+  if (pathname === '/letters/monitoring') return 'Monitoring'
+  if (pathname.startsWith('/letters/register')) return 'Create'
+  if (isLettersSection(pathname)) return 'Track'
   if (pathname.startsWith('/meetings/') && pathname !== '/meetings') return 'Meetings'
   if (pathname.startsWith('/ai/analysis')) return 'Letter Analysis'
   if (pathname.startsWith('/settings')) return 'Settings'

@@ -12,6 +12,8 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   ClipboardList,
   Download,
@@ -44,6 +46,7 @@ import { Button } from '@/components/ui/button'
 import { Logo } from '@/components/cms/ui'
 import { useCmsSearch } from '@/components/cms/search-context'
 import { useGo } from '@/hooks/use-go'
+import { LettersSubnav } from '@/components/cms/letters-subnav'
 import { hrefForLabel, labelFromPathname, NAV_GROUPS } from '@/lib/cms-nav'
 import { formatHeaderDate } from '@/lib/datetime'
 import { applyTheme, getPreferredTheme } from '@/lib/theme'
@@ -53,6 +56,8 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Dashboard: LayoutDashboard,
   'My Actions': CalendarClock,
   Monitoring: SlidersHorizontal,
+  Create: FilePlus2,
+  Track: Table2,
   'All Letters': Table2,
   Incoming: Inbox,
   Outgoing: Send,
@@ -78,12 +83,25 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Settings: Settings2,
 }
 
-function Sidebar({ mobile, setMobile }: { mobile: boolean; setMobile: (v: boolean) => void }) {
+const SIDEBAR_EXPANDED_KEY = 'cms-sidebar-expanded'
+
+function Sidebar({
+  mobile,
+  setMobile,
+  expanded,
+  onToggleExpanded,
+}: {
+  mobile: boolean
+  setMobile: (v: boolean) => void
+  expanded: boolean
+  onToggleExpanded: () => void
+}) {
   const { unreadCount, me } = useAppData()
   const pathname = usePathname()
   const page = labelFromPathname(pathname)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const isAdmin = me.role.trim().toLowerCase() === 'administrator'
+  const folded = !mobile && !expanded
 
   useEffect(() => {
     const group = NAV_GROUPS.find((g) => g.items.some((label) => page === label))
@@ -102,36 +120,83 @@ function Sidebar({ mobile, setMobile }: { mobile: boolean; setMobile: (v: boolea
   })
 
   return (
-    <aside className={`${mobile ? 'fixed inset-y-0 left-0 z-20 flex w-72' : 'hidden lg:flex lg:h-dvh lg:w-64 lg:shrink-0'} flex-col border-r border-slate-200 bg-white`}>
-      <div className="flex h-[72px] shrink-0 items-center gap-3 border-b border-slate-200 px-5">
+    <aside
+      className={`${
+        mobile
+          ? 'fixed inset-y-0 left-0 z-20 flex w-72'
+          : `hidden lg:flex lg:h-dvh lg:shrink-0 ${expanded ? 'lg:w-64' : 'lg:w-[72px]'}`
+      } relative flex-col border-r border-slate-200 bg-white transition-[width] duration-200 ease-out`}
+    >
+      <div
+        className={`flex shrink-0 items-center border-b border-slate-200 ${
+          folded ? 'h-auto flex-col gap-2 px-2 py-3' : 'h-[72px] gap-3 px-5'
+        }`}
+      >
         <Logo />
-        <div>
-          <p className="text-sm font-bold text-[#102a43]">Correspondence</p>
-          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400">Management System</p>
-        </div>
-        {mobile && (
-          <button className="ml-auto" onClick={() => setMobile(false)}>
+        {!folded && (
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-[#102a43]">Correspondence</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400">Management System</p>
+          </div>
+        )}
+        {mobile ? (
+          <button type="button" className="ml-auto rounded-md p-1.5 text-slate-500 hover:bg-slate-50" onClick={() => setMobile(false)} aria-label="Close menu">
             <X className="size-5" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`rounded-md p-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 ${folded ? '' : 'ml-auto'}`}
+            onClick={onToggleExpanded}
+            aria-label={expanded ? 'Fold sidebar' : 'Expand sidebar'}
+            aria-pressed={expanded}
+            title={expanded ? 'Fold sidebar' : 'Expand sidebar'}
+          >
+            {expanded ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />}
           </button>
         )}
       </div>
-      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-4">
+      <nav className={`flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden ${folded ? 'p-2' : 'p-4'}`}>
         {visibleGroups.map((group) => {
-          const expanded = isOpen(group.label, group.items)
+          const groupExpanded = isOpen(group.label, group.items)
           const active = groupContainsPage(group.items)
+          if (folded) {
+            return (
+              <div key={group.label} className="flex flex-col gap-1">
+                {group.items.map((label) => {
+                  const Icon = NAV_ICONS[label] ?? FileText
+                  const href = hrefForLabel(label)
+                  const isActive = page === label
+                  return (
+                    <Link
+                      key={label}
+                      href={href}
+                      title={label}
+                      className={`relative flex size-11 items-center justify-center rounded-md transition-colors ${isActive ? 'bg-blue-50 text-[#0d3763]' : 'text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      <Icon className="size-4" />
+                      {label === 'Notifications' && unreadCount > 0 && (
+                        <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-500" />
+                      )}
+                    </Link>
+                  )
+                })}
+              </div>
+            )
+          }
           return (
             <div key={group.label}>
               <button
                 type="button"
                 onClick={() => toggleGroup(group.label, group.items)}
-                aria-expanded={expanded}
+                aria-expanded={groupExpanded}
                 className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.14em] transition-colors ${active ? 'text-[#0d3763]' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
               >
                 <span className="flex-1">{group.label}</span>
-                <ChevronDown className={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-0' : '-rotate-90'}`} />
+                <ChevronDown className={`size-3.5 shrink-0 transition-transform ${groupExpanded ? 'rotate-0' : '-rotate-90'}`} />
               </button>
-              <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`} aria-hidden={!expanded}>
-                <div className="min-h-0 overflow-hidden" inert={!expanded || undefined}>
+              <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${groupExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`} aria-hidden={!groupExpanded}>
+                <div className="min-h-0 overflow-hidden" inert={!groupExpanded || undefined}>
                   <div className="flex flex-col gap-1 pb-2 pl-1">
                     {group.items.map((label) => {
                       const Icon = NAV_ICONS[label] ?? FileText
@@ -350,6 +415,29 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
 export function CmsShell({ children }: { children: React.ReactNode }) {
   const { loading, error, refresh } = useAppData()
   const [mobile, setMobile] = useState(false)
+  const [sidebarExpanded, setSidebarExpanded] = useState(true)
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(SIDEBAR_EXPANDED_KEY)
+      if (stored === '0') setSidebarExpanded(false)
+      else if (stored === '1') setSidebarExpanded(true)
+    } catch {
+      /* ignore storage errors */
+    }
+  }, [])
+
+  const toggleSidebarExpanded = () => {
+    setSidebarExpanded((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(SIDEBAR_EXPANDED_KEY, next ? '1' : '0')
+      } catch {
+        /* ignore storage errors */
+      }
+      return next
+    })
+  }
 
   let content: React.ReactNode = children
   if (loading) {
@@ -368,10 +456,16 @@ export function CmsShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-[#f5f8fb] text-slate-900">
-      <Sidebar mobile={mobile} setMobile={setMobile} />
+      <Sidebar
+        mobile={mobile}
+        setMobile={setMobile}
+        expanded={sidebarExpanded}
+        onToggleExpanded={toggleSidebarExpanded}
+      />
       {mobile && <div onClick={() => setMobile(false)} className="fixed inset-0 z-10 bg-slate-900/20 lg:hidden" />}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Header setMobile={setMobile} />
+        <LettersSubnav />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <main className="mx-auto w-full max-w-[1600px] p-4 sm:p-7">{content}</main>
         </div>
