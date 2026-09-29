@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Lock, Sparkles } from 'lucide-react'
+import { Lock, MessageSquare, Sparkles } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { AIAnalyzeDocument, AIIntelligencePanel } from '@/components/ai/letter-tools'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
+import { ReplyDialog } from '@/components/cms/reply-dialog'
 import { getLetter, priorityTone, statusTone, type Letter } from '@/services/letters'
+import { letterRowActions } from '@/services/letter-actions'
 import {
   ApprovalEscalationPanel,
   CorrespondenceThreadPanel,
@@ -16,8 +18,9 @@ import {
 } from '@/components/cms/letter-panels'
 
 export function Details({ id, go }: { id: string; go: (p: string) => void }) {
-  const { letters, users, refresh, addAction, applyLetterField, acceptAiAction } = useAppData()
+  const { letters, users, me, refresh, addAction, applyLetterField, acceptAiAction } = useAppData()
   const [action, setAction] = useState('')
+  const [replyOpen, setReplyOpen] = useState(false)
   const cached = letters.find((item) => item.id === id) ?? null
   const [letter, setLetter] = useState<Letter | null>(cached)
   const [loading, setLoading] = useState(!cached)
@@ -68,10 +71,27 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   }
   if (!letter) return <p className="text-sm text-slate-500">Letter not found.</p>
 
+  const canReply = letterRowActions(letter, me.role).includes('reply')
+
   return (
     <>
       <button onClick={() => go('All Letters')} className="mb-4 text-xs font-semibold text-[#1769aa]">← Back to letter database</button>
-      <PageTitle title={letter.subject} description={`${letter.number} · ${letter.type} correspondence`} action={<div className="flex gap-2"><Button variant="outline" onClick={() => go('AI Assistant')}><Sparkles data-icon="inline-start" />AI Assistant</Button><Button variant="outline" onClick={() => go(`analysis:${letter.id}`)}>Letter Analysis</Button></div>} />
+      <PageTitle
+        title={letter.subject}
+        description={`${letter.number} · ${letter.type} correspondence`}
+        action={
+          <div className="flex gap-2">
+            {canReply && (
+              <Button onClick={() => setReplyOpen(true)}>
+                <MessageSquare data-icon="inline-start" />
+                Reply
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => go('AI Assistant')}><Sparkles data-icon="inline-start" />AI Assistant</Button>
+            <Button variant="outline" onClick={() => go(`analysis:${letter.id}`)}>Letter Analysis</Button>
+          </div>
+        }
+      />
       <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
         <Card className="p-5">
           <h2 className="mb-4 text-sm font-bold text-slate-700">Correspondence details</h2>
@@ -106,6 +126,15 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
         <AIIntelligencePanel letter={letter} letters={letters} onApplyField={(field, value, decision) => applyLetterField(letter.id, field, value, decision)} onAcceptAction={(next, decision) => acceptAiAction(letter.id, next, decision)} />
         <div className="mt-5"><AIAnalyzeDocument letter={letter} /></div>
       </div>
+      {replyOpen && (
+        <ReplyDialog
+          letter={letter}
+          users={users}
+          role={me.role}
+          onClose={() => setReplyOpen(false)}
+          onDone={refresh}
+        />
+      )}
     </>
   )
 }

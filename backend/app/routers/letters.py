@@ -93,7 +93,20 @@ def list_letters(
         for row in rows
     ]
 
-    if view == "incoming":
+    if view == "inbox":
+        # Received for action — exclude letters this user has already responded / marked onward.
+        items = [
+            item
+            for item in items
+            if item.assignedTo == actor and (item.assignedBy or "") != actor
+        ]
+    elif view == "sent":
+        items = [
+            item
+            for item in items
+            if item.createdBy == actor or item.assignedBy == actor
+        ]
+    elif view == "incoming":
         items = [item for item in items if item.type == "Incoming"]
     elif view == "outgoing":
         items = [item for item in items if item.type == "Outgoing"]

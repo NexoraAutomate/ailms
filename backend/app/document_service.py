@@ -27,6 +27,9 @@ DOCUMENT_TYPES = {
     "Technical Document",
     "Financial Document",
     "Reference Document",
+    "Email",
+    "Presentation",
+    "Attachment",
     "Other",
 }
 

@@ -25,6 +25,15 @@ ALLOWED_EXTENSIONS = {
     ".xlsx",
     ".csv",
     ".txt",
+    ".rtf",
+    ".ppt",
+    ".pptx",
+    ".odt",
+    ".ods",
+    ".odp",
+    ".eml",
+    ".msg",
+    ".zip",
 }
 
 MIME_BY_EXT = {
@@ -40,6 +49,15 @@ MIME_BY_EXT = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".csv": "text/csv",
     ".txt": "text/plain",
+    ".rtf": "application/rtf",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+    ".eml": "message/rfc822",
+    ".msg": "application/vnd.ms-outlook",
+    ".zip": "application/zip",
 }
 
 PREVIEW_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}

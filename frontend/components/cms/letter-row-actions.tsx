@@ -21,18 +21,17 @@ import {
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Card } from '@/components/cms/ui'
+import { ReplyDialog } from '@/components/cms/reply-dialog'
 import {
   actionNeedsInput,
   letterActionLabel,
   letterRowActions,
-  replyWorkflowAction,
-  workflowStatus,
   type LetterRowActionId,
 } from '@/services/letter-actions'
 import { updateLetter, type Letter, type Priority } from '@/services/letters'
 import { executeWorkflow } from '@/services/workflow'
 
-type Person = { name: string }
+type Person = { name: string; department?: string }
 type Dept = { name: string }
 
 const ACTION_ICONS: Record<LetterRowActionId, ComponentType<{ className?: string }>> = {
@@ -74,21 +73,20 @@ export function LetterRowActions({
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<LetterRowActionId | null>(null)
   const [editing, setEditing] = useState(false)
+  const [replyOpen, setReplyOpen] = useState(false)
   const [remarks, setRemarks] = useState('')
   const [assignedTo, setAssignedTo] = useState(letter.assignedTo || '')
   const [level, setLevel] = useState('Level 1')
 
   const runWorkflow = async (action: LetterRowActionId, input?: { remarks: string; assignedTo: string; level: string }) => {
-    const status = workflowStatus(letter)
-    const workflow = action === 'reply' ? replyWorkflowAction(status, role) : action
-    if (!workflow || workflow === 'edit' || workflow === 'delete') return
+    if (action === 'edit' || action === 'delete' || action === 'reply') return
     const note = input?.remarks ?? ''
     const person = input?.assignedTo ?? ''
     if ((action === 'assign' || action === 'reassign' || action === 'submit_for_approval') && !person.trim()) {
       setError('Select a person before continuing.')
       return
     }
-    if ((action === 'approve' || action === 'reject' || action === 'return_for_revision' || action === 'escalate' || action === 'reply') && !note.trim()) {
+    if ((action === 'approve' || action === 'reject' || action === 'return_for_revision' || action === 'escalate') && !note.trim()) {
       setError('Remarks are required for this action.')
       return
     }
@@ -100,9 +98,8 @@ export function LetterRowActions({
     setError('')
     try {
       await executeWorkflow(letter.id, {
-        action: workflow,
+        action,
         remarks: note,
-        actionLabel: action === 'reply' ? 'Reply' : undefined,
         assignedTo: person.trim() ? person : undefined,
         reviewerName: action === 'submit_for_approval' ? person : undefined,
         escalatedTo: action === 'escalate' ? person : undefined,
@@ -126,6 +123,10 @@ export function LetterRowActions({
     }
     if (action === 'edit') {
       setEditing(true)
+      return
+    }
+    if (action === 'reply') {
+      setReplyOpen(true)
       return
     }
     if (actionNeedsInput(action)) {
@@ -152,7 +153,7 @@ export function LetterRowActions({
           onClick={() => start(action)}
         />
       ))}
-      {error && !pending && !editing && <p className="basis-full text-[11px] text-red-600">{error}</p>}
+      {error && !pending && !editing && !replyOpen && <p className="basis-full text-[11px] text-red-600">{error}</p>}
       {editing && (
         <EditLetterDialog
           letter={letter}
@@ -163,6 +164,15 @@ export function LetterRowActions({
             setEditing(false)
             await onChanged()
           }}
+        />
+      )}
+      {replyOpen && (
+        <ReplyDialog
+          letter={letter}
+          users={users}
+          role={role}
+          onClose={() => setReplyOpen(false)}
+          onDone={onChanged}
         />
       )}
       {pending && (
@@ -180,7 +190,11 @@ export function LetterRowActions({
                 </span>
                 <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
                   <option value="">{pending === 'forward' ? 'Keep current assignee' : 'Select…'}</option>
-                  {users.map((user) => <option key={user.name} value={user.name}>{user.name}</option>)}
+                  {users.map((user) => (
+                    <option key={user.name} value={user.name}>
+                      {user.name}{user.department ? ` · ${user.department}` : ''}
+                    </option>
+                  ))}
                 </select>
               </label>
             )}
@@ -193,7 +207,7 @@ export function LetterRowActions({
               </label>
             )}
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-semibold text-slate-600">{pending === 'reply' ? 'Reply *' : 'Remarks'}</span>
+              <span className="text-xs font-semibold text-slate-600">Remarks</span>
               <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-24 rounded-md border border-slate-200 px-3 py-2 text-xs" />
             </label>
             <div className="mt-4 flex justify-end gap-2">
@@ -286,7 +300,11 @@ function EditLetterDialog({
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Assigned to</span>
             <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
               <option value="">Unassigned</option>
-              {users.map((user) => <option key={user.name} value={user.name}>{user.name}</option>)}
+              {users.map((user) => (
+                <option key={user.name} value={user.name}>
+                  {user.name}{user.department ? ` · ${user.department}` : ''}
+                </option>
+              ))}
             </select>
           </label>
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Due date</span><input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>

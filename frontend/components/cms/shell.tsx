@@ -57,6 +57,8 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Dashboard: LayoutDashboard,
   'My Actions': CalendarClock,
   Monitoring: SlidersHorizontal,
+  Inbox: Inbox,
+  Sent: Send,
   Create: FilePlus2,
   Track: Table2,
   Archive: Archive,

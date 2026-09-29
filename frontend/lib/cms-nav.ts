@@ -4,7 +4,7 @@ export const NAV_GROUPS = [
   { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Monitoring'] as const },
   {
     label: 'Letters',
-    items: ['Create', 'Track', 'Archive'] as const,
+    items: ['Inbox', 'Sent', 'Create', 'Track', 'Archive'] as const,
   },
   { label: 'AI Intelligence', items: ['AI Assistant', 'Letter Analysis', 'AI Insights'] as const },
   { label: 'Operations', items: ['Meetings', 'Import Center', 'Export Center'] as const },
@@ -33,6 +33,8 @@ const LABEL_TO_HREF: Record<string, string> = {
   Dashboard: '/',
   'My Actions': '/letters/my-actions',
   Monitoring: '/letters/monitoring',
+  Inbox: '/letters/inbox',
+  Sent: '/letters/sent',
   Create: '/letters/register',
   Track: '/letters',
   Archive: '/letters/archive',
@@ -89,8 +91,12 @@ export function isLettersSection(pathname: string): boolean {
   return true
 }
 
-export function lettersPrimaryFromPathname(pathname: string): 'Create' | 'Track' | 'Archive' | null {
+export type LettersPrimary = 'Inbox' | 'Sent' | 'Create' | 'Track' | 'Archive'
+
+export function lettersPrimaryFromPathname(pathname: string): LettersPrimary | null {
   if (!isLettersSection(pathname)) return null
+  if (pathname === '/letters/inbox') return 'Inbox'
+  if (pathname === '/letters/sent') return 'Sent'
   if (pathname.startsWith('/letters/register')) return 'Create'
   if (pathname === '/letters/archive') return 'Archive'
   return 'Track'
@@ -110,6 +116,8 @@ export function labelFromPathname(pathname: string): string {
   if (pathname === '/' || pathname === '') return 'Dashboard'
   if (pathname === '/letters/my-actions') return 'My Actions'
   if (pathname === '/letters/monitoring') return 'Monitoring'
+  if (pathname === '/letters/inbox') return 'Inbox'
+  if (pathname === '/letters/sent') return 'Sent'
   if (pathname.startsWith('/letters/register')) return 'Create'
   if (pathname === '/letters/archive') return 'Archive'
   if (isLettersSection(pathname)) return 'Track'

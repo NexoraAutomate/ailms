@@ -28,7 +28,7 @@ export function LetterTable({
   onToggle?: (id: string) => void
   onToggleAll?: (checked: boolean) => void
   role: string
-  users: { name: string }[]
+  users: { name: string; department?: string }[]
   departments: { name: string }[]
   onChanged: () => Promise<void>
   onDelete: (letter: Letter) => void

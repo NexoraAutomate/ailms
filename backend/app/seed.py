@@ -57,6 +57,9 @@ MASTER_DATA = {
         "Technical Document",
         "Financial Document",
         "Reference Document",
+        "Email",
+        "Presentation",
+        "Attachment",
         "Other",
     ],
     "Organization Types": [

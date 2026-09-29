@@ -51,9 +51,14 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const data = source.filter((l) => {
     const q = aiSearch || !query || Object.values(l).some((v) => String(v).toLowerCase().includes(query.toLowerCase()))
     const archiveOk = isSoftArchive ? !!l.isArchived : isCatalog ? true : !l.isArchived
+    const isInbox =
+      l.assignedTo === me.name && (l.assignedBy || '') !== me.name
+    const isSent = l.createdBy === me.name || l.assignedBy === me.name
     const matchesPage =
       page === 'All Letters' ||
       page === 'Letter Archive' ||
+      (page === 'Inbox' && isInbox) ||
+      (page === 'Sent' && isSent) ||
       (page === 'Incoming' && l.type === 'Incoming') ||
       (page === 'Outgoing' && l.type === 'Outgoing') ||
       (page === 'Overdue' && l.status === 'Overdue') ||
@@ -68,7 +73,11 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const title = page === 'All Letters' ? 'Letter database' : page === 'Letter Archive' ? 'Archive' : page
   const description = isCatalog
     ? 'Search the full correspondence register. Letters not marked to you are locked.'
-    : 'Search, filter and manage correspondence assigned or created by you.'
+    : page === 'Inbox'
+      ? 'Letters marked to you from any tier that still need your response.'
+      : page === 'Sent'
+        ? 'Letters you registered, replied to, or marked onward.'
+        : 'Search, filter and manage correspondence assigned or created by you.'
   const selectedIds = [...selected].filter((id) => {
     const row = data.find((l) => l.id === id)
     return row && (row.accessible !== false)

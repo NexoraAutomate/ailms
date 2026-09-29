@@ -228,12 +228,29 @@ def execute_transition(
     rule = validate_transition(db, letter=letter, action=action, actor_name=actor_name, reviewer_name=reviewer_name)
 
     from_status = stored_status(letter)
+    label_normalized = (action_label or "").strip().lower()
+    is_reply = label_normalized == "reply"
+
+    # Reply always returns to the person who marked / sent this letter to the actor.
+    origin = (letter.assigned_by or "").strip() or (letter.created_by or "").strip()
+    if is_reply:
+        if not origin or origin == actor_name:
+            raise HTTPException(
+                status_code=422,
+                detail="Validation failed: cannot determine reply recipient (letter sender)",
+            )
+        assigned_to = origin
+
     if assigned_to is not None:
         letter.assigned_to = assigned_to
-        if action in {"assign", "reassign"}:
+        if action in {"assign", "reassign", "forward"} or is_reply:
             letter.assigned_by = actor_name
     if department is not None:
         letter.department = department
+
+    # Reply / response / forward marks the actor as sender so the letter leaves Inbox → Sent.
+    if action in {"forward", "request_response"} or is_reply:
+        letter.assigned_by = actor_name
 
     if action in {"approve", "reject", "return_for_revision"} and not remarks.strip():
         raise HTTPException(status_code=422, detail="Validation failed: remarks are required for this action")
@@ -284,9 +301,19 @@ def execute_transition(
 
     reviewer = reviewer_name or (assigned_to if action == "submit_for_approval" else None)
     notice = _notification_for(action, letter, actor_name)
+    if is_reply:
+        notice = (
+            "Reply Received",
+            f"{actor_name} replied on {letter.number}: {letter.subject}.",
+            "High" if letter.priority == "Urgent" else "Medium",
+            "Reply Received",
+        )
     if notice:
         title, description, priority, ntype = notice
-        recipient = letter.assigned_to if action in {"assign", "reassign"} else reviewer
+        if is_reply:
+            recipient = letter.assigned_to
+        else:
+            recipient = letter.assigned_to if action in {"assign", "reassign"} else reviewer
         add_notification(
             db,
             title=title,

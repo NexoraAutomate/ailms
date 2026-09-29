@@ -408,7 +408,16 @@ export function RelatedMeetingsPanel({ letter, go }: { letter: Letter; go: (p: s
 
 export function DocumentsPanel({ letter }: { letter: Letter }) {
   const { masterData, refresh } = useAppData()
-  const types = masterData['Document Types'] ?? ['Supporting Document', 'Original Letter', 'Draft Response', 'Final Response']
+  const types = masterData['Document Types'] ?? [
+    'Supporting Document',
+    'Original Letter',
+    'Draft Response',
+    'Final Response',
+    'Email',
+    'Presentation',
+    'Attachment',
+    'Other',
+  ]
   const [documents, setDocuments] = useState<LetterDocument[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [versions, setVersions] = useState<DocumentVersion[]>([])
@@ -495,7 +504,12 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
         </label>
         <label className="flex flex-col gap-1 text-xs sm:col-span-2">
           <span className="font-semibold text-slate-600">File</span>
-          <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-xs" />
+          <input
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.ppt,.pptx,.odt,.ods,.odp,.eml,.msg,.zip"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="text-xs"
+          />
         </label>
         <div className="sm:col-span-2">
           <Button size="sm" disabled={busy} onClick={() => void upload()}>Upload document</Button>
