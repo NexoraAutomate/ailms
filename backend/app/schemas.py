@@ -34,7 +34,7 @@ class LetterOut(BaseModel):
     completionDate: str = "—"
     isArchived: bool = False
     baseStatus: str = ""
-    # False when listed in the Archive catalog but not meant for the viewer.
+    # False when listed in the Catalog but not meant for the viewer.
     accessible: bool = True
 
 

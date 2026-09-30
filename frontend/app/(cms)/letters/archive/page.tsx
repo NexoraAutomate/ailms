@@ -1,8 +1,13 @@
 'use client'
 
-import { LetterListPage } from '@/components/cms/letter-list-page'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
-/** Full correspondence catalog — locked rows when not meant for the viewer. */
+/** Legacy path — redirects to Catalog. */
 export default function Page() {
-  return <LetterListPage page="Letter Archive" />
+  const router = useRouter()
+  useEffect(() => {
+    router.replace('/letters/catalog')
+  }, [router])
+  return null
 }

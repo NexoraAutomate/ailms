@@ -24,7 +24,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const [catalogLetters, setCatalogLetters] = useState<Letter[]>([])
   const [pendingDelete, setPendingDelete] = useState<Letter[] | null>(null)
   const isAdmin = isAdministrator(me.role)
-  const isCatalog = page === 'Letter Archive'
+  const isCatalog = page === 'Catalog'
   const isSoftArchive = page === 'Archived'
 
   useEffect(() => {
@@ -56,7 +56,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
     const isSent = l.createdBy === me.name || l.assignedBy === me.name
     const matchesPage =
       page === 'All Letters' ||
-      page === 'Letter Archive' ||
+      page === 'Catalog' ||
       (page === 'Inbox' && isInbox) ||
       (page === 'Sent' && isSent) ||
       (page === 'Incoming' && l.type === 'Incoming') ||
@@ -70,7 +70,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
     return q && archiveOk && matchesPage && (filter === 'All' || l.priority === filter)
   })
 
-  const title = page === 'All Letters' ? 'Letter database' : page === 'Letter Archive' ? 'Archive' : page
+  const title = page === 'All Letters' ? 'Letter database' : page
   const description = isCatalog
     ? 'Search the full correspondence register. Letters not marked to you are locked.'
     : page === 'Inbox'

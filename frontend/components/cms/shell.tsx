@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Archive,
+  Library,
   BarChart3,
   Bell,
   BriefcaseBusiness,
@@ -61,6 +62,7 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Sent: Send,
   Create: FilePlus2,
   Track: Table2,
+  Catalog: Library,
   Archive: Archive,
   'All Letters': Table2,
   Incoming: Inbox,

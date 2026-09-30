@@ -4,7 +4,7 @@ export const NAV_GROUPS = [
   { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Monitoring'] as const },
   {
     label: 'Letters',
-    items: ['Inbox', 'Sent', 'Create', 'Track', 'Archive'] as const,
+    items: ['Inbox', 'Sent', 'Create', 'Track', 'Catalog'] as const,
   },
   { label: 'AI Intelligence', items: ['AI Assistant', 'Letter Analysis', 'AI Insights'] as const },
   { label: 'Operations', items: ['Meetings', 'Import Center', 'Export Center'] as const },
@@ -37,7 +37,8 @@ const LABEL_TO_HREF: Record<string, string> = {
   Sent: '/letters/sent',
   Create: '/letters/register',
   Track: '/letters',
-  Archive: '/letters/archive',
+  Archive: '/letters/catalog',
+  Catalog: '/letters/catalog',
   'All Letters': '/letters',
   Incoming: '/letters/incoming',
   Outgoing: '/letters/outgoing',
@@ -91,14 +92,14 @@ export function isLettersSection(pathname: string): boolean {
   return true
 }
 
-export type LettersPrimary = 'Inbox' | 'Sent' | 'Create' | 'Track' | 'Archive'
+export type LettersPrimary = 'Inbox' | 'Sent' | 'Create' | 'Track' | 'Catalog'
 
 export function lettersPrimaryFromPathname(pathname: string): LettersPrimary | null {
   if (!isLettersSection(pathname)) return null
   if (pathname === '/letters/inbox') return 'Inbox'
   if (pathname === '/letters/sent') return 'Sent'
   if (pathname.startsWith('/letters/register')) return 'Create'
-  if (pathname === '/letters/archive') return 'Archive'
+  if (pathname === '/letters/catalog' || pathname === '/letters/archive') return 'Catalog'
   return 'Track'
 }
 
@@ -119,7 +120,7 @@ export function labelFromPathname(pathname: string): string {
   if (pathname === '/letters/inbox') return 'Inbox'
   if (pathname === '/letters/sent') return 'Sent'
   if (pathname.startsWith('/letters/register')) return 'Create'
-  if (pathname === '/letters/archive') return 'Archive'
+  if (pathname === '/letters/catalog' || pathname === '/letters/archive') return 'Catalog'
   if (isLettersSection(pathname)) return 'Track'
   if (pathname.startsWith('/meetings/') && pathname !== '/meetings') return 'Meetings'
   if (pathname.startsWith('/ai/analysis')) return 'Letter Analysis'

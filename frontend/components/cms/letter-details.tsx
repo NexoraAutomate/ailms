@@ -65,7 +65,7 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
           <h2 className="text-sm font-bold">Letter locked</h2>
         </div>
         <p className="text-sm text-slate-500">This correspondence is not marked to you, so detail access is restricted.</p>
-        <Button variant="outline" onClick={() => go('Archive')}>Back to Archive</Button>
+        <Button variant="outline" onClick={() => go('Catalog')}>Back to Catalog</Button>
       </Card>
     )
   }

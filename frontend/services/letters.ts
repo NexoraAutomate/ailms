@@ -49,7 +49,7 @@ export type Letter = {
   isArchived?: boolean
   /** Stored workflow status. `status` may be the derived value Overdue. */
   baseStatus?: string
-  /** False in Archive catalog when the letter is not meant for the viewer. */
+  /** False in Catalog when the letter is not meant for the viewer. */
   accessible?: boolean
 }
 
