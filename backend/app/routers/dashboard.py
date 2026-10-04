@@ -11,6 +11,7 @@ from app.models import Approval, AuditRecord, Department, DepartmentLink, Escala
 from app.services import (
     CLOSED_STATUSES,
     PENDING_STATUSES,
+    avatar_public_url,
     serialize_audit,
     serialize_department,
     serialize_department_link,
@@ -250,6 +251,7 @@ def bootstrap(user: CurrentUser, db: Session = Depends(get_db)) -> dict:
             "username": user.username,
             "email": user.email,
             "id": user.id,
+            "avatarUrl": avatar_public_url(user),
         },
         "unreadCount": _user_unread_count(db, user.name),
         "operational": {

@@ -79,6 +79,8 @@ def user_initials(name: str) -> str:
 
 
 def serialize_auth_user(user: User) -> dict[str, Any]:
+    from app.services import avatar_public_url
+
     return {
         "id": user.id,
         "name": user.name,
@@ -88,6 +90,7 @@ def serialize_auth_user(user: User) -> dict[str, Any]:
         "email": user.email,
         "status": user.status,
         "initials": user_initials(user.name),
+        "avatarUrl": avatar_public_url(user),
     }
 
 

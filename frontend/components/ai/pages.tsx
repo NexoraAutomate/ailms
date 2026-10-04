@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useAppData } from '@/components/app-provider'
 import { AIAdvisoryNote, AIInsightCard, AIStatusIndicator, AiBadge, SectionCard } from '@/components/ai/common'
 import { AIAnalysisPanel } from '@/components/ai/letter-tools'
+import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import { assistantChat, assistantPromptLibrary, fetchAiStatus, generateManagementInsights, naturalLanguageSearch, type AiBackendStatus, type InterpretedQuery, type ManagementInsight } from '@/services/ai'
 import type { Letter } from '@/services/letters'
 import { formatDateTime } from '@/lib/datetime'
@@ -109,19 +110,28 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
                   <p className="text-[11px] font-semibold text-slate-500">Interpreted query</p>
                   <div className="mt-2 flex flex-wrap gap-1">{Object.entries(message.result.filters).map(([key, value]) => <AiBadge key={key}>{key} = {value}</AiBadge>)}</div>
                   {message.result.letters.length === 0 ? <p className="mt-3 text-xs text-slate-500">No matching correspondence found.</p> : (
-                    <div className="mt-3 overflow-x-auto">
-                      <table className="w-full min-w-[520px] text-left text-xs">
-                        <thead className="text-[10px] uppercase text-slate-400"><tr><th className="py-2">Letter</th><th>Subject</th><th>Status</th></tr></thead>
-                        <tbody>
-                          {message.result.letters.slice(0, 8).map((letter) => (
-                            <tr key={letter.id} className="border-t border-slate-100">
-                              <td className="py-2"><button className="font-semibold text-[#1769aa]" onClick={() => go(letter.id)}>{letter.number}</button></td>
-                              <td className="text-slate-600">{letter.subject}</td>
-                              <td>{letter.status}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="mt-3">
+                      <DataTable
+                        bordered={false}
+                        columns={[
+                          {
+                            id: 'number',
+                            header: 'Letter',
+                            sortValue: (letter: Letter) => letter.number,
+                            cell: (letter: Letter) => (
+                              <button type="button" className="font-semibold text-[#1769aa]" onClick={() => go(letter.id)}>{letter.number}</button>
+                            ),
+                          },
+                          { id: 'subject', header: 'Subject', sortValue: (letter: Letter) => letter.subject, className: 'text-slate-600', cell: (letter: Letter) => letter.subject },
+                          { id: 'status', header: 'Status', sortValue: (letter: Letter) => letter.status, cell: (letter: Letter) => letter.status },
+                        ] satisfies DataTableColumn<Letter>[]}
+                        data={message.result.letters}
+                        rowKey={(letter) => letter.id}
+                        storageKey="ai-assistant-matches"
+                        minWidth="520px"
+                        maxHeight="min(280px, 40vh)"
+                        showColumnPicker
+                      />
                     </div>
                   )}
                 </div>

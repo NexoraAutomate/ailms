@@ -1,7 +1,7 @@
 'use client'
 
-import { LetterListPage } from '@/components/cms/letter-list-page'
+import { MonitoringPage } from '@/components/cms/monitoring-page'
 
 export default function Page() {
-  return <LetterListPage page="Monitoring" />
+  return <MonitoringPage />
 }

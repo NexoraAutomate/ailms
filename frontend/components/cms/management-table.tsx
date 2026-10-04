@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { MoreHorizontal, Plus, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
+import { DataTable, TableActions, type DataTableColumn } from '@/components/cms/data-table'
 
 export function FormDialog({
   title,
@@ -62,6 +63,39 @@ export function ManagementTable({ title, description, headers, rows, onAdd, addT
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState(false)
   const filtered = rows.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(search.toLowerCase())))
+  const keys = useMemo(() => (rows[0] ? Object.keys(rows[0]) : headers.map((_, i) => `col${i}`)), [rows, headers])
+
+  const columns = useMemo<DataTableColumn<Record<string, string | number>>[]>(() => {
+    const cols: DataTableColumn<Record<string, string | number>>[] = headers.map((h, i) => {
+      const key = keys[i] ?? `col${i}`
+      return {
+        id: key,
+        header: h,
+        sortValue: (r) => r[key],
+        className: 'text-slate-600',
+        cell: (r) => {
+          const v = r[key]
+          if (['Active', 'Inactive'].includes(String(v))) {
+            return <Badge tone={v === 'Active' ? 'green' : 'slate'}>{String(v)}</Badge>
+          }
+          return String(v ?? '')
+        },
+      }
+    })
+    cols.push({
+      id: 'actions',
+      header: 'Actions',
+      hideable: false,
+      sortable: false,
+      cell: () => (
+        <TableActions>
+          <IconActionButton label="More" icon={MoreHorizontal} />
+        </TableActions>
+      ),
+    })
+    return cols
+  }, [headers, keys])
+
   return (
     <>
       <PageTitle title={title} description={description} action={onAdd && <Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" />Add {title.slice(0, -1).toLowerCase()}</Button>} />
@@ -71,25 +105,15 @@ export function ManagementTable({ title, description, headers, rows, onAdd, addT
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${title.toLowerCase()}...`} className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-xs" />
         </div>
       </div>
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left">
-            <thead className="bg-slate-50 text-[10px] uppercase text-slate-400">
-              <tr>{headers.map((h) => <th className="px-4 py-3" key={h}>{h}</th>)}<th className="px-4 py-3">Actions</th></tr>
-            </thead>
-            <tbody>
-              {filtered.map((r, i) => (
-                <tr className="border-t border-slate-100 text-xs" key={i}>
-                  {Object.values(r).map((v, j) => (
-                    <td className="px-4 py-3 text-slate-600" key={j}>{j === Object.values(r).length - 1 && ['Active', 'Inactive'].includes(String(v)) ? <Badge tone={v === 'Active' ? 'green' : 'slate'}>{String(v)}</Badge> : String(v)}</td>
-                  ))}
-                  <td className="px-4 py-3"><IconActionButton label="More" icon={MoreHorizontal} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <DataTable
+        columns={columns}
+        data={filtered}
+        rowKey={(_, i) => String(i)}
+        storageKey={`mgmt-${title}`}
+        minWidth="760px"
+        title={title}
+        description={`${filtered.length} records`}
+      />
       {open && onAdd && addFields && <FormDialog title={addTitle ?? `Add ${title}`} fields={addFields} onClose={() => setOpen(false)} onSubmit={onAdd} />}
     </>
   )

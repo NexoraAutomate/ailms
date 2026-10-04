@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown, Copy, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CollapsibleCard } from '@/components/ui/collapsible-card'
+import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import {
   AIAdvisoryNote,
   AIConfidenceBadge,
@@ -287,20 +289,30 @@ export function AIAnalysisPanel({ letter, letters }: { letter: Letter; letters: 
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
             {data.chain.map((step, index) => <span key={step} className="flex items-center gap-2"><span className="rounded bg-slate-100 px-2 py-1 font-semibold text-slate-600">{step}</span>{index < data.chain.length - 1 && <span>↓</span>}</span>)}
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left text-xs">
-              <thead className="text-[10px] uppercase text-slate-400"><tr><th className="py-2">Stage</th><th>Date</th><th>Note</th></tr></thead>
-              <tbody>
-                {data.timeline.map((event) => (
-                  <tr key={event.label} className="border-t border-slate-100">
-                    <td className="py-2 font-semibold text-slate-700">{event.label}{event.delay && <AiBadge tone="red">Delay</AiBadge>}</td>
-                    <td className="text-slate-500">{event.date}</td>
-                    <td className="text-slate-600">{event.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            bordered={false}
+            columns={[
+              {
+                id: 'stage',
+                header: 'Stage',
+                sortValue: (event) => event.label,
+                className: 'font-semibold text-slate-700',
+                cell: (event) => (
+                  <>
+                    {event.label}
+                    {event.delay ? <AiBadge tone="red">Delay</AiBadge> : null}
+                  </>
+                ),
+              },
+              { id: 'date', header: 'Date', sortValue: (event) => event.date, className: 'text-slate-500', cell: (event) => event.date },
+              { id: 'note', header: 'Note', sortValue: (event) => event.note, className: 'text-slate-600', cell: (event) => event.note },
+            ] satisfies DataTableColumn<{ label: string; date: string; note: string; delay?: boolean }>[]}
+            data={data.timeline}
+            rowKey={(event) => event.label}
+            storageKey="ai-analysis-timeline"
+            minWidth="520px"
+            maxHeight="min(280px, 40vh)"
+          />
           {data.delays.length > 0 && <ul className="list-disc pl-4 text-xs text-amber-700">{data.delays.map((item) => <li key={item}>{item}</li>)}</ul>}
         </div>
       )}
@@ -323,11 +335,14 @@ export function AIAnalyzeDocument({ letter }: { letter: Letter }) {
     setStatus('success')
   }
   return (
-    <SectionCard title="Attachment analysis" action={<Button size="sm" variant="outline" onClick={() => void run()}>AI Analyze Document</Button>}>
+    <CollapsibleCard
+      title="Attachment analysis"
+      action={<Button size="sm" variant="outline" onClick={() => void run()}>AI Analyze Document</Button>}
+    >
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
       {notes.length === 0 && status === 'idle' && <p className="text-xs text-slate-500">Mock document analysis is available. No OCR or live model is used.</p>}
       <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">{notes.map((note) => <li key={note}>{note}</li>)}</ul>
-    </SectionCard>
+    </CollapsibleCard>
   )
 }
 
@@ -349,31 +364,32 @@ export function AIIntelligencePanel({
   onApplyField: (field: string, value: string, decision: AiDecision) => Promise<void>
   onAcceptAction: (action: string, decision: AiDecision) => Promise<void>
 }) {
-  const [open, setOpen] = useState(false)
   const [tab, setTab] = useState('Summarize')
   const tabs = ['Summarize', 'Extract Information', 'Classify', 'Recommend Actions', 'Assess Urgency', 'Draft Response', 'Analyze Correspondence']
   return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <button className="flex w-full items-center justify-between px-4 py-3 text-left lg:cursor-default" onClick={() => setOpen((v) => !v)}>
-        <span className="flex items-center gap-2 text-sm font-bold text-slate-700"><Sparkles className="size-4 text-[#1769aa]" /> AI Intelligence Panel</span>
-        <ChevronDown className={`size-4 text-slate-400 lg:hidden ${open ? 'rotate-180' : ''}`} />
-      </button>
-      <div className={`${open ? 'block' : 'hidden'} border-t border-slate-100 lg:block`}>
-        <div className="flex gap-1 overflow-x-auto p-3">
-          {tabs.map((item) => (
-            <button key={item} onClick={() => setTab(item)} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs ${tab === item ? 'bg-blue-50 font-semibold text-[#1769aa]' : 'text-slate-500 hover:bg-slate-50'}`}>{item}</button>
-          ))}
-        </div>
-        <div className="border-t border-slate-100 p-3">
-          {tab === 'Summarize' && <AISummary letter={letter} />}
-          {tab === 'Extract Information' && <AIExtractionPanel letter={letter} onApply={onApplyField} />}
-          {tab === 'Classify' && <AIClassification letter={letter} onApply={onApplyField} />}
-          {tab === 'Recommend Actions' && <AIActionRecommendations letter={letter} onAcceptAction={onAcceptAction} />}
-          {tab === 'Assess Urgency' && <AIUrgencyAssessment letter={letter} onApply={(priority, decision) => onApplyField('priority', priority, decision)} />}
-          {tab === 'Draft Response' && <AIDraftResponse letter={letter} />}
-          {tab === 'Analyze Correspondence' && <AIAnalysisPanel letter={letter} letters={letters} />}
-        </div>
+    <CollapsibleCard
+      title={
+        <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700">
+          <Sparkles className="size-4 text-[#1769aa]" />
+          AI Intelligence Panel
+        </h2>
+      }
+      contentClassName="p-0 sm:p-0"
+    >
+      <div className="flex gap-1 overflow-x-auto px-3 pt-0 pb-3 sm:px-4">
+        {tabs.map((item) => (
+          <button key={item} onClick={() => setTab(item)} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs ${tab === item ? 'bg-blue-50 font-semibold text-[#1769aa]' : 'text-slate-500 hover:bg-slate-50'}`}>{item}</button>
+        ))}
       </div>
-    </section>
+      <div className="border-t border-slate-100 p-3">
+        {tab === 'Summarize' && <AISummary letter={letter} />}
+        {tab === 'Extract Information' && <AIExtractionPanel letter={letter} onApply={onApplyField} />}
+        {tab === 'Classify' && <AIClassification letter={letter} onApply={onApplyField} />}
+        {tab === 'Recommend Actions' && <AIActionRecommendations letter={letter} onAcceptAction={onAcceptAction} />}
+        {tab === 'Assess Urgency' && <AIUrgencyAssessment letter={letter} onApply={(priority, decision) => onApplyField('priority', priority, decision)} />}
+        {tab === 'Draft Response' && <AIDraftResponse letter={letter} />}
+        {tab === 'Analyze Correspondence' && <AIAnalysisPanel letter={letter} letters={letters} />}
+      </div>
+    </CollapsibleCard>
   )
 }

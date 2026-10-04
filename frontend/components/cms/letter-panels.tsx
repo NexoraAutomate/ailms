@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Badge, Card } from '@/components/cms/ui'
 import { formatDateTime } from '@/lib/datetime'
@@ -124,14 +125,12 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
   }
 
   return (
-    <Card className="mt-5 p-5">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-bold text-slate-700">Workflow</h2>
-          <p className="text-xs text-slate-400">Authorized transitions from the current status.</p>
-        </div>
-        <Badge tone={statusTone(letter.status as LetterStatus)}>{letter.status}</Badge>
-      </div>
+    <CollapsibleCard
+      className="mt-5"
+      title="Workflow"
+      description="Authorized transitions from the current status."
+      headerAside={<Badge tone={statusTone(letter.status as LetterStatus)}>{letter.status}</Badge>}
+    >
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
       {!loading && actions.length === 0 && <p className="text-xs text-slate-500">No workflow actions are available for this status.</p>}
@@ -200,7 +199,7 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
           </Card>
         </div>
       )}
-    </Card>
+    </CollapsibleCard>
   )
 }
 
@@ -236,8 +235,7 @@ export function ApprovalEscalationPanel({ letter, onDone }: { letter: Letter; on
 
   return (
     <div className="mt-5 grid gap-5 lg:grid-cols-2">
-      <Card className="p-5">
-        <h2 className="mb-3 text-sm font-bold text-slate-700">Approval tracking</h2>
+      <CollapsibleCard title="Approval tracking">
         {loading && <p className="text-xs text-slate-500">Loading…</p>}
         {error && <p className="text-xs text-red-600">{error}</p>}
         {!loading && !approval && <p className="text-xs text-slate-500">No approval record for this letter yet.</p>}
@@ -253,9 +251,8 @@ export function ApprovalEscalationPanel({ letter, onDone }: { letter: Letter; on
         {history.length > 1 && (
           <p className="mt-3 text-[11px] text-slate-400">{history.length} approval revision(s) on file.</p>
         )}
-      </Card>
-      <Card className="p-5">
-        <h2 className="mb-3 text-sm font-bold text-slate-700">Escalations</h2>
+      </CollapsibleCard>
+      <CollapsibleCard title="Escalations">
         {loading && <p className="text-xs text-slate-500">Loading…</p>}
         {!loading && escalations.length === 0 && <p className="text-xs text-slate-500">No escalations recorded.</p>}
         <div className="flex flex-col gap-2">
@@ -270,8 +267,51 @@ export function ApprovalEscalationPanel({ letter, onDone }: { letter: Letter; on
             </div>
           ))}
         </div>
-      </Card>
+      </CollapsibleCard>
     </div>
+  )
+}
+
+function LinkedLetterRow({
+  number,
+  subject,
+  letterDate,
+  type,
+  status,
+  from,
+  to,
+  relationshipType,
+  directionLabel,
+  onOpen,
+}: {
+  number: string
+  subject: string
+  letterDate: string
+  type: string
+  status: string
+  from: string
+  to: string
+  relationshipType: string
+  directionLabel: string
+  onOpen: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs transition-colors hover:border-[#1769aa] hover:bg-white"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <p className="font-semibold text-slate-700">{number} · {subject}</p>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          <Badge tone="slate">{directionLabel}</Badge>
+          <Badge tone="blue">{relationshipType}</Badge>
+        </div>
+      </div>
+      <p className="text-slate-500">{letterDate} · {type} · {status}</p>
+      <p className="text-slate-400">{from} → {to}</p>
+      <p className="mt-1 font-semibold text-[#1769aa] group-hover:underline">Open letter →</p>
+    </button>
   )
 }
 
@@ -280,7 +320,7 @@ export function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: 
   const [thread, setThread] = useState<CorrespondenceThread | null>(null)
   const [types, setTypes] = useState<string[]>([])
   const [toLetterId, setToLetterId] = useState('')
-  const [relationshipType, setRelationshipType] = useState('Related')
+  const [relationshipType, setRelationshipType] = useState('Reference')
   const [remarks, setRemarks] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -292,7 +332,9 @@ export function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: 
       const [t, relTypes] = await Promise.all([fetchCorrespondenceThread(letter.id), listRelationTypes()])
       setThread(t)
       setTypes(relTypes.types)
-      if (relTypes.types.length) setRelationshipType(relTypes.types[0])
+      if (relTypes.types.length) {
+        setRelationshipType(relTypes.types.includes('Reference') ? 'Reference' : relTypes.types[0])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load correspondence thread')
     } finally {
@@ -322,49 +364,116 @@ export function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: 
     }
   }
 
-  const relationshipFor = (nodeId: string) => {
-    if (!thread) return 'Related'
-    const edge = thread.edges.find(
-      (e) =>
-        (e.fromLetterId === letter.id && e.toLetterId === nodeId) ||
-        (e.toLetterId === letter.id && e.fromLetterId === nodeId),
-    )
-    return edge?.relationshipType ?? 'Related'
-  }
+  const nodeById = (id: string) => thread?.nodes.find((node) => node.id === id)
 
-  const linkedNodes = thread?.nodes.filter((node) => node.id !== letter.id) ?? []
+  /** Letters this record links to (A → B when viewing A). */
+  const outgoing = (thread?.relations ?? [])
+    .filter((rel) => rel.fromLetterId === letter.id)
+    .map((rel) => {
+      const node = nodeById(rel.toLetterId)
+      return node ? { rel, node } : null
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+
+  /** Letters that link to this record (A → B when viewing B). */
+  const incoming = (thread?.relations ?? [])
+    .filter((rel) => rel.toLetterId === letter.id)
+    .map((rel) => {
+      const node = nodeById(rel.fromLetterId)
+      return node ? { rel, node } : null
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+
+  const alreadyLinkedIds = new Set([
+    ...outgoing.map((item) => item.node.id),
+    ...incoming.map((item) => item.node.id),
+  ])
 
   return (
-    <Card className="mt-5 p-5">
-      <h2 className="mb-1 text-sm font-bold text-slate-700">Reference & linked letters</h2>
-      <p className="mb-3 text-xs text-slate-400">Select a linked letter to open its detail record.</p>
+    <CollapsibleCard
+      className="mt-5"
+      title="Reference & linked letters"
+      description="Link reference letters from this record, and see where this letter is cited elsewhere."
+      headerAside={
+        !loading ? (
+          <Badge tone={incoming.length > 0 ? 'blue' : 'slate'}>
+            Referenced in {incoming.length}
+          </Badge>
+        ) : undefined
+      }
+    >
       {loading && <p className="text-xs text-slate-500">Loading thread…</p>}
       {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
       {!loading && thread && (
-        <div className="space-y-2">
-          {linkedNodes.length === 0 && <p className="text-xs text-slate-500">No reference or linked letters yet.</p>}
-          {linkedNodes.map((node) => (
-            <button
-              key={node.id}
-              type="button"
-              onClick={() => go(node.id)}
-              className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs transition-colors hover:border-[#1769aa] hover:bg-white"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <p className="font-semibold text-slate-700">{node.number} · {node.subject}</p>
-                <Badge tone="blue">{relationshipFor(node.id)}</Badge>
+        <div className="space-y-5">
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">This letter references</h3>
+              <span className="text-[11px] text-slate-400">{outgoing.length}</span>
+            </div>
+            {outgoing.length === 0 ? (
+              <p className="text-xs text-slate-500">No reference or linked letters added from this record yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {outgoing.map(({ rel, node }) => (
+                  <LinkedLetterRow
+                    key={`out-${rel.id}`}
+                    number={node.number}
+                    subject={node.subject}
+                    letterDate={node.letterDate}
+                    type={node.type}
+                    status={node.status}
+                    from={node.from}
+                    to={node.to}
+                    relationshipType={rel.relationshipType}
+                    directionLabel="References"
+                    onOpen={() => go(node.id)}
+                  />
+                ))}
               </div>
-              <p className="text-slate-500">{node.letterDate} · {node.type} · {node.status}</p>
-              <p className="text-slate-400">{node.from} → {node.to}</p>
-              <p className="mt-1 font-semibold text-[#1769aa] group-hover:underline">Open letter →</p>
-            </button>
-          ))}
+            )}
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Referenced in</h3>
+              <span className="text-[11px] font-semibold text-slate-500">{incoming.length} letter{incoming.length === 1 ? '' : 's'}</span>
+            </div>
+            <p className="mb-2 text-[11px] text-slate-400">
+              Letters that cite this record as a reference or related link.
+            </p>
+            {incoming.length === 0 ? (
+              <p className="text-xs text-slate-500">This letter has not been referenced by any other letter yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {incoming.map(({ rel, node }) => (
+                  <LinkedLetterRow
+                    key={`in-${rel.id}`}
+                    number={node.number}
+                    subject={node.subject}
+                    letterDate={node.letterDate}
+                    type={node.type}
+                    status={node.status}
+                    from={node.from}
+                    to={node.to}
+                    relationshipType={rel.relationshipType}
+                    directionLabel="Cited by"
+                    onOpen={() => go(node.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
       <div className="mt-4 grid gap-2 border-t border-slate-100 pt-4 sm:grid-cols-3">
         <select value={toLetterId} onChange={(e) => setToLetterId(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs sm:col-span-1">
           <option value="">Link to letter…</option>
-          {letters.filter((l) => l.id !== letter.id).map((l) => <option key={l.id} value={l.id}>{l.number}</option>)}
+          {letters
+            .filter((l) => l.id !== letter.id && !alreadyLinkedIds.has(l.id))
+            .map((l) => (
+              <option key={l.id} value={l.id}>{l.number}</option>
+            ))}
         </select>
         <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
           {types.map((t) => <option key={t}>{t}</option>)}
@@ -372,7 +481,7 @@ export function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: 
         <Button size="sm" onClick={() => void addLink()}>Add relationship</Button>
         <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Remarks (optional)" className="h-10 rounded-md border border-slate-200 px-3 text-xs sm:col-span-3" />
       </div>
-    </Card>
+    </CollapsibleCard>
   )
 }
 
@@ -387,11 +496,11 @@ export function RelatedMeetingsPanel({ letter, go }: { letter: Letter; go: (p: s
   }, [letter.id])
 
   return (
-    <Card className="mt-5 p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-bold text-slate-700">Related meetings</h2>
-        <Button size="sm" variant="outline" onClick={() => go('Meetings')}>All meetings</Button>
-      </div>
+    <CollapsibleCard
+      className="mt-5"
+      title="Related meetings"
+      action={<Button size="sm" variant="outline" onClick={() => go('Meetings')}>All meetings</Button>}
+    >
       {loading && <p className="text-xs text-slate-500">Loading…</p>}
       {!loading && meetings.length === 0 && <p className="text-xs text-slate-500">No meetings linked to this letter.</p>}
       <div className="flex flex-col gap-2">
@@ -402,7 +511,7 @@ export function RelatedMeetingsPanel({ letter, go }: { letter: Letter; go: (p: s
           </button>
         ))}
       </div>
-    </Card>
+    </CollapsibleCard>
   )
 }
 
@@ -486,9 +595,11 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
   }
 
   return (
-    <Card className="mt-5 p-5">
-      <h2 className="mb-1 text-sm font-bold text-slate-700">Documents & attachments</h2>
-      <p className="mb-4 text-xs text-slate-400">Secure uploads stored on server filesystem (metadata in database).</p>
+    <CollapsibleCard
+      className="mt-5"
+      title="Documents & attachments"
+      description="Secure uploads stored on server filesystem (metadata in database)."
+    >
       {loading && <p className="text-xs text-slate-500">Loading documents…</p>}
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
       <div className="mb-5 grid gap-3 rounded-md border border-dashed border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
@@ -572,6 +683,6 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
           </Card>
         </div>
       )}
-    </Card>
+    </CollapsibleCard>
   )
 }

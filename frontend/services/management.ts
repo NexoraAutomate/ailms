@@ -38,7 +38,18 @@ export type MasterValueItem = {
   value: string
   status: string
 }
-export type AppUser = { id?: number; name: string; username: string; department: string; role: string; email: string; status: string; activity: string; created?: string }
+export type AppUser = {
+  id?: number
+  name: string
+  username: string
+  department: string
+  role: string
+  email: string
+  status: string
+  activity: string
+  created?: string
+  avatarUrl?: string
+}
 export type AuditRecord = { date: string; user: string; module: string; action: string; record: string; description: string; source: string }
 export type AppNotification = {
   id: number
@@ -70,6 +81,7 @@ export type CurrentUser = {
   username?: string
   email?: string
   id?: number
+  avatarUrl?: string
 }
 
 export type BootstrapData = {
@@ -141,8 +153,32 @@ export async function deleteOrganization(id: number) {
   return api.delete<void>(`/api/organizations/${id}`)
 }
 
-export async function createUser(input: { name: string; username: string; department?: string; role?: string; email?: string; status?: string }) {
+export async function createUser(input: {
+  name: string
+  username: string
+  password: string
+  department?: string
+  role?: string
+  email?: string
+  status?: string
+}) {
   return api.post<AppUser>('/api/users', input)
+}
+
+export async function uploadUserAvatar(userId: number, file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  return api.postForm<AppUser>(`/api/users/${userId}/avatar`, form)
+}
+
+/** Match a display name / username to a seeded AppUser avatar URL. */
+export function resolveUserAvatarUrl(users: AppUser[], name: string): string {
+  const needle = name.trim().toLowerCase()
+  if (!needle) return ''
+  const match = users.find((u) => {
+    return u.name.trim().toLowerCase() === needle || u.username.toLowerCase() === needle
+  })
+  return match?.avatarUrl || ''
 }
 
 export async function fetchMasterItems() {

@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react'
 import { Building2, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
-import { Badge, Card, PageTitle } from '@/components/cms/ui'
+import { Badge, PageTitle } from '@/components/cms/ui'
+import { DataTable, TableActions, type DataTableColumn } from '@/components/cms/data-table'
 import { FormDialog } from '@/components/cms/management-table'
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
@@ -56,6 +57,84 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
 
   const fieldsWithTypes = ORG_FIELDS
 
+  const columns = useMemo<DataTableColumn<Organization>[]>(
+    () => [
+      {
+        id: 'name',
+        header: 'Organization',
+        sortValue: (org) => org.name,
+        cell: (org) => (
+          <div className="flex items-center gap-2 font-semibold text-slate-700">
+            <span className="inline-flex size-7 items-center justify-center rounded-md bg-slate-50 text-[#1769aa]">
+              <Building2 className="size-3.5" />
+            </span>
+            {org.name}
+          </div>
+        ),
+      },
+      { id: 'short', header: 'Short Name', sortValue: (org) => org.short, className: 'text-slate-600', cell: (org) => org.short },
+      { id: 'type', header: 'Type', sortValue: (org) => org.type, className: 'text-slate-600', cell: (org) => org.type },
+      { id: 'contact', header: 'Contact Person', sortValue: (org) => org.contact, className: 'text-slate-600', cell: (org) => org.contact },
+      { id: 'email', header: 'Email', sortValue: (org) => org.email, className: 'text-slate-600', cell: (org) => org.email },
+      { id: 'phone', header: 'Phone', sortValue: (org) => org.phone, className: 'text-slate-600', cell: (org) => org.phone },
+      {
+        id: 'status',
+        header: 'Status',
+        sortValue: (org) => org.status,
+        cell: (org) => (
+          <div className="flex items-center gap-2">
+            <StatusToggle
+              checked={org.status === 'Active'}
+              onChange={async (v) => {
+                if (!org.id) {
+                  setError('Organization id missing. Restart the API server and refresh.')
+                  return
+                }
+                setError('')
+                try {
+                  await editOrganization(org.id, { status: v ? 'Active' : 'Inactive' })
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Unable to update status')
+                }
+              }}
+            />
+            <Badge tone={org.status === 'Active' ? 'green' : 'slate'}>{org.status}</Badge>
+          </div>
+        ),
+      },
+      {
+        id: 'actions',
+        header: 'Actions',
+        hideable: false,
+        sortable: false,
+        cell: (org) => (
+          <TableActions>
+            <IconActionButton label="Edit" icon={Pencil} onClick={() => setEditing(org)} />
+            <IconActionButton
+              label="Delete"
+              icon={Trash2}
+              tone="danger"
+              onClick={async () => {
+                if (!org.id) {
+                  setError('Organization id missing. Restart the API server and refresh.')
+                  return
+                }
+                if (!confirm(`Delete organization “${org.name}”?`)) return
+                setError('')
+                try {
+                  await removeOrganization(org.id)
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Unable to delete')
+                }
+              }}
+            />
+          </TableActions>
+        ),
+      },
+    ],
+    [editOrganization, removeOrganization],
+  )
+
   return (
     <>
       {!embedded ? (
@@ -93,86 +172,16 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
           />
         </div>
       </div>
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left">
-            <thead className="bg-slate-50 text-[10px] uppercase text-slate-400">
-              <tr>
-                {['Organization', 'Short Name', 'Type', 'Contact Person', 'Email', 'Phone', 'Status', 'Actions'].map((h) => (
-                  <th className="px-4 py-3" key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((org, index) => (
-                <tr className="border-t border-slate-100 text-xs" key={org.id ?? `${org.name}-${index}`}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2 font-semibold text-slate-700">
-                      <span className="inline-flex size-7 items-center justify-center rounded-md bg-slate-50 text-[#1769aa]">
-                        <Building2 className="size-3.5" />
-                      </span>
-                      {org.name}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{org.short}</td>
-                  <td className="px-4 py-3 text-slate-600">{org.type}</td>
-                  <td className="px-4 py-3 text-slate-600">{org.contact}</td>
-                  <td className="px-4 py-3 text-slate-600">{org.email}</td>
-                  <td className="px-4 py-3 text-slate-600">{org.phone}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <StatusToggle
-                        checked={org.status === 'Active'}
-                        onChange={async (v) => {
-                          if (!org.id) {
-                            setError('Organization id missing. Restart the API server and refresh.')
-                            return
-                          }
-                          setError('')
-                          try {
-                            await editOrganization(org.id, { status: v ? 'Active' : 'Inactive' })
-                          } catch (err) {
-                            setError(err instanceof Error ? err.message : 'Unable to update status')
-                          }
-                        }}
-                      />
-                      <Badge tone={org.status === 'Active' ? 'green' : 'slate'}>{org.status}</Badge>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-0.5">
-                      <IconActionButton label="Edit" icon={Pencil} onClick={() => setEditing(org)} />
-                      <IconActionButton
-                        label="Delete"
-                        icon={Trash2}
-                        tone="danger"
-                        onClick={async () => {
-                          if (!org.id) {
-                            setError('Organization id missing. Restart the API server and refresh.')
-                            return
-                          }
-                          if (!confirm(`Delete organization “${org.name}”?`)) return
-                          setError('')
-                          try {
-                            await removeOrganization(org.id)
-                          } catch (err) {
-                            setError(err instanceof Error ? err.message : 'Unable to delete')
-                          }
-                        }}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-xs text-slate-400">No organizations found.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <DataTable
+        columns={columns}
+        data={filtered}
+        rowKey={(org, index) => String(org.id ?? `${org.name}-${index}`)}
+        storageKey="organizations"
+        minWidth="760px"
+        title="Organizations"
+        description={`${filtered.length} records`}
+        emptyMessage="No organizations found."
+      />
       {adding && (
         <FormDialog
           title="Add organization"

@@ -63,6 +63,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    avatar_key: Mapped[str] = mapped_column(String(512), default="")
 
 
 class WorkflowTransition(Base):

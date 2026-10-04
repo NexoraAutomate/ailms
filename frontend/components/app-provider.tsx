@@ -20,6 +20,7 @@ import {
   updateDepartment,
   updateMasterValue,
   updateOrganization,
+  uploadUserAvatar,
   type AppNotification,
   type AppSettings,
   type AppUser,
@@ -51,7 +52,15 @@ type AppData = BootstrapData & {
   addOrganization: (input: Partial<Organization> & { name: string }) => Promise<void>
   editOrganization: (id: number, input: Partial<Omit<Organization, 'id'>>) => Promise<void>
   removeOrganization: (id: number) => Promise<void>
-  addUser: (input: { name: string; username: string; department?: string; role?: string; email?: string }) => Promise<void>
+  addUser: (input: {
+    name: string
+    username: string
+    password: string
+    department?: string
+    role?: string
+    email?: string
+    avatarFile?: File | null
+  }) => Promise<void>
   addMasterValue: (category: string, value: string) => Promise<void>
   editMasterValue: (id: number, input: { value?: string; status?: string }) => Promise<void>
   removeMasterValue: (id: number) => Promise<void>
@@ -172,7 +181,14 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       addOrganization: (input) => withRefresh(() => createOrganization(input)),
       editOrganization: (id, input) => withRefresh(() => updateOrganization(id, input)),
       removeOrganization: (id) => withRefresh(() => deleteOrganization(id)),
-      addUser: (input) => withRefresh(() => createUser(input)),
+      addUser: (input) =>
+        withRefresh(async () => {
+          const { avatarFile, ...payload } = input
+          const created = await createUser(payload)
+          if (avatarFile && created.id) {
+            await uploadUserAvatar(created.id, avatarFile)
+          }
+        }),
       addMasterValue: (category, value) => withRefresh(() => createMasterValue(category, value)),
       editMasterValue: (id, input) => withRefresh(() => updateMasterValue(id, input)),
       removeMasterValue: (id) => withRefresh(() => deleteMasterValue(id)),

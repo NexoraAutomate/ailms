@@ -353,3 +353,94 @@ def ensure_master_statuses(db: Session) -> None:
     for value in desired:
         if value not in existing:
             db.add(MasterValue(category="Statuses", value=value))
+
+
+_AVATAR_PALETTE = (
+    ((37, 99, 235), (29, 78, 216)),      # blue
+    ((5, 150, 105), (4, 120, 87)),       # emerald
+    ((8, 145, 178), (14, 116, 144)),     # cyan
+    ((79, 70, 229), (67, 56, 202)),      # indigo
+    ((180, 83, 9), (146, 64, 14)),       # amber
+    ((190, 24, 93), (157, 23, 77)),      # rose
+    ((71, 85, 105), (51, 65, 85)),       # slate
+    ((13, 148, 136), (15, 118, 110)),    # teal
+)
+
+
+def _avatar_initials(name: str) -> str:
+    parts = [p for p in name.replace(".", "").split() if p]
+    if not parts:
+        return "U"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return f"{parts[0][0]}{parts[1][0]}".upper()
+
+
+def _render_seed_avatar_png(name: str, username: str) -> bytes:
+    """Generate a simple professional avatar PNG (initials on a soft gradient)."""
+    from io import BytesIO
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    size = 256
+    idx = sum(ord(c) for c in (username or name)) % len(_AVATAR_PALETTE)
+    c1, c2 = _AVATAR_PALETTE[idx]
+
+    img = Image.new("RGB", (size, size), c1)
+    draw = ImageDraw.Draw(img)
+    for y in range(size):
+        t = y / (size - 1)
+        r = int(c1[0] + (c2[0] - c1[0]) * t)
+        g = int(c1[1] + (c2[1] - c1[1]) * t)
+        b = int(c1[2] + (c2[2] - c1[2]) * t)
+        draw.line([(0, y), (size, y)], fill=(r, g, b))
+
+    # Soft vignette ring
+    inset = 10
+    draw.ellipse([inset, inset, size - inset, size - inset], outline=(255, 255, 255, 40), width=3)
+
+    initials = _avatar_initials(name)
+    font = None
+    for candidate in (
+        "C:/Windows/Fonts/segoeuib.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ):
+        try:
+            font = ImageFont.truetype(candidate, 92)
+            break
+        except OSError:
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), initials, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = (size - tw) / 2 - bbox[0]
+    y = (size - th) / 2 - bbox[1] - 4
+    draw.text((x, y), initials, fill=(255, 255, 255), font=font)
+
+    buf = BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def ensure_seed_avatars(db: Session) -> int:
+    """Assign generated profile photos to users that do not have one yet."""
+    from app.storage_service import ensure_storage_dirs, save_avatar_bytes
+
+    ensure_storage_dirs()
+    updated = 0
+    users = db.query(User).order_by(User.id).all()
+    for user in users:
+        if (user.avatar_key or "").strip():
+            continue
+        png = _render_seed_avatar_png(user.name or user.username, user.username)
+        user.avatar_key = save_avatar_bytes(
+            user_id=user.id,
+            content=png,
+            filename=f"{user.username or user.id}-avatar.png",
+        )
+        updated += 1
+    return updated

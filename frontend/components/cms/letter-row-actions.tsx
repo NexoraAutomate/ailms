@@ -142,7 +142,7 @@ export function LetterRowActions({
   if (actions.length === 0) return <span className="text-[11px] text-slate-300">—</span>
 
   return (
-    <div className="flex max-w-[340px] flex-wrap gap-0.5">
+    <div className="flex max-w-[280px] flex-wrap gap-0">
       {actions.map((action) => (
         <IconActionButton
           key={action}

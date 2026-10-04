@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -12,6 +12,7 @@ import {
   Building2,
   Calendar,
   CalendarClock,
+  Camera,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -45,6 +46,7 @@ import {
 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { UserAvatar } from '@/components/ui/user-avatar'
 import { Logo } from '@/components/cms/ui'
 import { useCmsSearch } from '@/components/cms/search-context'
 import { useGo } from '@/hooks/use-go'
@@ -235,7 +237,7 @@ function Sidebar({
 }
 
 function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
-  const { me, unreadCount, settings } = useAppData()
+  const { me, unreadCount, settings, refresh } = useAppData()
   const { query, setQuery } = useCmsSearch()
   const go = useGo()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -245,6 +247,8 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
   const [newPassword, setNewPassword] = useState('')
   const [pwdError, setPwdError] = useState<string | null>(null)
   const [pwdBusy, setPwdBusy] = useState(false)
+  const [avatarBusy, setAvatarBusy] = useState(false)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
   const today = formatHeaderDate()
 
   useEffect(() => {
@@ -281,6 +285,25 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
       setPwdError(err instanceof Error ? err.message : 'Unable to update password')
     } finally {
       setPwdBusy(false)
+    }
+  }
+
+  const handleAvatarPick = async (file: File | null) => {
+    if (!file || !me.id) return
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Profile picture must be 2 MB or smaller')
+      return
+    }
+    setAvatarBusy(true)
+    try {
+      const { uploadUserAvatar } = await import('@/services/management')
+      await uploadUserAvatar(me.id, file)
+      await refresh()
+      setMenuOpen(false)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Unable to update profile picture')
+    } finally {
+      setAvatarBusy(false)
     }
   }
 
@@ -329,7 +352,7 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
       </button>
       <div className="relative border-l border-slate-200 pl-3">
         <button type="button" className="flex items-center gap-2 rounded-md p-1 hover:bg-slate-50" onClick={() => setMenuOpen((v) => !v)}>
-          <span className="flex size-8 items-center justify-center rounded-full bg-[#dce9f7] text-xs font-bold text-[#0d3763]">{me.initials}</span>
+          <UserAvatar name={me.name} avatarUrl={me.avatarUrl} size="sm" />
           <span className="hidden text-left sm:block">
             <span className="block text-xs font-semibold text-slate-700">{me.name}</span>
             <span className="block text-[10px] font-medium text-[#2563eb]">{me.role}</span>
@@ -343,6 +366,25 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
                 <p className="text-xs font-bold text-slate-800">{me.name}</p>
                 <p className="text-[11px] text-slate-400">{me.username || settings.currentUser || me.name}</p>
               </div>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                disabled={avatarBusy || !me.id}
+                onClick={() => avatarInputRef.current?.click()}
+              >
+                <Camera className="size-4" /> {avatarBusy ? 'Uploading…' : me.avatarUrl ? 'Update profile picture' : 'Upload profile picture'}
+              </button>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null
+                  e.target.value = ''
+                  void handleAvatarPick(file)
+                }}
+              />
               <button
                 type="button"
                 className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"

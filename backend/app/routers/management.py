@@ -1,12 +1,12 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.auth_deps import AdminUser
+from app.auth_deps import AdminUser, CurrentUser
 from app.auth_service import hash_password, validate_password_policy
-from app.config import get_settings
 from app.database import get_db
 from app.models import AppSetting, AuditRecord, Department, DepartmentLink, Letter, MasterValue, Notification, Organization, User
 from app.schemas import (
@@ -41,6 +41,7 @@ from app.services import (
     serialize_user,
     setting_map,
 )
+from app.storage_service import MIME_BY_EXT, resolve_storage_path, save_avatar_file
 
 departments_router = APIRouter(prefix="/departments", tags=["departments"])
 department_links_router = APIRouter(prefix="/department-links", tags=["departments"])
@@ -272,7 +273,9 @@ def create_user(payload: UserIn, _admin: AdminUser, db: Session = Depends(get_db
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(status_code=409, detail="Username already exists")
     data = payload.model_dump(exclude={"password"})
-    password = payload.password or get_settings().default_user_password
+    password = payload.password
+    if not password or not password.strip():
+        raise HTTPException(status_code=400, detail="Password is required")
     validate_password_policy(password, db)
     row = User(**data, password_hash=hash_password(password), last_activity=datetime.now())
     db.add(row)
@@ -298,6 +301,62 @@ def update_user(user_id: int, payload: UserUpdateIn, _admin: AdminUser, db: Sess
     db.commit()
     db.refresh(row)
     return serialize_user(row)
+
+
+@users_router.post("/{user_id}/avatar", response_model=UserOut)
+async def upload_user_avatar(
+    user_id: int,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> UserOut:
+    row = db.get(User, user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    is_admin = (user.role or "").lower() == "administrator" or user.username == "admin"
+    if not is_admin and user.id != user_id:
+        raise HTTPException(status_code=403, detail="You can only update your own profile picture")
+    storage_key, _mime = await save_avatar_file(upload=file, user_id=user_id)
+    # Remove previous avatar file if present
+    old_key = row.avatar_key or ""
+    row.avatar_key = storage_key
+    add_audit(
+        db,
+        user=current_user_name(db),
+        module="Users",
+        action="Avatar Updated",
+        record=row.username,
+        description=f"Updated profile picture for {row.username}",
+    )
+    db.commit()
+    db.refresh(row)
+    if old_key and old_key != storage_key:
+        try:
+            old_path = resolve_storage_path(old_key)
+            if old_path.is_file():
+                old_path.unlink()
+        except Exception:
+            pass
+    return serialize_user(row)
+
+
+@users_router.get("/{user_id}/avatar")
+def get_user_avatar(user_id: int, _user: CurrentUser, db: Session = Depends(get_db)) -> FileResponse:
+    row = db.get(User, user_id)
+    if not row or not (row.avatar_key or ""):
+        raise HTTPException(status_code=404, detail="Profile picture not found")
+    path = resolve_storage_path(row.avatar_key)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Profile picture file missing")
+    ext = path.suffix.lower()
+    mime = MIME_BY_EXT.get(ext, "image/jpeg")
+    return FileResponse(
+        path,
+        media_type=mime,
+        filename=path.name,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, max-age=60"},
+    )
 
 
 @users_router.delete("/{user_id}")

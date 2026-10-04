@@ -16,12 +16,22 @@ const HOP_BY_HOP = new Set([
   'upgrade',
 ])
 
-const RETRYABLE = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT'])
+// Only retry transient connection drops — never ETIMEDOUT.
+// Retrying a timed-out AI call doubles wall time (e.g. 120s → 4min) and can
+// enqueue a second Runpod job while the first is still running.
+const RETRYABLE = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE'])
 
 type RouteContext = { params: Promise<{ path: string[] }> }
 
 function apiOrigin(): URL {
   return new URL(process.env.AILMS_API_ORIGIN || 'http://127.0.0.1:8000')
+}
+
+/** Keep in sync with backend LLM_TIMEOUT_SECONDS / RUNPOD_MAX_WAIT_SECONDS (default 15m). */
+function upstreamTimeoutMs(): number {
+  const raw = Number(process.env.AILMS_API_TIMEOUT_MS || process.env.LLM_TIMEOUT_MS || 900_000)
+  if (!Number.isFinite(raw) || raw < 30_000) return 900_000
+  return Math.floor(raw)
 }
 
 function errorCode(error: unknown): string {
@@ -61,7 +71,7 @@ function forwardOnce(request: NextRequest, targetPath: string, body: Buffer): Pr
         path: targetPath,
         headers,
         agent: false,
-        timeout: 120_000,
+        timeout: upstreamTimeoutMs(),
       },
       (response: IncomingMessage) => {
         const chunks: Buffer[] = []

@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
+import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import { FormDialog } from '@/components/cms/management-table'
 import type { Letter } from '@/services/letters'
 import {
@@ -27,31 +28,51 @@ export function MeetingsPage({ go }: { go: (p: string) => void }) {
   const load = () => listMeetings().then(setMeetings).finally(() => setLoading(false))
   useEffect(() => { void load() }, [])
 
+  const columns = useMemo<DataTableColumn<Meeting>[]>(
+    () => [
+      {
+        id: 'title',
+        header: 'Title',
+        sortValue: (m) => m.title,
+        cell: (m) => (
+          <button type="button" className="font-semibold text-[#1769aa]" onClick={() => go(`meeting:${m.id}`)}>
+            {m.title}
+          </button>
+        ),
+      },
+      { id: 'date', header: 'Date', sortValue: (m) => m.date, cell: (m) => m.date },
+      {
+        id: 'time',
+        header: 'Time',
+        sortValue: (m) => m.startTime,
+        cell: (m) => `${m.startTime}–${m.endTime}`,
+      },
+      { id: 'location', header: 'Location', sortValue: (m) => m.location || '', cell: (m) => m.location || '—' },
+      { id: 'status', header: 'Status', sortValue: (m) => m.status, cell: (m) => <Badge tone="blue">{m.status}</Badge> },
+      {
+        id: 'actions',
+        header: 'Actions',
+        sortValue: (m) => m.actions.length,
+        cell: (m) => `${m.actions.length} action(s)`,
+      },
+    ],
+    [go],
+  )
+
   return (
     <>
       <PageTitle title="Meetings" description="Schedule meetings, link correspondence, and track meeting actions." action={<Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" />New meeting</Button>} />
       {loading && <p className="text-sm text-slate-500">Loading meetings…</p>}
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left">
-            <thead className="bg-slate-50 text-[10px] uppercase text-slate-400">
-              <tr>{['Title', 'Date', 'Time', 'Location', 'Status', 'Actions'].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {meetings.map((m) => (
-                <tr key={m.id} className="border-t border-slate-100 text-xs">
-                  <td className="px-4 py-3 font-semibold text-[#1769aa]"><button onClick={() => go(`meeting:${m.id}`)}>{m.title}</button></td>
-                  <td className="px-4 py-3">{m.date}</td>
-                  <td className="px-4 py-3">{m.startTime}–{m.endTime}</td>
-                  <td className="px-4 py-3">{m.location || '—'}</td>
-                  <td className="px-4 py-3"><Badge tone="blue">{m.status}</Badge></td>
-                  <td className="px-4 py-3">{m.actions.length} action(s)</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <DataTable
+        columns={columns}
+        data={meetings}
+        rowKey={(m) => String(m.id)}
+        storageKey="meetings"
+        minWidth="760px"
+        title="Meetings"
+        description={`${meetings.length} scheduled`}
+        emptyMessage="No meetings yet."
+      />
       {open && (
         <FormDialog
           title="Create meeting"

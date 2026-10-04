@@ -74,7 +74,7 @@ def storage_root() -> Path:
 
 def ensure_storage_dirs() -> None:
     root = storage_root()
-    for sub in ("letters", "attachments", "documents", "ai/staging", "ai/jobs"):
+    for sub in ("letters", "attachments", "documents", "ai/staging", "ai/jobs", "avatars"):
         (root / sub).mkdir(parents=True, exist_ok=True)
 
 
@@ -128,6 +128,40 @@ def build_staging_storage_key(*, staged_id: int, original_filename: str) -> str:
     safe = _safe_original_name(original_filename)
     token = uuid.uuid4().hex
     return f"ai/staging/{staged_id}/{token}_{safe}"
+
+
+AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def build_avatar_storage_key(*, user_id: int, original_filename: str) -> str:
+    safe = _safe_original_name(original_filename)
+    token = uuid.uuid4().hex[:12]
+    return f"avatars/{user_id}/{token}_{safe}"
+
+
+def save_avatar_bytes(*, user_id: int, content: bytes, filename: str = "avatar.png") -> str:
+    """Persist raw avatar bytes and return the storage key."""
+    if not content:
+        raise HTTPException(status_code=422, detail="Validation failed: empty file")
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Profile picture must be 2 MB or smaller")
+    storage_key = build_avatar_storage_key(user_id=user_id, original_filename=filename)
+    path = resolve_storage_path(storage_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return storage_key
+
+
+async def save_avatar_file(*, upload: UploadFile, user_id: int) -> tuple[str, str]:
+    """Save a profile picture. Returns (storage_key, mime_type)."""
+    content = await upload.read()
+    size = len(content)
+    original, ext = validate_upload(upload, size, allowed_extensions=AVATAR_EXTENSIONS)
+    if size > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Profile picture must be 2 MB or smaller")
+    storage_key = save_avatar_bytes(user_id=user_id, content=content, filename=original)
+    mime = upload.content_type or MIME_BY_EXT.get(ext, "image/jpeg")
+    return storage_key, mime
 
 
 def resolve_storage_path(storage_key: str) -> Path:

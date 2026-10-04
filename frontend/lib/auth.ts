@@ -11,6 +11,7 @@ export type AuthUser = {
   email: string
   status: string
   initials: string
+  avatarUrl?: string
 }
 
 export function getAccessToken(): string | null {

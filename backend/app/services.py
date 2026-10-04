@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import hashlib
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -41,6 +42,15 @@ PENDING_STATUSES = {
     "Reopened",
     "Overdue",
 }
+
+
+def avatar_public_url(user: User) -> str:
+    """Stable API path for a user's photo; includes cache-bust token when file changes."""
+    key = getattr(user, "avatar_key", "") or ""
+    if not key:
+        return ""
+    version = hashlib.sha1(key.encode("utf-8")).hexdigest()[:10]
+    return f"/api/users/{user.id}/avatar?v={version}"
 
 
 def iso(value: date | None) -> str:
@@ -185,6 +195,7 @@ def serialize_user(user: User) -> UserOut:
         status=user.status,
         activity=activity_label(user.last_activity),
         created=created,
+        avatarUrl=avatar_public_url(user),
     )
 
 

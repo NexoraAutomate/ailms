@@ -215,7 +215,7 @@ class UserIn(BaseModel):
     role: str = "Department/User"
     email: str = ""
     status: str = "Active"
-    password: str | None = None
+    password: str
 
 
 class UserUpdateIn(BaseModel):
@@ -230,6 +230,8 @@ class UserUpdateIn(BaseModel):
 
 
 class UserOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: int
     name: str
     username: str
@@ -239,6 +241,7 @@ class UserOut(BaseModel):
     status: str
     activity: str
     created: str = ""
+    avatarUrl: str = ""
 
 
 class LoginIn(BaseModel):
@@ -262,6 +265,8 @@ class ChangePasswordIn(BaseModel):
 
 
 class AuthUserOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: int
     name: str
     username: str
@@ -270,6 +275,7 @@ class AuthUserOut(BaseModel):
     email: str
     status: str
     initials: str
+    avatarUrl: str = ""
 
 
 class AuthTokenOut(BaseModel):

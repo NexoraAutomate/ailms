@@ -5,7 +5,16 @@ import { Download, Printer } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
 import { Badge, Card, Filters, PageTitle } from '@/components/cms/ui'
-import { priorityTone, statusTone } from '@/services/letters'
+import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
+import { priorityTone, statusTone, type Letter } from '@/services/letters'
+
+function parseSortDate(value: string | undefined) {
+  if (!value || value === '—') return 0
+  const t = Date.parse(value)
+  return Number.isNaN(t) ? 0 : t
+}
+
+const PRIORITY_RANK: Record<string, number> = { Urgent: 3, Important: 2, Routine: 1 }
 
 export function Reports() {
   const { letters } = useAppData()
@@ -31,6 +40,21 @@ export function Reports() {
     URL.revokeObjectURL(url)
   }
 
+  const columns = useMemo<DataTableColumn<Letter>[]>(
+    () => [
+      { id: 'number', header: 'Letter No.', sortValue: (r) => r.number, className: 'font-semibold text-[#1769aa]', cell: (r) => r.number },
+      { id: 'date', header: 'Date', sortValue: (r) => parseSortDate(r.letterDate), cell: (r) => r.letterDate },
+      { id: 'subject', header: 'Subject', sortValue: (r) => r.subject, className: 'max-w-[190px] truncate text-slate-700', cell: (r) => r.subject },
+      { id: 'department', header: 'Department', sortValue: (r) => r.department, cell: (r) => r.department },
+      { id: 'assignedTo', header: 'Assigned To', sortValue: (r) => r.assignedTo, cell: (r) => r.assignedTo },
+      { id: 'status', header: 'Status', sortValue: (r) => r.status, cell: (r) => <Badge tone={statusTone(r.status)}>{r.status}</Badge> },
+      { id: 'priority', header: 'Priority', sortValue: (r) => PRIORITY_RANK[r.priority] ?? 0, cell: (r) => <Badge tone={priorityTone(r.priority)}>{r.priority}</Badge> },
+      { id: 'dueDate', header: 'Due Date', sortValue: (r) => parseSortDate(r.dueDate), cell: (r) => r.dueDate },
+      { id: 'completionDate', header: 'Completion Date', sortValue: (r) => parseSortDate(r.completionDate), cell: (r) => r.completionDate ?? '—' },
+    ],
+    [],
+  )
+
   return (
     <>
       <PageTitle title="Reports" description="Generate operational reports from the correspondence register." />
@@ -45,40 +69,21 @@ export function Reports() {
         </Card>
         <div>
           <Filters />
-          <Card>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
-              <div>
-                <h2 className="text-sm font-bold text-slate-700">{report}</h2>
-                <p className="text-xs text-slate-400">{rows.length} records ready</p>
-              </div>
+          <DataTable
+            columns={columns}
+            data={rows}
+            rowKey={(r) => r.id}
+            storageKey={`report-${report}`}
+            minWidth="900px"
+            title={report}
+            description={`${rows.length} records ready`}
+            toolbar={
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => window.print()}><Printer data-icon="inline-start" />Print</Button>
                 <Button size="sm" variant="outline" onClick={exportCsv}><Download data-icon="inline-start" />Export CSV</Button>
               </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left">
-                <thead className="bg-slate-50 text-[10px] uppercase text-slate-400">
-                  <tr>{['Letter No.', 'Date', 'Subject', 'Department', 'Assigned To', 'Status', 'Priority', 'Due Date', 'Completion Date'].map((h) => <th className="px-3 py-3" key={h}>{h}</th>)}</tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr className="border-t border-slate-100 text-xs" key={r.id}>
-                      <td className="px-3 py-3 font-semibold text-[#1769aa]">{r.number}</td>
-                      <td className="px-3 py-3">{r.letterDate}</td>
-                      <td className="max-w-[190px] truncate px-3 py-3 text-slate-700">{r.subject}</td>
-                      <td className="px-3 py-3">{r.department}</td>
-                      <td className="px-3 py-3">{r.assignedTo}</td>
-                      <td className="px-3 py-3"><Badge tone={statusTone(r.status)}>{r.status}</Badge></td>
-                      <td className="px-3 py-3"><Badge tone={priorityTone(r.priority)}>{r.priority}</Badge></td>
-                      <td className="px-3 py-3">{r.dueDate}</td>
-                      <td className="px-3 py-3">{r.completionDate ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+            }
+          />
         </div>
       </div>
     </>

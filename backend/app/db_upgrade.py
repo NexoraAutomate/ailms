@@ -212,6 +212,8 @@ def upgrade_user_auth_schema(engine: Engine) -> None:
             statements.append("ALTER TABLE cms_users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0")
         if "locked_until" not in columns:
             statements.append("ALTER TABLE cms_users ADD COLUMN locked_until TIMESTAMP NULL")
+        if "avatar_key" not in columns:
+            statements.append("ALTER TABLE cms_users ADD COLUMN avatar_key VARCHAR(512) DEFAULT ''")
         if statements:
             with engine.begin() as conn:
                 for stmt in statements:

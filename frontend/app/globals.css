@@ -235,4 +235,50 @@
   .dark .text-slate-900 {
     color: var(--foreground);
   }
+
+  /* Monitoring: fade card panels into the page toward the stepper */
+  .fade-merge-down,
+  .fade-merge-up,
+  .dark .fade-merge-down.bg-white,
+  .dark .fade-merge-up.bg-white {
+    background-color: transparent;
+  }
+
+  .fade-merge-down {
+    background-image: linear-gradient(
+      to bottom,
+      #ffffff 0%,
+      #ffffff 42%,
+      rgb(245 248 251 / 0%) 100%
+    );
+  }
+
+  .fade-merge-up {
+    background-image: linear-gradient(
+      to top,
+      #ffffff 0%,
+      #ffffff 42%,
+      rgb(245 248 251 / 0%) 100%
+    );
+  }
+
+  .dark .fade-merge-down,
+  .dark .fade-merge-down.bg-white {
+    background-image: linear-gradient(
+      to bottom,
+      var(--card) 0%,
+      var(--card) 42%,
+      transparent 100%
+    );
+  }
+
+  .dark .fade-merge-up,
+  .dark .fade-merge-up.bg-white {
+    background-image: linear-gradient(
+      to top,
+      var(--card) 0%,
+      var(--card) 42%,
+      transparent 100%
+    );
+  }
 }

@@ -54,6 +54,7 @@ from app.seed import (
     ensure_master_statuses,
     ensure_phase4b_samples,
     ensure_phase4d_samples,
+    ensure_seed_avatars,
     seed_if_empty,
 )
 from app.database import SessionLocal
@@ -126,6 +127,7 @@ def on_startup() -> None:
         ensure_department_org_layout(db)
         ensure_administration_seed(db)
         ensure_auth_bootstrap(db)
+        ensure_seed_avatars(db)
         ensure_master_statuses(db)
         ensure_master_document_types(db)
         ensure_phase4b_samples(db)

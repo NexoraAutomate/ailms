@@ -2,7 +2,7 @@
 
 import { BarChart3 } from 'lucide-react'
 import { metricValue, useAppData } from '@/components/app-provider'
-import { Badge, Card, Filters, Kpi, PageTitle } from '@/components/cms/ui'
+import { Badge, Card, Filters, Kpi, MiniDashboard, PageTitle } from '@/components/cms/ui'
 
 export function Analytics() {
   const { metrics, trend, statusDistribution, departmentPerformance, priorityPerformance } = useAppData()
@@ -11,9 +11,14 @@ export function Analytics() {
     <>
       <PageTitle title="Analytics" description="Interactive management analytics across the correspondence register." />
       <Filters />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <MiniDashboard
+        title="Analytics overview"
+        description="Key performance indicators"
+        className="mb-0"
+        gridClassName="grid grid-cols-2 gap-3 md:grid-cols-4"
+      >
         {labels.map((x) => <Kpi key={x} label={x} value={metricValue(metrics, x)} icon={<BarChart3 className="size-4" />} />)}
-      </div>
+      </MiniDashboard>
       <div className="mt-5 grid gap-5 lg:grid-cols-2">
         <Card className="p-5">
           <h2 className="text-sm font-bold text-slate-700">Correspondence trend</h2>

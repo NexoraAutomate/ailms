@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, PageTitle } from '@/components/cms/ui'
+import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import {
   confirmLetterImport,
   downloadExport,
@@ -11,10 +12,21 @@ import {
   type ImportJobResult,
 } from '@/services/data-operations'
 
+type ImportErrorRow = ImportJobResult['errors'][number]
+
 export function ImportCenterPage({ refresh }: { refresh: () => Promise<void> }) {
   const [job, setJob] = useState<ImportJobResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+
+  const errorColumns = useMemo<DataTableColumn<ImportErrorRow>[]>(
+    () => [
+      { id: 'row', header: 'Row', sortValue: (e) => e.rowNumber, cell: (e) => e.rowNumber },
+      { id: 'field', header: 'Field', sortValue: (e) => e.field, cell: (e) => e.field },
+      { id: 'message', header: 'Message', sortValue: (e) => e.message, cell: (e) => e.message },
+    ],
+    [],
+  )
 
   const onFile = async (file: File | null) => {
     if (!file) return
@@ -57,12 +69,16 @@ export function ImportCenterPage({ refresh }: { refresh: () => Promise<void> }) 
           <div className="mt-5 space-y-3 text-xs">
             <p><strong>{job.filename}</strong> · {job.status} · {job.validRows} valid / {job.totalRows} total · {job.errorRows} errors</p>
             {job.errors.length > 0 && (
-              <div className="max-h-48 overflow-auto rounded-md border border-slate-200">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50"><tr><th className="px-3 py-2">Row</th><th className="px-3 py-2">Field</th><th className="px-3 py-2">Message</th></tr></thead>
-                  <tbody>{job.errors.slice(0, 50).map((e, i) => <tr key={i} className="border-t border-slate-100"><td className="px-3 py-2">{e.rowNumber}</td><td className="px-3 py-2">{e.field}</td><td className="px-3 py-2">{e.message}</td></tr>)}</tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={errorColumns}
+                data={job.errors}
+                rowKey={(e, i) => `${e.rowNumber}-${e.field}-${i}`}
+                storageKey="import-errors"
+                minWidth="420px"
+                maxHeight="12rem"
+                title="Validation errors"
+                description={`${job.errors.length} issues`}
+              />
             )}
             {job.status === 'ready' && (
               <Button onClick={confirm} disabled={busy}>Confirm import ({job.validRows} rows)</Button>

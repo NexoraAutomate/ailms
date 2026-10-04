@@ -29,14 +29,14 @@ export function IconActionButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'inline-flex size-8 items-center justify-center rounded-md bg-transparent transition-colors disabled:pointer-events-none disabled:opacity-40',
+        'inline-flex size-6 items-center justify-center rounded-md bg-transparent transition-colors disabled:pointer-events-none disabled:opacity-40',
         tone === 'danger'
           ? 'text-slate-400 hover:bg-red-50 hover:text-red-600'
           : 'text-slate-400 hover:bg-slate-100 hover:text-[#1769aa]',
         className,
       )}
     >
-      <Icon className="size-3.5" />
+      <Icon className="size-3" />
     </button>
   )
 }
