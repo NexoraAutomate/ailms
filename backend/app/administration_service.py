@@ -15,6 +15,11 @@ CMS_RESOURCES: list[dict[str, Any]] = [
     {"key": "workflow", "label": "Workflow", "other": ["Execute transitions", "Approve / reject"]},
     {"key": "documents", "label": "Documents", "other": ["Upload versions"]},
     {"key": "meetings", "label": "Meetings", "other": ["Link correspondence"]},
+    {
+        "key": "ai_intelligence",
+        "label": "AI Intelligence",
+        "other": ["Regenerate analysis"],
+    },
     {"key": "reports", "label": "Reports", "other": ["Export CSV"]},
     {"key": "departments", "label": "Departments", "other": []},
     {"key": "organizations", "label": "Organizations", "other": []},
@@ -135,6 +140,53 @@ def _set_json_setting(db: Session, key: str, payload: dict) -> None:
         db.add(AppSetting(key=key, value=encoded))
 
 
+def _merge_resource_permissions(matrix: dict[str, Any], role_name: str) -> dict[str, Any]:
+    """Ensure every CMS resource key exists on an existing role matrix."""
+    updated = dict(matrix or {})
+    for resource in CMS_RESOURCES:
+        key = resource["key"]
+        other_opts = list(resource.get("other") or [])
+        if key not in updated:
+            if role_name in {"Administrator", "Manager"}:
+                updated[key] = {
+                    "view": True,
+                    "create": True,
+                    "edit": True,
+                    "delete": role_name == "Administrator" or key != "settings",
+                    "other": {opt: True for opt in other_opts},
+                }
+            elif role_name == "Clerk" and key == "ai_intelligence":
+                updated[key] = {
+                    "view": True,
+                    "create": False,
+                    "edit": True,
+                    "delete": False,
+                    "other": {opt: True for opt in other_opts},
+                }
+            else:
+                updated[key] = {
+                    "view": True,
+                    "create": False,
+                    "edit": False,
+                    "delete": False,
+                    "other": {opt: False for opt in other_opts},
+                }
+            continue
+        entry = dict(updated[key] or {})
+        other = dict(entry.get("other") or {})
+        for opt in other_opts:
+            if opt not in other:
+                if role_name in {"Administrator", "Manager"}:
+                    other[opt] = True
+                elif role_name == "Clerk" and key == "ai_intelligence" and opt == "Regenerate analysis":
+                    other[opt] = True
+                else:
+                    other[opt] = bool(entry.get("edit"))
+        entry["other"] = other
+        updated[key] = entry
+    return updated
+
+
 def ensure_administration_seed(db: Session) -> None:
     if not db.query(Role).first():
         admin_matrix = _full_permissions()
@@ -148,11 +200,22 @@ def ensure_administration_seed(db: Session) -> None:
                         matrix[key] = {**matrix[key], "delete": False}
             if spec["name"] == "Clerk":
                 matrix = _viewer_permissions()
-                for key in ("letters", "workflow", "documents", "meetings", "notifications"):
+                for key in ("letters", "workflow", "documents", "meetings", "notifications", "ai_intelligence"):
                     if key in matrix:
-                        matrix[key]["create"] = True
+                        matrix[key]["create"] = key != "ai_intelligence"
                         matrix[key]["edit"] = True
+                        if key == "ai_intelligence":
+                            matrix[key]["other"] = {"Regenerate analysis": True}
             db.add(Role(name=spec["name"], description=spec["description"], permissions_json=json.dumps(matrix)))
+    else:
+        for row in db.query(Role).all():
+            try:
+                matrix = json.loads(row.permissions_json or "{}")
+            except json.JSONDecodeError:
+                matrix = {}
+            merged = _merge_resource_permissions(matrix, row.name)
+            if merged != matrix:
+                row.permissions_json = json.dumps(merged)
 
     if not db.query(StatusDefinition).first():
         for idx, item in enumerate(DEFAULT_STATUS_BADGES):

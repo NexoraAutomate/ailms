@@ -106,6 +106,35 @@ export type AiAuditEntry = {
   decision: AiDecision
 }
 
+export type AiAnalysisKind =
+  | 'summarize'
+  | 'extract'
+  | 'classify'
+  | 'recommend_actions'
+  | 'urgency'
+  | 'draft_response'
+  | 'analyze_correspondence'
+
+export type StoredAiAnalysis = {
+  kind: AiAnalysisKind
+  payload: unknown
+  decisions: Record<string, AiDecision>
+  meta: Record<string, unknown>
+  generatedBy?: string
+  generatedAt?: string | null
+  updatedAt?: string | null
+}
+
+export type LetterAiAnalysisBundle = {
+  letterId: number
+  canRegenerate: boolean
+  analyses: Partial<Record<AiAnalysisKind, StoredAiAnalysis | null>>
+}
+
+export type AiGenerateOptions = {
+  force?: boolean
+}
+
 export const AI_ENDPOINTS = {
   summarize: '/api/ai/summarize',
   extract: '/api/ai/extract',
@@ -118,7 +147,62 @@ export const AI_ENDPOINTS = {
   insights: '/api/ai/management-insights',
   chat: '/api/ai/chat',
   status: '/api/ai/status',
+  letterAnalysis: (letterId: string | number) => `/api/ai/letters/${letterId}/analysis`,
+  letterAnalysisKind: (letterId: string | number, kind: AiAnalysisKind) =>
+    `/api/ai/letters/${letterId}/analysis/${kind}`,
+  letterAnalysisDecisions: (letterId: string | number, kind: AiAnalysisKind) =>
+    `/api/ai/letters/${letterId}/analysis/${kind}/decisions`,
 } as const
+
+export async function fetchLetterAiAnalysis(letterId: string | number): Promise<LetterAiAnalysisBundle> {
+  return api.get<LetterAiAnalysisBundle>(AI_ENDPOINTS.letterAnalysis(letterId))
+}
+
+export async function persistLetterAiAnalysis(
+  letterId: string | number,
+  kind: AiAnalysisKind,
+  payload: unknown,
+  options?: { decisions?: Record<string, AiDecision>; meta?: Record<string, unknown> },
+): Promise<StoredAiAnalysis> {
+  return api.put<StoredAiAnalysis>(AI_ENDPOINTS.letterAnalysisKind(letterId, kind), {
+    payload,
+    decisions: options?.decisions,
+    meta: options?.meta,
+  })
+}
+
+export async function saveLetterAiDecisions(
+  letterId: string | number,
+  kind: AiAnalysisKind,
+  decisions: Record<string, AiDecision>,
+): Promise<StoredAiAnalysis> {
+  return api.patch<StoredAiAnalysis>(AI_ENDPOINTS.letterAnalysisDecisions(letterId, kind), { decisions })
+}
+
+async function loadStoredPayload<T>(letterId: string | number, kind: AiAnalysisKind): Promise<T | null> {
+  try {
+    const bundle = await fetchLetterAiAnalysis(letterId)
+    const existing = bundle.analyses[kind]
+    if (existing?.payload != null) return existing.payload as T
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+async function storeMockPayload<T>(
+  letterId: string | number,
+  kind: AiAnalysisKind,
+  payload: T,
+  meta?: Record<string, unknown>,
+): Promise<T> {
+  try {
+    await persistLetterAiAnalysis(letterId, kind, payload, { meta: { ...(meta || {}), source: 'mock' } })
+  } catch {
+    /* ignore persistence failures on mock path */
+  }
+  return payload
+}
 
 export type AiBackendStatus = { enabled: boolean; provider: string; model: string; baseUrl?: string }
 
@@ -169,10 +253,18 @@ function topic(letter: Letter) {
   return 'general'
 }
 
-export async function summarizeLetter(letter: Letter, variant = 0): Promise<AiSummary> {
+export async function summarizeLetter(letter: Letter, variant = 0, options: AiGenerateOptions = {}): Promise<AiSummary> {
+  const force = Boolean(options.force)
   return withLlm(
-    () => api.post<AiSummary>(AI_ENDPOINTS.summarize, { letterId: Number(letter.id), variant }),
-    () => summarizeLetterMock(letter, variant),
+    () => api.post<AiSummary>(AI_ENDPOINTS.summarize, { letterId: Number(letter.id), variant, force }),
+    async () => {
+      if (!force) {
+        const stored = await loadStoredPayload<AiSummary>(letter.id, 'summarize')
+        if (stored) return stored
+      }
+      const mock = await summarizeLetterMock(letter, variant)
+      return storeMockPayload(letter.id, 'summarize', mock, { variant })
+    },
   )
 }
 
@@ -207,13 +299,21 @@ async function summarizeLetterMock(letter: Letter, variant = 0): Promise<AiSumma
   }
 }
 
-export async function extractLetterInformation(letter: Letter): Promise<ExtractedField[]> {
+export async function extractLetterInformation(letter: Letter, options: AiGenerateOptions = {}): Promise<ExtractedField[]> {
+  const force = Boolean(options.force)
   return withLlm(
     async () => {
-      const body = await api.post<{ fields: ExtractedField[] }>(AI_ENDPOINTS.extract, { letterId: Number(letter.id) })
+      const body = await api.post<{ fields: ExtractedField[] }>(AI_ENDPOINTS.extract, { letterId: Number(letter.id), force })
       return body.fields
     },
-    () => extractLetterInformationMock(letter),
+    async () => {
+      if (!force) {
+        const stored = await loadStoredPayload<ExtractedField[]>(letter.id, 'extract')
+        if (stored) return stored
+      }
+      const mock = await extractLetterInformationMock(letter)
+      return storeMockPayload(letter.id, 'extract', mock)
+    },
   )
 }
 
@@ -240,13 +340,24 @@ async function extractLetterInformationMock(letter: Letter): Promise<ExtractedFi
   ]
 }
 
-export async function classifyLetter(letter: Letter): Promise<ClassificationSuggestion[]> {
+export async function classifyLetter(letter: Letter, options: AiGenerateOptions = {}): Promise<ClassificationSuggestion[]> {
+  const force = Boolean(options.force)
   return withLlm(
     async () => {
-      const body = await api.post<{ suggestions: ClassificationSuggestion[] }>(AI_ENDPOINTS.classify, { letterId: Number(letter.id) })
+      const body = await api.post<{ suggestions: ClassificationSuggestion[] }>(AI_ENDPOINTS.classify, {
+        letterId: Number(letter.id),
+        force,
+      })
       return body.suggestions
     },
-    () => classifyLetterMock(letter),
+    async () => {
+      if (!force) {
+        const stored = await loadStoredPayload<ClassificationSuggestion[]>(letter.id, 'classify')
+        if (stored) return stored
+      }
+      const mock = await classifyLetterMock(letter)
+      return storeMockPayload(letter.id, 'classify', mock)
+    },
   )
 }
 
@@ -271,13 +382,24 @@ async function classifyLetterMock(letter: Letter): Promise<ClassificationSuggest
   ]
 }
 
-export async function recommendActions(letter: Letter): Promise<ActionRecommendation[]> {
+export async function recommendActions(letter: Letter, options: AiGenerateOptions = {}): Promise<ActionRecommendation[]> {
+  const force = Boolean(options.force)
   return withLlm(
     async () => {
-      const body = await api.post<{ actions: ActionRecommendation[] }>(AI_ENDPOINTS.recommendActions, { letterId: Number(letter.id) })
+      const body = await api.post<{ actions: ActionRecommendation[] }>(AI_ENDPOINTS.recommendActions, {
+        letterId: Number(letter.id),
+        force,
+      })
       return body.actions
     },
-    () => recommendActionsMock(letter),
+    async () => {
+      if (!force) {
+        const stored = await loadStoredPayload<ActionRecommendation[]>(letter.id, 'recommend_actions')
+        if (stored) return stored
+      }
+      const mock = await recommendActionsMock(letter)
+      return storeMockPayload(letter.id, 'recommend_actions', mock)
+    },
   )
 }
 
@@ -293,10 +415,18 @@ async function recommendActionsMock(letter: Letter): Promise<ActionRecommendatio
   ]
 }
 
-export async function assessUrgency(letter: Letter): Promise<UrgencyAssessment> {
+export async function assessUrgency(letter: Letter, options: AiGenerateOptions = {}): Promise<UrgencyAssessment> {
+  const force = Boolean(options.force)
   return withLlm(
-    () => api.post<UrgencyAssessment>(AI_ENDPOINTS.urgency, { letterId: Number(letter.id) }),
-    () => assessUrgencyMock(letter),
+    () => api.post<UrgencyAssessment>(AI_ENDPOINTS.urgency, { letterId: Number(letter.id), force }),
+    async () => {
+      if (!force) {
+        const stored = await loadStoredPayload<UrgencyAssessment>(letter.id, 'urgency')
+        if (stored) return stored
+      }
+      const mock = await assessUrgencyMock(letter)
+      return storeMockPayload(letter.id, 'urgency', mock)
+    },
   )
 }
 
@@ -320,10 +450,22 @@ async function assessUrgencyMock(letter: Letter): Promise<UrgencyAssessment> {
   }
 }
 
-export async function generateDraftResponse(letter: Letter, style: 'default' | 'shorten' | 'expand' | 'formal' | 'concise' = 'default'): Promise<DraftResponse> {
+export async function generateDraftResponse(
+  letter: Letter,
+  style: 'default' | 'shorten' | 'expand' | 'formal' | 'concise' = 'default',
+  options: AiGenerateOptions = {},
+): Promise<DraftResponse> {
+  const force = Boolean(options.force) || style !== 'default'
   return withLlm(
-    () => api.post<DraftResponse>(AI_ENDPOINTS.draftResponse, { letterId: Number(letter.id), style }),
-    () => generateDraftResponseMock(letter, style),
+    () => api.post<DraftResponse>(AI_ENDPOINTS.draftResponse, { letterId: Number(letter.id), style, force }),
+    async () => {
+      if (!force) {
+        const stored = await loadStoredPayload<DraftResponse>(letter.id, 'draft_response')
+        if (stored) return stored
+      }
+      const mock = await generateDraftResponseMock(letter, style)
+      return storeMockPayload(letter.id, 'draft_response', mock, { style })
+    },
   )
 }
 
@@ -548,10 +690,22 @@ async function naturalLanguageSearchMock(
   return { query, filters, letters: rows, summary }
 }
 
-export async function analyzeCorrespondence(letter: Letter, letters: Letter[]): Promise<CorrespondenceAnalysis> {
+export async function analyzeCorrespondence(
+  letter: Letter,
+  letters: Letter[],
+  options: AiGenerateOptions = {},
+): Promise<CorrespondenceAnalysis> {
+  const force = Boolean(options.force)
   return withLlm(
-    () => api.post<CorrespondenceAnalysis>(AI_ENDPOINTS.analyze, { letterId: Number(letter.id) }),
-    () => analyzeCorrespondenceMock(letter, letters),
+    () => api.post<CorrespondenceAnalysis>(AI_ENDPOINTS.analyze, { letterId: Number(letter.id), force }),
+    async () => {
+      if (!force) {
+        const stored = await loadStoredPayload<CorrespondenceAnalysis>(letter.id, 'analyze_correspondence')
+        if (stored) return stored
+      }
+      const mock = await analyzeCorrespondenceMock(letter, letters)
+      return storeMockPayload(letter.id, 'analyze_correspondence', mock)
+    },
   )
 }
 

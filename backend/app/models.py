@@ -126,6 +126,23 @@ class LetterAction(Base):
     letter: Mapped[Letter] = relationship(back_populates="actions")
 
 
+class LetterAiAnalysis(Base):
+    """Persisted AI Intelligence Panel results for a letter (one row per analysis kind)."""
+
+    __tablename__ = "cms_letter_ai_analyses"
+    __table_args__ = (UniqueConstraint("letter_id", "kind", name="uq_letter_ai_kind"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    decisions_json: Mapped[str] = mapped_column(Text, default="{}")
+    meta_json: Mapped[str] = mapped_column(Text, default="{}")
+    generated_by: Mapped[str] = mapped_column(String(120), default="")
+    generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class Approval(Base):
     __tablename__ = "cms_approvals"
 
