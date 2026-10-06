@@ -8,6 +8,8 @@ from app.models import (
     AuditRecord,
     Department,
     DepartmentLink,
+    Document,
+    DocumentVersion,
     Escalation,
     Letter,
     LetterMeetingLink,
@@ -315,6 +317,377 @@ def ensure_phase4d_samples(db: Session) -> None:
                     relationship_type="Related",
                     created_by="A. Rahman",
                     remarks="Linked during coordination review",
+                )
+            )
+
+
+def _seed_dummy_attachment(
+    db: Session,
+    *,
+    letter_id: int,
+    filename: str,
+    document_type: str = "Supporting Document",
+    uploaded_by: str = "S. Khan",
+) -> None:
+    """Create a document metadata row (no real binary) so analysis can cite attachments."""
+    existing = (
+        db.query(DocumentVersion)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .filter(Document.letter_id == letter_id, DocumentVersion.original_filename == filename)
+        .first()
+    )
+    if existing:
+        return
+    doc = Document(letter_id=letter_id, document_type=document_type, status="Active")
+    db.add(doc)
+    db.flush()
+    db.add(
+        DocumentVersion(
+            document_id=doc.id,
+            version_number="1.0",
+            filename=filename,
+            original_filename=filename,
+            file_type=filename.rsplit(".", 1)[-1].lower() if "." in filename else "pdf",
+            mime_type="application/pdf",
+            file_size=128_000,
+            storage_key=f"seed/{letter_id}/{filename}",
+            uploaded_by=uploaded_by,
+            change_description="Seed dummy attachment",
+            status="Current",
+            checksum="",
+            is_current=True,
+        )
+    )
+
+
+def ensure_procurement_thread_samples(db: Session) -> None:
+    """
+    Long dummy correspondence thread: vendor quotation → SUPARCO questions →
+    competing vendor replies → internal evaluation → award recommendation.
+    Idempotent via marker letter number VND/AQ/2026/001.
+    """
+    marker = "VND/AQ/2026/001"
+    if db.query(Letter).filter(Letter.number == marker).first():
+        return
+
+    # Ensure vendor orgs exist for UI filters
+    for name, short, org_type in (
+        ("AeroLink Systems Pvt Ltd", "ALS", "Commercial"),
+        ("OrbitTech Solutions", "OTS", "Commercial"),
+        ("SkyWave Engineering", "SWE", "Commercial"),
+    ):
+        if not db.query(Organization).filter(Organization.name == name).first():
+            db.add(
+                Organization(
+                    name=name,
+                    short_name=short,
+                    type=org_type,
+                    contact="Sales Desk",
+                    email=f"sales@{short.lower()}.example",
+                    phone="+92 21 0000",
+                    status="Active",
+                )
+            )
+
+    thread_specs = [
+        dict(
+            number=marker,
+            letter_date=date(2026, 7, 2),
+            received_date=date(2026, 7, 3),
+            type="Incoming",
+            subject="Quotation for S-band ground station RF front-end kit",
+            sender="AeroLink Systems Pvt Ltd",
+            recipient="SUPARCO Procurement",
+            department="Technical",
+            priority="Important",
+            status="Action in Progress",
+            due_date=date(2026, 7, 20),
+            assigned_to="S. Khan",
+            created_by="A. Rahman",
+            assigned_by="A. Rahman",
+            last_action="Registered quotation",
+            body_text=(
+                "Dear Sir,\n\n"
+                "AeroLink Systems is pleased to submit Quotation AQ-7842 for supply of one S-band RF front-end kit "
+                "compatible with SUPARCO ground-station racks. Unit price PKR 18,450,000 (ex-GST), delivery 12 weeks "
+                "EXW Karachi, validity 60 days. Warranty 24 months. Please find attached technical datasheet and "
+                "commercial offer.\n\nRegards,\nSales Manager, AeroLink Systems"
+            ),
+            attachment="AeroLink_AQ-7842_Quotation.pdf",
+        ),
+        dict(
+            number="SUP/TEC/OUT/2026/221",
+            letter_date=date(2026, 7, 8),
+            received_date=date(2026, 7, 8),
+            type="Outgoing",
+            subject="Clarifications on AeroLink quotation AQ-7842 (S-band RF kit)",
+            sender="SUPARCO Technical Directorate",
+            recipient="AeroLink Systems Pvt Ltd",
+            department="Technical",
+            priority="Important",
+            status="Awaiting Response",
+            due_date=date(2026, 7, 18),
+            assigned_to="S. Khan",
+            created_by="S. Khan",
+            assigned_by="S. Khan",
+            last_action="Clarification questions sent",
+            body_text=(
+                "Reference your quotation AQ-7842 dated 02 Jul 2026.\n\n"
+                "Please clarify: (1) noise figure at 2.2 GHz under −10°C ambient; (2) whether LNA bias supply is included; "
+                "(3) MTBF figures per MIL-HDBK-217; (4) spare kit pricing for 2 years. Reply within ten working days.\n\n"
+                "S. Khan\nTechnical Directorate, SUPARCO"
+            ),
+            attachment="SUPARCO_Clarification_AQ-7842.pdf",
+        ),
+        dict(
+            number="VND/AQ/2026/014",
+            letter_date=date(2026, 7, 15),
+            received_date=date(2026, 7, 16),
+            type="Incoming",
+            subject="Reply to SUPARCO clarifications on quotation AQ-7842",
+            sender="AeroLink Systems Pvt Ltd",
+            recipient="SUPARCO Technical Directorate",
+            department="Technical",
+            priority="Important",
+            status="Under Review",
+            due_date=date(2026, 7, 25),
+            assigned_to="S. Khan",
+            created_by="A. Rahman",
+            assigned_by="A. Rahman",
+            last_action="Vendor clarification received",
+            body_text=(
+                "Dear Sir,\n\n"
+                "Please find answers to your four points: (1) NF ≤ 0.85 dB at −10°C; (2) bias supply included in kit; "
+                "(3) MTBF 85,000 hrs predicted; (4) 2-year spares package PKR 2,100,000. Revised datasheet attached. "
+                "We remain available for a technical meeting.\n\nAeroLink Systems"
+            ),
+            attachment="AeroLink_Clarification_Reply_AQ-7842.pdf",
+        ),
+        dict(
+            number="VND/OT/2026/088",
+            letter_date=date(2026, 7, 18),
+            received_date=date(2026, 7, 19),
+            type="Incoming",
+            subject="Competitive quotation for S-band ground station RF front-end",
+            sender="OrbitTech Solutions",
+            recipient="SUPARCO Procurement",
+            department="Technical",
+            priority="Important",
+            status="Under Review",
+            due_date=date(2026, 8, 1),
+            assigned_to="S. Khan",
+            created_by="A. Rahman",
+            assigned_by="A. Rahman",
+            last_action="Competing quotation registered",
+            body_text=(
+                "OrbitTech Solutions submits Quotation OT-331 for an equivalent S-band RF front-end. "
+                "Unit price PKR 17,900,000 (ex-GST), delivery 14 weeks FOB Karachi, validity 45 days, warranty 18 months. "
+                "Technical brochure and compliance matrix attached. We request inclusion in the evaluation."
+            ),
+            attachment="OrbitTech_OT-331_Quotation.pdf",
+        ),
+        dict(
+            number="SUP/TEC/OUT/2026/238",
+            letter_date=date(2026, 7, 22),
+            received_date=date(2026, 7, 22),
+            type="Outgoing",
+            subject="Technical questionnaire for OrbitTech quotation OT-331",
+            sender="SUPARCO Technical Directorate",
+            recipient="OrbitTech Solutions",
+            department="Technical",
+            priority="Important",
+            status="Awaiting Response",
+            due_date=date(2026, 8, 1),
+            assigned_to="S. Khan",
+            created_by="S. Khan",
+            assigned_by="S. Khan",
+            last_action="Questionnaire dispatched",
+            body_text=(
+                "Reference OT-331. Please confirm rack depth compatibility with SUPARCO GS-R2 cabinets, "
+                "availability of local field support in Karachi, and whether FIR software updates are included for 3 years."
+            ),
+            attachment="SUPARCO_Questionnaire_OT-331.pdf",
+        ),
+        dict(
+            number="VND/OT/2026/095",
+            letter_date=date(2026, 7, 29),
+            received_date=date(2026, 7, 30),
+            type="Incoming",
+            subject="OrbitTech response to SUPARCO questionnaire OT-331",
+            sender="OrbitTech Solutions",
+            recipient="SUPARCO Technical Directorate",
+            department="Technical",
+            priority="Important",
+            status="Under Review",
+            due_date=date(2026, 8, 10),
+            assigned_to="S. Khan",
+            created_by="A. Rahman",
+            assigned_by="A. Rahman",
+            last_action="Vendor questionnaire reply",
+            body_text=(
+                "OrbitTech confirms: (1) GS-R2 rack depth compatible with supplied rails; (2) Karachi field engineer on call "
+                "within 48 hours; (3) FIR updates included for 3 years under warranty extension Option-B (+PKR 450,000)."
+            ),
+            attachment="OrbitTech_Questionnaire_Reply.pdf",
+        ),
+        dict(
+            number="VND/SW/2026/041",
+            letter_date=date(2026, 8, 2),
+            received_date=date(2026, 8, 3),
+            type="Incoming",
+            subject="Late quotation / expression of interest — S-band RF front-end",
+            sender="SkyWave Engineering",
+            recipient="SUPARCO Procurement",
+            department="Technical",
+            priority="Routine",
+            status="Under Review",
+            due_date=date(2026, 8, 15),
+            assigned_to="S. Khan",
+            created_by="A. Rahman",
+            assigned_by="A. Rahman",
+            last_action="Late EOI logged",
+            body_text=(
+                "SkyWave Engineering submits a late EOI with indicative price PKR 19,200,000 and 10-week delivery. "
+                "We request consideration if the tender window remains open; brochure attached."
+            ),
+            attachment="SkyWave_EOI_Sband.pdf",
+        ),
+        dict(
+            number="SUP/TEC/INT/2026/052",
+            letter_date=date(2026, 8, 8),
+            received_date=date(2026, 8, 8),
+            type="Internal Memo",
+            subject="Comparative evaluation — S-band RF front-end quotations",
+            sender="Technical Evaluation Committee",
+            recipient="Director Technical",
+            department="Technical",
+            priority="Urgent",
+            status="Action in Progress",
+            due_date=date(2026, 8, 15),
+            assigned_to="R. Malik",
+            created_by="S. Khan",
+            assigned_by="S. Khan",
+            last_action="Evaluation memo circulated",
+            body_text=(
+                "TEC compared AeroLink AQ-7842, OrbitTech OT-331, and late SkyWave EOI. "
+                "Technically both AeroLink and OrbitTech meet mandatory specs. OrbitTech is lower cost but shorter warranty; "
+                "AeroLink offers better NF and 24-month warranty. SkyWave late EOI recommended for record only. "
+                "Finance concurrence requested before award recommendation."
+            ),
+            attachment="TEC_Comparative_Matrix_Sband.xlsx.pdf",
+        ),
+        dict(
+            number="SUP/FIN/OUT/2026/119",
+            letter_date=date(2026, 8, 12),
+            received_date=date(2026, 8, 12),
+            type="Internal Memo",
+            subject="Finance concurrence on S-band RF kit procurement",
+            sender="Finance Directorate",
+            recipient="Director Technical",
+            department="Finance",
+            priority="Important",
+            status="Completed",
+            due_date=date(2026, 8, 14),
+            assigned_to="N. Ahmed",
+            created_by="N. Ahmed",
+            assigned_by="N. Ahmed",
+            last_action="Concurrence issued",
+            completion_date=date(2026, 8, 12),
+            body_text=(
+                "Finance concurs with TEC evaluation. Budget head GS-CAP-2026 can absorb either AeroLink or OrbitTech quote. "
+                "Recommend award to technically preferred offer if difference ≤ 5% after warranty normalization."
+            ),
+            attachment="Finance_Concurrence_Sband.pdf",
+        ),
+        dict(
+            number="SUP/PRC/OUT/2026/067",
+            letter_date=date(2026, 8, 18),
+            received_date=date(2026, 8, 18),
+            type="Outgoing",
+            subject="Award recommendation / LOI — S-band RF front-end kit (AeroLink AQ-7842)",
+            sender="SUPARCO Procurement",
+            recipient="AeroLink Systems Pvt Ltd",
+            department="Technical",
+            priority="Urgent",
+            status="Awaiting Response",
+            due_date=date(2026, 8, 28),
+            assigned_to="S. Khan",
+            created_by="A. Rahman",
+            assigned_by="A. Rahman",
+            last_action="LOI dispatched",
+            body_text=(
+                "Subject to final DG approval, SUPARCO intends to award supply of one S-band RF front-end kit against "
+                "quotation AQ-7842 as clarified on 15 Jul 2026. Please confirm acceptance of LOI terms within seven days "
+                "and prepare for purchase-order documentation."
+            ),
+            attachment="SUPARCO_LOI_AQ-7842.pdf",
+        ),
+        dict(
+            number="VND/AQ/2026/031",
+            letter_date=date(2026, 8, 22),
+            received_date=date(2026, 8, 23),
+            type="Incoming",
+            subject="Acceptance of SUPARCO LOI for quotation AQ-7842",
+            sender="AeroLink Systems Pvt Ltd",
+            recipient="SUPARCO Procurement",
+            department="Technical",
+            priority="Important",
+            status="Action in Progress",
+            due_date=date(2026, 9, 5),
+            assigned_to="S. Khan",
+            created_by="A. Rahman",
+            assigned_by="A. Rahman",
+            last_action="Vendor LOI acceptance",
+            body_text=(
+                "AeroLink Systems gratefully accepts the Letter of Intent for AQ-7842. We confirm price, delivery, and "
+                "warranty as previously stated. Bank guarantee draft will follow within five working days."
+            ),
+            attachment="AeroLink_LOI_Acceptance.pdf",
+        ),
+    ]
+
+    created: dict[str, Letter] = {}
+    for spec in thread_specs:
+        attachment = spec.pop("attachment", None)
+        body = spec.pop("body_text", "")
+        letter = Letter(**spec, body_text=body, remarks="Procurement thread sample")
+        db.add(letter)
+        db.flush()
+        created[letter.number] = letter
+        if attachment:
+            _seed_dummy_attachment(
+                db,
+                letter_id=letter.id,
+                filename=attachment,
+                document_type="Quotation" if "Quotation" in attachment or "quotation" in attachment.lower() else "Supporting Document",
+                uploaded_by=spec.get("assigned_to") or "S. Khan",
+            )
+
+    # Chain of relations (chronological story links)
+    links = [
+        ("VND/AQ/2026/001", "SUP/TEC/OUT/2026/221", "Clarification", "SUPARCO questions on AeroLink quote"),
+        ("SUP/TEC/OUT/2026/221", "VND/AQ/2026/014", "Reply", "AeroLink answers clarifications"),
+        ("VND/AQ/2026/001", "VND/OT/2026/088", "Related", "Competing OrbitTech quotation"),
+        ("VND/OT/2026/088", "SUP/TEC/OUT/2026/238", "Clarification", "SUPARCO questionnaire to OrbitTech"),
+        ("SUP/TEC/OUT/2026/238", "VND/OT/2026/095", "Reply", "OrbitTech questionnaire response"),
+        ("VND/AQ/2026/001", "VND/SW/2026/041", "Related", "Late SkyWave EOI"),
+        ("VND/AQ/2026/014", "SUP/TEC/INT/2026/052", "Follow-up", "Internal comparative evaluation"),
+        ("VND/OT/2026/095", "SUP/TEC/INT/2026/052", "Related", "OrbitTech inputs into TEC memo"),
+        ("SUP/TEC/INT/2026/052", "SUP/FIN/OUT/2026/119", "Reference", "Finance concurrence on evaluation"),
+        ("SUP/FIN/OUT/2026/119", "SUP/PRC/OUT/2026/067", "Follow-up", "LOI after finance concurrence"),
+        ("SUP/PRC/OUT/2026/067", "VND/AQ/2026/031", "Reply", "Vendor accepts LOI"),
+        ("VND/AQ/2026/001", "SUP/PRC/OUT/2026/067", "Related", "Original quotation leads to LOI"),
+    ]
+    for frm, to, rel_type, remarks in links:
+        a, b = created.get(frm), created.get(to)
+        if a and b:
+            db.add(
+                LetterRelation(
+                    from_letter_id=a.id,
+                    to_letter_id=b.id,
+                    relationship_type=rel_type,
+                    created_by="S. Khan",
+                    remarks=remarks,
                 )
             )
 

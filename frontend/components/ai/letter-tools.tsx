@@ -106,14 +106,21 @@ export function AISummary({ letter, canRegenerate = false, stored = null, onStor
       setStatus('success')
       return
     }
-    void load(0, false)
+    setData(null)
+    setStatus('idle')
   }, [letter.id, stored?.payload])
   return (
     <SectionCard
       title="AI Summary"
       action={
         <div className="flex gap-2">
-          {canRegenerate && (
+          {status !== 'analyzing' && !data && (
+            <Button size="sm" onClick={() => void load(0, true)}>
+              <Sparkles data-icon="inline-start" />
+              Summarize letter
+            </Button>
+          )}
+          {canRegenerate && data && (
             <Button
               size="sm"
               variant="outline"
@@ -126,7 +133,7 @@ export function AISummary({ letter, canRegenerate = false, stored = null, onStor
               Regenerate Summary
             </Button>
           )}
-          <Button size="sm" variant="outline" onClick={() => data && copyText([data.executiveSummary, ...data.keyPoints].join('\n'))}>
+          <Button size="sm" variant="outline" disabled={!data} onClick={() => data && copyText([data.executiveSummary, ...data.keyPoints].join('\n'))}>
             <Copy data-icon="inline-start" />
             Copy Summary
           </Button>
@@ -134,6 +141,9 @@ export function AISummary({ letter, canRegenerate = false, stored = null, onStor
       }
     >
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
+      {status === 'idle' && !data && (
+        <p className="text-xs text-slate-500">Click <span className="font-semibold">Summarize letter</span> to run AI analysis. Nothing is sent to the model until you start it.</p>
+      )}
       {stored?.generatedAt && status === 'success' && (
         <p className="mb-2 text-[11px] text-slate-400">Stored analysis · {new Date(stored.generatedAt).toLocaleString()}</p>
       )}
@@ -201,44 +211,48 @@ export function AIExtractionPanel({
       setStatus('success')
       return
     }
+    setFields([])
+    setDecisions({})
+    setStatus('idle')
+  }, [letter.id, stored?.payload])
+
+  const runExtract = (force = true) => {
     setStatus('analyzing')
-    extractLetterInformation(letter)
+    extractLetterInformation(letter, { force })
       .then((rows) => {
         setFields(rows)
+        setDecisions({})
         setStatus('success')
         onStored?.('extract', { kind: 'extract', payload: rows, decisions: {}, meta: {} })
       })
       .catch(() => setStatus('error'))
-  }, [letter.id, stored?.payload])
+  }
 
   const officialKeys = new Set(['number', 'letterDate', 'receivedDate', 'from', 'to', 'department', 'subject', 'priority', 'dueDate', 'actionRequired'])
   return (
     <SectionCard
       title="AI Information Extraction"
       action={
-        canRegenerate ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setStatus('analyzing')
-              extractLetterInformation(letter, { force: true })
-                .then((rows) => {
-                  setFields(rows)
-                  setDecisions({})
-                  setStatus('success')
-                  onStored?.('extract', { kind: 'extract', payload: rows, decisions: {}, meta: {} })
-                })
-                .catch(() => setStatus('error'))
-            }}
-          >
-            Regenerate
-          </Button>
-        ) : undefined
+        <div className="flex gap-2">
+          {status !== 'analyzing' && fields.length === 0 && (
+            <Button size="sm" onClick={() => runExtract(true)}>
+              <Sparkles data-icon="inline-start" />
+              Extract information
+            </Button>
+          )}
+          {canRegenerate && fields.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => runExtract(true)}>
+              Regenerate
+            </Button>
+          )}
+        </div>
       }
     >
       <AIAdvisoryNote />
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
+      {status === 'idle' && fields.length === 0 && (
+        <p className="mt-1 text-xs text-slate-500">Click <span className="font-semibold">Extract information</span> to run AI extraction.</p>
+      )}
       {stored?.generatedAt && status === 'success' && (
         <p className="mt-1 text-[11px] text-slate-400">Stored analysis · {new Date(stored.generatedAt).toLocaleString()}</p>
       )}
@@ -294,43 +308,47 @@ export function AIClassification({
       setStatus('success')
       return
     }
+    setItems([])
+    setDecisions({})
+    setStatus('idle')
+  }, [letter.id, stored?.payload])
+
+  const runClassify = (force = true) => {
     setStatus('analyzing')
-    classifyLetter(letter)
+    classifyLetter(letter, { force })
       .then((rows) => {
         setItems(rows)
+        setDecisions({})
         setStatus('success')
         onStored?.('classify', { kind: 'classify', payload: rows, decisions: {}, meta: {} })
       })
       .catch(() => setStatus('error'))
-  }, [letter.id, stored?.payload])
+  }
 
   const current: Record<string, string> = { category: letter.type, subjectCategory: '—', department: letter.department, priority: letter.priority, confidentiality: letter.confidentiality || 'Normal' }
   return (
     <SectionCard
       title="AI Classification"
       action={
-        canRegenerate ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setStatus('analyzing')
-              classifyLetter(letter, { force: true })
-                .then((rows) => {
-                  setItems(rows)
-                  setDecisions({})
-                  setStatus('success')
-                  onStored?.('classify', { kind: 'classify', payload: rows, decisions: {}, meta: {} })
-                })
-                .catch(() => setStatus('error'))
-            }}
-          >
-            Regenerate
-          </Button>
-        ) : undefined
+        <div className="flex gap-2">
+          {status !== 'analyzing' && items.length === 0 && (
+            <Button size="sm" onClick={() => runClassify(true)}>
+              <Sparkles data-icon="inline-start" />
+              Classify letter
+            </Button>
+          )}
+          {canRegenerate && items.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => runClassify(true)}>
+              Regenerate
+            </Button>
+          )}
+        </div>
       }
     >
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
+      {status === 'idle' && items.length === 0 && (
+        <p className="mb-2 text-xs text-slate-500">Click <span className="font-semibold">Classify letter</span> to run AI classification.</p>
+      )}
       {stored?.generatedAt && status === 'success' && (
         <p className="mb-2 text-[11px] text-slate-400">Stored analysis · {new Date(stored.generatedAt).toLocaleString()}</p>
       )}
@@ -383,43 +401,47 @@ export function AIActionRecommendations({
       setStatus('success')
       return
     }
+    setRows([])
+    setDecisions({})
+    setStatus('idle')
+  }, [letter.id, stored?.payload])
+
+  const runRecommend = (force = true) => {
     setStatus('analyzing')
-    recommendActions(letter)
+    recommendActions(letter, { force })
       .then((items) => {
         setRows(items)
+        setDecisions({})
         setStatus('success')
         onStored?.('recommend_actions', { kind: 'recommend_actions', payload: items, decisions: {}, meta: {} })
       })
       .catch(() => setStatus('error'))
-  }, [letter.id, stored?.payload])
+  }
 
   return (
     <SectionCard
       title="AI Recommended Actions"
       action={
-        canRegenerate ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setStatus('analyzing')
-              recommendActions(letter, { force: true })
-                .then((items) => {
-                  setRows(items)
-                  setDecisions({})
-                  setStatus('success')
-                  onStored?.('recommend_actions', { kind: 'recommend_actions', payload: items, decisions: {}, meta: {} })
-                })
-                .catch(() => setStatus('error'))
-            }}
-          >
-            Regenerate
-          </Button>
-        ) : undefined
+        <div className="flex gap-2">
+          {status !== 'analyzing' && rows.length === 0 && (
+            <Button size="sm" onClick={() => runRecommend(true)}>
+              <Sparkles data-icon="inline-start" />
+              Recommend actions
+            </Button>
+          )}
+          {canRegenerate && rows.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => runRecommend(true)}>
+              Regenerate
+            </Button>
+          )}
+        </div>
       }
     >
       <AIAdvisoryNote />
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
+      {status === 'idle' && rows.length === 0 && (
+        <p className="mt-1 text-xs text-slate-500">Click <span className="font-semibold">Recommend actions</span> to run AI recommendations.</p>
+      )}
       {stored?.generatedAt && status === 'success' && (
         <p className="mt-1 text-[11px] text-slate-400">Stored analysis · {new Date(stored.generatedAt).toLocaleString()}</p>
       )}
@@ -468,15 +490,22 @@ export function AIUrgencyAssessment({
       setStatus('success')
       return
     }
+    setData(null)
+    setDecision('pending')
+    setStatus('idle')
+  }, [letter.id, stored?.payload])
+
+  const runUrgency = (force = true) => {
     setStatus('analyzing')
-    assessUrgency(letter)
+    assessUrgency(letter, { force })
       .then((row) => {
         setData(row)
+        setDecision('pending')
         setStatus('success')
         onStored?.('urgency', { kind: 'urgency', payload: row, decisions: {}, meta: {} })
       })
       .catch(() => setStatus('error'))
-  }, [letter.id, stored?.payload])
+  }
 
   const applyDecision = (next: AiDecision) => {
     setDecision(next)
@@ -488,22 +517,14 @@ export function AIUrgencyAssessment({
       title="AI Urgency Assessment"
       action={
         <div className="flex gap-2">
-          {canRegenerate && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setStatus('analyzing')
-                assessUrgency(letter, { force: true })
-                  .then((row) => {
-                    setData(row)
-                    setDecision('pending')
-                    setStatus('success')
-                    onStored?.('urgency', { kind: 'urgency', payload: row, decisions: {}, meta: {} })
-                  })
-                  .catch(() => setStatus('error'))
-              }}
-            >
+          {status !== 'analyzing' && !data && (
+            <Button size="sm" onClick={() => runUrgency(true)}>
+              <Sparkles data-icon="inline-start" />
+              Assess urgency
+            </Button>
+          )}
+          {canRegenerate && data && (
+            <Button size="sm" variant="outline" onClick={() => runUrgency(true)}>
               Regenerate
             </Button>
           )}
@@ -512,6 +533,9 @@ export function AIUrgencyAssessment({
       }
     >
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
+      {status === 'idle' && !data && (
+        <p className="mb-2 text-xs text-slate-500">Click <span className="font-semibold">Assess urgency</span> to run AI urgency analysis.</p>
+      )}
       {stored?.generatedAt && status === 'success' && (
         <p className="mb-2 text-[11px] text-slate-400">Stored analysis · {new Date(stored.generatedAt).toLocaleString()}</p>
       )}
@@ -563,19 +587,27 @@ export function AIDraftResponse({ letter, canRegenerate = false, stored = null, 
       setStatus('success')
       return
     }
-    void load('default', false)
+    setDraft(null)
+    setText('')
+    setStatus('idle')
   }, [letter.id, stored?.payload])
   return (
     <SectionCard
       title="AI Draft Response"
       action={
         <div className="flex flex-wrap gap-2">
-          {canRegenerate && (
+          {status !== 'generating' && !draft && (
+            <Button size="sm" onClick={() => void load('default', true)}>
+              <Sparkles data-icon="inline-start" />
+              Draft response
+            </Button>
+          )}
+          {canRegenerate && draft && (
             <Button size="sm" variant="outline" onClick={() => void load('default', true)}>
               Regenerate
             </Button>
           )}
-          <Button size="sm" variant="outline" onClick={() => void copyText(text)}>
+          <Button size="sm" variant="outline" disabled={!text} onClick={() => void copyText(text)}>
             <Copy data-icon="inline-start" />
             Copy Draft
           </Button>
@@ -584,6 +616,9 @@ export function AIDraftResponse({ letter, canRegenerate = false, stored = null, 
     >
       <p className="mb-3 text-[11px] text-slate-400">AI-generated text is only a draft. It does not become an official outgoing letter.</p>
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
+      {status === 'idle' && !draft && (
+        <p className="mb-2 text-xs text-slate-500">Click <span className="font-semibold">Draft response</span> to generate an AI draft.</p>
+      )}
       {stored?.generatedAt && status === 'success' && (
         <p className="mb-2 text-[11px] text-slate-400">Stored analysis · {new Date(stored.generatedAt).toLocaleString()}</p>
       )}
@@ -631,13 +666,13 @@ export function AIAnalysisPanel({
 
   useEffect(() => {
     let cancelled = false
-    const run = async () => {
+    const hydrate = async () => {
       if (localStored?.payload) {
         setData(localStored.payload as CorrespondenceAnalysis)
         setStatus('success')
         return
       }
-      // Standalone page may not receive a parent bundle — load stored first.
+      // Standalone page may not receive a parent bundle — load stored only (no LLM yet).
       if (!stored) {
         try {
           const bundle = await fetchLetterAiAnalysis(letter.id)
@@ -651,53 +686,56 @@ export function AIAnalysisPanel({
             return
           }
         } catch {
-          /* fall through to generate */
+          /* stay idle until user starts */
         }
       }
-      setStatus('analyzing')
-      try {
-        const row = await analyzeCorrespondence(letter, letters)
-        if (cancelled) return
-        setData(row)
-        setStatus('success')
-        onStored?.('analyze_correspondence', { kind: 'analyze_correspondence', payload: row, decisions: {}, meta: {} })
-      } catch {
-        if (!cancelled) setStatus('error')
+      if (!cancelled) {
+        setData(null)
+        setStatus('idle')
       }
     }
-    void run()
+    void hydrate()
     return () => {
       cancelled = true
     }
   }, [letter.id, localStored?.payload])
 
+  const runAnalyze = (force = true) => {
+    setStatus('analyzing')
+    analyzeCorrespondence(letter, letters, { force })
+      .then((row) => {
+        setData(row)
+        setStatus('success')
+        const next = { kind: 'analyze_correspondence' as const, payload: row, decisions: {}, meta: {} }
+        setLocalStored(next)
+        onStored?.('analyze_correspondence', next)
+      })
+      .catch(() => setStatus('error'))
+  }
+
   return (
     <SectionCard
       title="Correspondence analysis"
       action={
-        localCanRegenerate ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setStatus('analyzing')
-              analyzeCorrespondence(letter, letters, { force: true })
-                .then((row) => {
-                  setData(row)
-                  setStatus('success')
-                  const next = { kind: 'analyze_correspondence' as const, payload: row, decisions: {}, meta: {} }
-                  setLocalStored(next)
-                  onStored?.('analyze_correspondence', next)
-                })
-                .catch(() => setStatus('error'))
-            }}
-          >
-            Regenerate
-          </Button>
-        ) : undefined
+        <div className="flex gap-2">
+          {status !== 'analyzing' && !data && (
+            <Button size="sm" onClick={() => runAnalyze(true)}>
+              <Sparkles data-icon="inline-start" />
+              Analyze correspondence
+            </Button>
+          )}
+          {localCanRegenerate && data && (
+            <Button size="sm" variant="outline" onClick={() => runAnalyze(true)}>
+              Regenerate
+            </Button>
+          )}
+        </div>
       }
     >
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
+      {status === 'idle' && !data && (
+        <p className="mb-2 text-xs text-slate-500">Click <span className="font-semibold">Analyze correspondence</span> to run AI analysis.</p>
+      )}
       {localStored?.generatedAt && status === 'success' && (
         <p className="mb-2 text-[11px] text-slate-400">Stored analysis · {new Date(localStored.generatedAt).toLocaleString()}</p>
       )}
@@ -708,8 +746,58 @@ export function AIAnalysisPanel({
               <div key={String(label)} className="rounded-md bg-slate-50 p-3"><p className="text-[11px] text-slate-400">{label}</p><p className="mt-1 font-semibold text-slate-700">{value}</p></div>
             ))}
           </div>
+
+          {data.narrative ? (
+            <div className="rounded-md border border-slate-100 bg-slate-50/80 p-3">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Correspondence story</p>
+              <div className="space-y-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">{data.narrative}</div>
+            </div>
+          ) : null}
+
+          {!!data.parties?.length && (
+            <div className="flex flex-wrap gap-1.5">
+              {data.parties.map((party) => (
+                <span key={party} className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{party}</span>
+              ))}
+            </div>
+          )}
+
+          {!!data.storyBeats?.length && (
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Story beats</p>
+              <ol className="space-y-2 text-xs text-slate-600">
+                {data.storyBeats.map((beat, index) => (
+                  <li key={`${beat.letterNumber || beat.action}-${index}`} className="rounded border border-slate-100 px-3 py-2">
+                    <span className="font-semibold text-slate-700">{beat.date || '—'} · {beat.actor || 'Unknown'}</span>
+                    {beat.letterNumber ? <span className="ml-2 text-slate-400">{beat.letterNumber}</span> : null}
+                    <p className="mt-0.5">{beat.action}</p>
+                    {beat.outcome ? <p className="mt-0.5 text-[11px] text-slate-400">Outcome: {beat.outcome}</p> : null}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {!!data.threadLetters?.length && (
+            <DataTable
+              bordered={false}
+              columns={[
+                { id: 'date', header: 'Date', sortValue: (row) => row.date, className: 'text-slate-500', cell: (row) => row.date },
+                { id: 'number', header: 'Letter', sortValue: (row) => row.number, className: 'font-semibold text-slate-700', cell: (row) => row.number },
+                { id: 'from', header: 'From', sortValue: (row) => row.from, className: 'text-slate-600', cell: (row) => row.from },
+                { id: 'to', header: 'To', sortValue: (row) => row.to, className: 'text-slate-600', cell: (row) => row.to },
+                { id: 'subject', header: 'Subject', sortValue: (row) => row.subject, className: 'text-slate-600', cell: (row) => row.subject },
+              ] satisfies DataTableColumn<{ id: string; number: string; date: string; from: string; to: string; subject: string }>[]}
+              data={data.threadLetters}
+              rowKey={(row) => row.id}
+              storageKey="ai-analysis-thread-letters"
+              minWidth="640px"
+              maxHeight="min(240px, 35vh)"
+            />
+          )}
+
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-            {data.chain.map((step, index) => <span key={step} className="flex items-center gap-2"><span className="rounded bg-slate-100 px-2 py-1 font-semibold text-slate-600">{step}</span>{index < data.chain.length - 1 && <span>↓</span>}</span>)}
+            {data.chain.map((step, index) => <span key={`${step}-${index}`} className="flex items-center gap-2"><span className="rounded bg-slate-100 px-2 py-1 font-semibold text-slate-600">{step}</span>{index < data.chain.length - 1 && <span>↓</span>}</span>)}
           </div>
           <DataTable
             bordered={false}
@@ -730,11 +818,17 @@ export function AIAnalysisPanel({
               { id: 'note', header: 'Note', sortValue: (event) => event.note, className: 'text-slate-600', cell: (event) => event.note },
             ] satisfies DataTableColumn<{ label: string; date: string; note: string; delay?: boolean }>[]}
             data={data.timeline}
-            rowKey={(event) => event.label}
+            rowKey={(event, index) => `${event.label}-${event.date}-${index}`}
             storageKey="ai-analysis-timeline"
             minWidth="520px"
             maxHeight="min(280px, 40vh)"
           />
+          {!!data.attachmentInsights?.length && (
+            <ul className="list-disc pl-4 text-xs text-slate-600">{data.attachmentInsights.map((item) => <li key={item}>{item}</li>)}</ul>
+          )}
+          {!!data.openQuestions?.length && (
+            <ul className="list-disc pl-4 text-xs text-sky-700">{data.openQuestions.map((item) => <li key={item}>{item}</li>)}</ul>
+          )}
           {data.delays.length > 0 && <ul className="list-disc pl-4 text-xs text-amber-700">{data.delays.map((item) => <li key={item}>{item}</li>)}</ul>}
         </div>
       )}

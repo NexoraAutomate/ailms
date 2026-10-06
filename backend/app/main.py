@@ -55,6 +55,7 @@ from app.seed import (
     ensure_master_statuses,
     ensure_phase4b_samples,
     ensure_phase4d_samples,
+    ensure_procurement_thread_samples,
     ensure_seed_avatars,
     seed_if_empty,
 )
@@ -146,6 +147,7 @@ def on_startup() -> None:
         ensure_master_document_types(db)
         ensure_phase4b_samples(db)
         ensure_phase4d_samples(db)
+        ensure_procurement_thread_samples(db)
 
         backfill_notification_metadata(db)
         backfill_letter_body_text(db)

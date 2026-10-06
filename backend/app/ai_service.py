@@ -547,23 +547,168 @@ async def natural_search(db: Session, query: str) -> dict[str, Any]:
 
 
 async def analyze_correspondence(db: Session, letter_id: int) -> dict[str, Any]:
+    """Build a narrative thread analysis using linked letters, related register hits, and attachments."""
+    from sqlalchemy import or_
+
+    from app.correspondence_service import build_thread
+    from app.models import Document, DocumentVersion, LetterRelation
+
     letter = db.get(Letter, letter_id)
     if not letter:
         raise ValueError("Letter not found")
-    related = (
-        db.query(Letter)
-        .filter(Letter.is_archived.is_(False), Letter.id != letter.id)
-        .filter((Letter.sender == letter.sender) | (Letter.department == letter.department))
-        .limit(20)
+
+    # 1) Explicit relation thread (BFS)
+    thread = build_thread(db, letter_id)
+    thread_ids = {int(n["id"]) for n in thread.get("nodes") or [] if str(n.get("id", "")).isdigit()}
+    thread_ids.add(letter.id)
+
+    # 2) Heuristic "relevant" letters: same org / overlapping subject tokens / shared parties
+    stop = {
+        "the", "and", "for", "with", "from", "this", "that", "letter", "regarding", "request",
+        "please", "about", "into", "your", "our", "of", "to", "a", "an", "on", "in",
+    }
+    tokens = [
+        t.lower()
+        for t in (letter.subject or "").replace("/", " ").replace("-", " ").split()
+        if len(t) > 3 and t.lower() not in stop
+    ][:6]
+    relevant_q = db.query(Letter).filter(Letter.is_archived.is_(False), Letter.id != letter.id)
+    party_filters = []
+    if letter.sender:
+        party_filters.append(Letter.sender == letter.sender)
+        party_filters.append(Letter.recipient == letter.sender)
+    if letter.recipient:
+        party_filters.append(Letter.sender == letter.recipient)
+        party_filters.append(Letter.recipient == letter.recipient)
+    if letter.department:
+        party_filters.append(Letter.department == letter.department)
+    if party_filters:
+        relevant_q = relevant_q.filter(or_(*party_filters))
+    candidates = relevant_q.limit(80).all()
+    relevant: list[Letter] = []
+    for row in candidates:
+        if row.id in thread_ids:
+            continue
+        hay = f"{row.subject} {row.sender} {row.recipient} {row.remarks} {getattr(row, 'body_text', '') or ''}".lower()
+        if tokens and sum(1 for t in tokens if t in hay) >= max(1, min(2, len(tokens) // 2)):
+            relevant.append(row)
+        elif letter.sender and letter.sender.lower() in (row.sender or "").lower():
+            relevant.append(row)
+        if len(relevant) >= 12:
+            break
+
+    all_ids = sorted(thread_ids | {r.id for r in relevant})
+    all_letters = (
+        db.query(Letter).filter(Letter.id.in_(all_ids)).order_by(Letter.letter_date, Letter.id).all()
+        if all_ids
+        else [letter]
+    )
+
+    # 3) Attachments metadata for the primary letter (+ thread letters)
+    docs = (
+        db.query(Document, DocumentVersion)
+        .join(DocumentVersion, DocumentVersion.document_id == Document.id)
+        .filter(Document.letter_id.in_(all_ids), DocumentVersion.is_current.is_(True))
+        .all()
+        if all_ids
+        else []
+    )
+    attachments_by_letter: dict[int, list[dict[str, Any]]] = {}
+    for doc, ver in docs:
+        attachments_by_letter.setdefault(doc.letter_id, []).append(
+            {
+                "documentType": doc.document_type,
+                "filename": ver.original_filename or ver.filename,
+                "mimeType": ver.mime_type,
+                "fileSize": ver.file_size,
+            }
+        )
+
+    # 4) Relation edges summary
+    relations = (
+        db.query(LetterRelation)
+        .filter(or_(LetterRelation.from_letter_id.in_(all_ids), LetterRelation.to_letter_id.in_(all_ids)))
+        .order_by(LetterRelation.id)
         .all()
     )
+    number_by_id = {row.id: row.number for row in all_letters}
+    relation_lines = [
+        f"{number_by_id.get(r.from_letter_id, r.from_letter_id)} -[{r.relationship_type}]-> "
+        f"{number_by_id.get(r.to_letter_id, r.to_letter_id)}"
+        + (f" ({r.remarks})" if r.remarks else "")
+        for r in relations
+        if r.from_letter_id in number_by_id and r.to_letter_id in number_by_id
+    ]
+
+    thread_payload: list[dict[str, Any]] = []
+    for row in all_letters:
+        item = _letter_payload(row)
+        item["attachments"] = attachments_by_letter.get(row.id, [])
+        item["inLinkedThread"] = row.id in thread_ids
+        thread_payload.append(item)
+
     system = (
-        "Analyze correspondence thread context. Return JSON matching: relatedCount, original (letter number), "
-        "replies, reminders, followUps (integers), currentStatus, durationDays, timeline (array of label, date, note, optional delay bool), "
-        "chain (array of stage names), delays (array of strings)."
+        "You are a senior correspondence analyst. Reconstruct the FULL story of this correspondence case "
+        "like a chronological narrative (not a bullet list of labels). "
+        "Use every letter in the thread, linked relations, attachment filenames, and body text. "
+        "Typical pattern: a vendor submits a quotation; the organization asks clarifying questions; "
+        "another vendor responds; suppliers follow up; internal evaluation and award decisions occur. "
+        "Return JSON with keys:\n"
+        "- relatedCount (int: letters in the analyzed set excluding the primary if helpful, or total related)\n"
+        "- original (string: originating letter number)\n"
+        "- replies, reminders, followUps (ints)\n"
+        "- currentStatus (string)\n"
+        "- durationDays (int from earliest to latest/current)\n"
+        "- narrative (string: 4-10 paragraph detailed story in plain professional English; name parties and letter numbers)\n"
+        "- parties (array of strings: organizations/people involved)\n"
+        "- storyBeats (array of objects: {order, date, actor, action, letterNumber, outcome})\n"
+        "- timeline (array of {label, date, note, delay?: bool, letterNumber?: string}) chronologically\n"
+        "- chain (array of short stage names in order)\n"
+        "- delays (array of strings describing gaps/overdue issues)\n"
+        "- attachmentInsights (array of strings: what each attachment/file name implies)\n"
+        "- openQuestions (array of strings: unresolved points)\n"
+        "Do not invent letters that are not provided. Infer only what the evidence supports."
     )
-    user = f"Primary letter:\n{_letter_payload(letter)}\n\nRelated letters:\n{[_letter_payload(r) for r in related]}"
-    return await chat_json(system=system, user=user)
+    user = (
+        f"PRIMARY LETTER ID {letter.id}:\n{_letter_payload(letter)}\n\n"
+        f"PRIMARY ATTACHMENTS:\n{attachments_by_letter.get(letter.id, [])}\n\n"
+        f"RELATION EDGES:\n{relation_lines or ['(none recorded)']}\n\n"
+        f"THREAD + RELEVANT LETTERS ({len(thread_payload)}):\n{thread_payload}"
+    )
+    data = await chat_json(system=system, user=user)
+
+    # Normalize / fill safe defaults for UI
+    data.setdefault("relatedCount", max(len(all_letters) - 1, 0))
+    data.setdefault("original", letter.number)
+    data.setdefault("replies", 0)
+    data.setdefault("reminders", 0)
+    data.setdefault("followUps", 0)
+    data.setdefault("currentStatus", effective_status(letter))
+    data.setdefault("durationDays", max(days_pending(letter), 1))
+    data.setdefault("narrative", "")
+    data.setdefault("parties", [])
+    data.setdefault("storyBeats", [])
+    data.setdefault("timeline", [])
+    data.setdefault("chain", [])
+    data.setdefault("delays", [])
+    data.setdefault("attachmentInsights", [])
+    data.setdefault("openQuestions", [])
+    data["threadLetterIds"] = [str(i) for i in all_ids]
+    data["threadLetters"] = [
+        {
+            "id": str(row.id),
+            "number": row.number,
+            "date": row.letter_date.isoformat(),
+            "from": row.sender,
+            "to": row.recipient,
+            "subject": row.subject,
+            "type": row.type,
+            "status": effective_status(row),
+            "linked": row.id in thread_ids,
+        }
+        for row in all_letters
+    ]
+    return data
 
 
 async def management_insights(db: Session) -> list[dict[str, Any]]:

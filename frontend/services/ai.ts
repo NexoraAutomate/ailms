@@ -69,6 +69,28 @@ export type CorrespondenceEvent = {
   date: string
   note: string
   delay?: boolean
+  letterNumber?: string
+}
+
+export type CorrespondenceStoryBeat = {
+  order?: number
+  date?: string
+  actor?: string
+  action?: string
+  letterNumber?: string
+  outcome?: string
+}
+
+export type CorrespondenceThreadLetter = {
+  id: string
+  number: string
+  date: string
+  from: string
+  to: string
+  subject: string
+  type: string
+  status: string
+  linked?: boolean
 }
 
 export type CorrespondenceAnalysis = {
@@ -82,6 +104,13 @@ export type CorrespondenceAnalysis = {
   timeline: CorrespondenceEvent[]
   chain: string[]
   delays: string[]
+  narrative?: string
+  parties?: string[]
+  storyBeats?: CorrespondenceStoryBeat[]
+  attachmentInsights?: string[]
+  openQuestions?: string[]
+  threadLetters?: CorrespondenceThreadLetter[]
+  threadLetterIds?: string[]
 }
 
 export type ManagementInsight = {
@@ -711,33 +740,99 @@ export async function analyzeCorrespondence(
 
 async function analyzeCorrespondenceMock(letter: Letter, letters: Letter[]): Promise<CorrespondenceAnalysis> {
   await wait()
-  const related = letters.filter((item) => item.from === letter.from || item.department === letter.department || item.subject.split(' ')[0] === letter.subject.split(' ')[0])
-  const duration = Math.max(letter.daysPending, 1)
-  const timeline: CorrespondenceEvent[] = [
-    { label: 'Original letter', date: letter.letterDate, note: 'Registered in the correspondence office.' },
-    { label: 'Received', date: letter.receivedDate, note: `Logged against ${letter.department || 'the assigned department'}.` },
-    { label: 'Assigned', date: letter.receivedDate, note: letter.assignedTo ? `Assigned to ${letter.assignedTo}.` : 'Assignment is incomplete.' },
-    { label: 'Action', date: letter.receivedDate, note: letter.lastAction || 'No action recorded after registration.', delay: letter.daysPending >= 5 },
-    { label: 'Reply', date: letter.type === 'Outgoing' || ['Awaiting Response', 'Completed', 'Closed'].includes(letter.status) ? letter.letterDate : '—', note: letter.type === 'Outgoing' ? 'Outgoing reply recorded.' : 'Reply not yet finalized.' },
-    { label: 'Reminder', date: letter.status === 'Overdue' ? letter.dueDate : '—', note: letter.status === 'Overdue' ? 'Reminder is warranted.' : 'No reminder cycle detected.', delay: letter.status === 'Overdue' },
-    { label: 'Follow-up', date: letter.dueDate || '—', note: 'Follow-up depends on the originating office.' },
-    { label: 'Closure', date: letter.completionDate && letter.completionDate !== '—' ? letter.completionDate : 'Open', note: ['Completed', 'Closed'].includes(letter.status) ? 'Correspondence closed.' : 'File remains open.' },
-  ]
+  const subjectToken = letter.subject.split(/\s+/).find((t) => t.length > 4)?.toLowerCase() || ''
+  const related = letters
+    .filter((item) => item.id !== letter.id)
+    .filter(
+      (item) =>
+        item.from === letter.from ||
+        item.to === letter.from ||
+        item.from === letter.to ||
+        item.department === letter.department ||
+        (subjectToken && item.subject.toLowerCase().includes(subjectToken)) ||
+        (item.subject.toLowerCase().includes('s-band') && letter.subject.toLowerCase().includes('s-band')) ||
+        (item.subject.toLowerCase().includes('quotation') && letter.subject.toLowerCase().includes('quotation')),
+    )
+    .sort((a, b) => a.letterDate.localeCompare(b.letterDate))
+
+  const thread = [letter, ...related].sort((a, b) => a.letterDate.localeCompare(b.letterDate))
+  const earliest = thread[0]?.letterDate || letter.letterDate
+  const latest = thread[thread.length - 1]?.letterDate || letter.letterDate
+  const duration = Math.max(
+    letter.daysPending,
+    Math.round((new Date(latest).getTime() - new Date(earliest).getTime()) / 86_400_000) || 1,
+  )
+
+  const parties = Array.from(new Set(thread.flatMap((row) => [row.from, row.to]).filter(Boolean)))
+  const replies = related.filter((item) => /reply|response|acceptance|clarification reply/i.test(item.subject) || item.type === 'Outgoing').length
+  const followUps = related.filter((item) => /follow|evaluation|concurrence|loi|award/i.test(item.subject)).length
+
+  const storyBeats = thread.map((row, index) => ({
+    order: index + 1,
+    date: row.letterDate,
+    actor: row.from,
+    action: row.subject,
+    letterNumber: row.number,
+    outcome: row.status,
+  }))
+
+  const narrativeParts = thread.map((row, index) => {
+    const step = index === 0 ? 'opened the file' : index === thread.length - 1 ? 'is the latest exchange' : 'continued the exchange'
+    return (
+      `${row.letterDate}: ${row.from} wrote to ${row.to} under ${row.number} regarding “${row.subject}”. ` +
+      `This ${row.type.toLowerCase()} item ${step} (status: ${row.status}). ` +
+      (row.lastAction ? `Recorded action: ${row.lastAction}.` : '')
+    )
+  })
+  const narrative =
+    narrativeParts.join('\n\n') ||
+    `${letter.from} registered ${letter.number} on ${letter.letterDate}. No linked letters were found in the local register, so analysis is limited to this file.`
+
+  const timeline: CorrespondenceEvent[] = thread.map((row) => ({
+    label: row.number,
+    date: row.letterDate,
+    note: `${row.from} → ${row.to}: ${row.subject}`,
+    delay: row.status === 'Overdue' || row.daysPending >= 10,
+    letterNumber: row.number,
+  }))
+
   return {
     relatedCount: related.length,
-    original: letter.number,
-    replies: letters.filter((item) => item.type === 'Outgoing' && item.department === letter.department).length,
+    original: thread[0]?.number || letter.number,
+    replies,
     reminders: letter.status === 'Overdue' ? 1 : 0,
-    followUps: letter.lastAction.toLowerCase().includes('follow') ? 1 : 0,
+    followUps,
     currentStatus: letter.status,
     durationDays: duration,
     timeline,
-    chain: ['Original Letter', 'Forwarded', 'Action', 'Reply', 'Reminder', 'Follow-up', 'Final Response', 'Closure'],
+    chain: thread.map((row) => row.number),
     delays: [
       letter.status === 'Overdue' ? 'Response is overdue against the recorded due date.' : '',
-      letter.daysPending >= 7 ? 'Long gap since receipt without closure.' : '',
-      letter.status === 'Awaiting Response' ? 'Outgoing correspondence is waiting for an external reply.' : '',
+      duration >= 30 ? 'This thread has been open for more than a month.' : '',
+      related.some((r) => /late/i.test(r.subject)) ? 'A late expression of interest appears in the thread.' : '',
     ].filter(Boolean),
+    narrative,
+    parties,
+    storyBeats,
+    attachmentInsights: thread
+      .filter((row) => /quotation|clarification|loi|evaluation|concurrence/i.test(row.subject))
+      .map((row) => `Letter ${row.number} likely carries supporting commercial/technical attachments for “${row.subject}”.`),
+    openQuestions: [
+      letter.status === 'Awaiting Response' ? `${letter.number} is still awaiting an external reply.` : '',
+      !['Completed', 'Closed'].includes(letter.status) ? 'Final purchase-order / closure step may still be pending.' : '',
+    ].filter(Boolean),
+    threadLetters: thread.map((row) => ({
+      id: row.id,
+      number: row.number,
+      date: row.letterDate,
+      from: row.from,
+      to: row.to,
+      subject: row.subject,
+      type: row.type,
+      status: row.status,
+      linked: row.id !== letter.id,
+    })),
+    threadLetterIds: thread.map((row) => row.id),
   }
 }
 
