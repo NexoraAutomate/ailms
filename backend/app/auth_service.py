@@ -19,7 +19,8 @@ from app.models import AppSetting, User, UserSession
 from app.services import add_audit
 
 PBKDF2_ITERATIONS = 210_000
-DEFAULT_SIGNUP_ROLE = "Department/User"
+DEFAULT_SIGNUP_ROLE = "Actionist"
+
 
 
 def hash_password(password: str) -> str:
@@ -292,7 +293,7 @@ def ensure_auth_bootstrap(db: Session) -> None:
             username="admin",
             password_hash=default_hash,
             department="Coordination",
-            role="Administrator",
+            role="Admin",
             email="admin@office.gov",
             status="Active",
             last_activity=datetime.now(),

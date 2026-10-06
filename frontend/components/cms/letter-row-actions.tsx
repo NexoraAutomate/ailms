@@ -51,6 +51,16 @@ const ACTION_ICONS: Record<LetterRowActionId, ComponentType<{ className?: string
   reopen: RefreshCw,
   close: XCircle,
   archive: Archive,
+  validate: ShieldCheck,
+  classify: CheckCircle2,
+  approve_routing: Send,
+  route_info: Send,
+  close_information: CheckCircle2,
+  delegate: UserPlus,
+  handle_here: UserRoundCog,
+  draft_response: MessageSquare,
+  approve_step: CheckCircle2,
+  dispatch: Send,
 }
 
 export function LetterRowActions({

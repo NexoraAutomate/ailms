@@ -34,7 +34,11 @@ import {
 const SPARK_DAYS = 7
 
 function isMonitored(letter: Letter) {
-  return letter.status === 'Overdue' || letter.daysPending >= 7 || !['Closed', 'Completed', 'Archived'].includes(letter.status)
+  return (
+    letter.status === 'Overdue' ||
+    letter.daysPending >= 7 ||
+    !['Closed', 'Completed', 'Archived', 'Information Delivered', 'Dispatched'].includes(letter.status)
+  )
 }
 
 function dueSoon(letter: Letter) {
@@ -423,7 +427,7 @@ export function MonitoringPage() {
     const aging = monitored.filter((l) => l.daysPending >= 7)
     const urgent = monitored.filter((l) => l.priority === 'Urgent')
     const awaiting = monitored.filter((l) =>
-      ['Awaiting Response', 'Approval Pending', 'Response Prepared'].includes(l.status),
+      ['Awaiting Response', 'Approval Pending', 'Response Prepared', 'Under Approval', 'Response Drafted', 'Pending Routing Approval'].includes(l.status),
     )
     const escalated = monitored.filter((l) => l.status === 'Escalated')
     const due = monitored.filter(dueSoon)

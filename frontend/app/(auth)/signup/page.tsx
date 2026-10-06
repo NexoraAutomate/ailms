@@ -60,7 +60,7 @@ export default function SignupPage() {
           <p className="mt-6 text-xs font-semibold uppercase tracking-[0.2em] text-blue-200/80">AILMS</p>
           <h1 className="mt-3 max-w-sm text-3xl font-bold leading-tight text-white">Create your workspace access</h1>
           <p className="mt-4 max-w-sm text-sm leading-relaxed text-blue-100/80">
-            New accounts join as Department/User. Administrators can elevate roles after signup.
+            New accounts join as Actionist. Admins can elevate roles after signup.
           </p>
         </div>
         <p className="relative text-xs text-blue-200/60">Password policy enforced by system security settings</p>

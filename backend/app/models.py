@@ -21,6 +21,7 @@ class Department(Base):
     )
     pos_x: Mapped[float] = mapped_column(Float, default=0.0)
     pos_y: Mapped[float] = mapped_column(Float, default=0.0)
+    tier: Mapped[str] = mapped_column(String(40), default="Division")
 
 
 class DepartmentLink(Base):
@@ -56,7 +57,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), default="")
     department: Mapped[str] = mapped_column(String(120), default="")
-    role: Mapped[str] = mapped_column(String(80), default="Department/User")
+    role: Mapped[str] = mapped_column(String(80), default="Actionist")
     email: Mapped[str] = mapped_column(String(180), default="")
     status: Mapped[str] = mapped_column(String(20), default="Active")
     last_activity: Mapped[datetime | None] = mapped_column(DateTime)
@@ -107,10 +108,129 @@ class Letter(Base):
     completion_date: Mapped[date | None] = mapped_column(Date)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime)
+    correspondence_category: Mapped[str] = mapped_column(String(40), default="")
+    close_reason: Mapped[str] = mapped_column(String(60), default="")
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_departments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    classified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     actions: Mapped[list["LetterAction"]] = relationship(back_populates="letter", cascade="all, delete-orphan")
+
+
+class RouteStep(Base):
+    """Append-only routing history for a letter (not a single current-owner field)."""
+
+    __tablename__ = "cms_route_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    step_type: Mapped[str] = mapped_column(String(40), default="ROUTE", index=True)
+    from_department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_departments.id", ondelete="SET NULL"), nullable=True
+    )
+    to_department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_departments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    from_user: Mapped[str] = mapped_column(String(120), default="")
+    to_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    priority: Mapped[str] = mapped_column(String(40), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class ActionItem(Base):
+    """Structured work item assigned on a letter (supports parallel actionists)."""
+
+    __tablename__ = "cms_action_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    parent_action_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_action_items.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_departments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assignee: Mapped[str] = mapped_column(String(120), default="", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="Open", index=True)
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    blocked_reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ResponseVersion(Base):
+    """Versioned draft/reply for a letter response approval lifecycle."""
+
+    __tablename__ = "cms_response_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    body_text: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(40), default="Draft", index=True)
+    prepared_by: Mapped[str] = mapped_column(String(120), default="")
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ApprovalStep(Base):
+    """Ordered multi-tier approval step for a response version."""
+
+    __tablename__ = "cms_approval_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    response_version_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_response_versions.id", ondelete="CASCADE"), index=True
+    )
+    tier_order: Mapped[int] = mapped_column(Integer, default=1)
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_departments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewer: Mapped[str] = mapped_column(String(120), default="", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="Pending", index=True)
+    remarks: Mapped[str] = mapped_column(Text, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DispatchRecord(Base):
+    """Outbound dispatch of an approved response."""
+
+    __tablename__ = "cms_dispatches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    response_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_response_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    channel: Mapped[str] = mapped_column(String(40), default="Internal")
+    dispatched_by: Mapped[str] = mapped_column(String(120), default="")
+    recipients: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    dispatched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class LetterAction(Base):

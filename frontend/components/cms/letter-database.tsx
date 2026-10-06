@@ -22,10 +22,12 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const [bulkMsg, setBulkMsg] = useState('')
   const [archivedLetters, setArchivedLetters] = useState<Letter[]>([])
   const [catalogLetters, setCatalogLetters] = useState<Letter[]>([])
+  const [myActionLetters, setMyActionLetters] = useState<Letter[]>([])
   const [pendingDelete, setPendingDelete] = useState<Letter[] | null>(null)
   const isAdmin = isAdministrator(me.role)
   const isCatalog = page === 'Catalog'
   const isSoftArchive = page === 'Archived'
+  const isMyActions = page === 'My Actions'
 
   useEffect(() => {
     if (isSoftArchive) {
@@ -40,10 +42,19 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
     )
   }, [isCatalog, letters])
 
+  useEffect(() => {
+    if (!isMyActions) return
+    import('@/services/letters').then(({ listLetters }) =>
+      listLetters({ view: 'mine' }).then(setMyActionLetters),
+    )
+  }, [isMyActions, letters])
+
   const source = isCatalog
     ? catalogLetters
     : isSoftArchive
       ? archivedLetters
+      : isMyActions
+        ? myActionLetters
       : aiSearch
         ? aiSearch.letters
         : letters
@@ -64,9 +75,9 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
       (page === 'Overdue' && l.status === 'Overdue') ||
       (page === 'Closed' && l.status === 'Closed') ||
       (page === 'Archived' && l.isArchived) ||
-      (page === 'Pending' && !['Closed', 'Completed', 'Archived'].includes(l.status)) ||
-      (page === 'My Actions' && l.assignedTo === me.name) ||
-      (page === 'Monitoring' && (l.status === 'Overdue' || l.daysPending >= 7 || !['Closed', 'Completed', 'Archived'].includes(l.status)))
+      (page === 'Pending' && !['Closed', 'Completed', 'Archived', 'Information Delivered', 'Dispatched'].includes(l.status)) ||
+      (page === 'My Actions' && true) ||
+      (page === 'Monitoring' && (l.status === 'Overdue' || l.daysPending >= 7 || !['Closed', 'Completed', 'Archived', 'Information Delivered'].includes(l.status)))
     return q && archiveOk && matchesPage && (filter === 'All' || l.priority === filter)
   })
 
@@ -77,6 +88,8 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
       ? 'Letters marked to you from any tier that still need your response.'
       : page === 'Sent'
         ? 'Letters you registered, replied to, or marked onward.'
+        : page === 'My Actions'
+          ? 'Open action items and FYI routes addressed to you.'
         : 'Search, filter and manage correspondence assigned or created by you.'
   const selectedIds = [...selected].filter((id) => {
     const row = data.find((l) => l.id === id)

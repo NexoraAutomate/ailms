@@ -27,9 +27,19 @@ import { formatDateTime } from '@/lib/datetime'
 import { statusTone, type Letter, type LetterStatus } from '@/services/letters'
 import {
   executeWorkflow,
+  fetchActionItems,
+  fetchApprovalSteps,
+  fetchDispatches,
+  fetchResponseVersions,
+  fetchRouteSteps,
   fetchWorkflowActions,
   fetchWorkflowHistory,
   workflowActionLabel,
+  type ActionItem,
+  type ApprovalStep,
+  type DispatchRecord,
+  type ResponseVersion,
+  type RouteStep,
   type WorkflowTransition,
 } from '@/services/workflow'
 import { getCurrentApproval, listApprovals, type Approval } from '@/services/approvals'
@@ -66,6 +76,21 @@ const WORKFLOW_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   archive: Archive,
   edit: Pencil,
   delete: Trash2,
+  validate: ShieldCheck,
+  classify: CheckCircle2,
+  approve_routing: Send,
+  route_info: Send,
+  close_information: CheckCircle2,
+  delegate: UserPlus,
+  handle_here: UserRoundCog,
+  draft_response: MessageSquare,
+  approve_step: CheckCircle2,
+  dispatch: Send,
+  accept_action: CheckCircle2,
+  start_action: ArrowUpRight,
+  block_action: XCircle,
+  complete_action: CheckCircle2,
+  acknowledge_info: CheckCircle2,
 }
 
 export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users: { name: string }[]; onDone: () => Promise<void> }) {
@@ -76,6 +101,11 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
   const [dialog, setDialog] = useState<{ action: string } | null>(null)
   const [remarks, setRemarks] = useState('')
   const [assignedTo, setAssignedTo] = useState(letter.assignedTo || '')
+  const [category, setCategory] = useState<'Information' | 'Actionable'>('Actionable')
+  const [responseBody, setResponseBody] = useState('')
+  const [dispatchChannel, setDispatchChannel] = useState<'Internal' | 'External'>('Internal')
+  const [infoUser, setInfoUser] = useState('')
+  const [escalationLevel, setEscalationLevel] = useState('Level 1')
 
   const load = async () => {
     setLoading(true)
@@ -95,18 +125,32 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
     void load()
   }, [letter.id])
 
-  const needsAssign = (action: string) => action === 'assign' || action === 'reassign' || action === 'submit_for_approval'
+  const needsAssign = (action: string) =>
+    ['assign', 'reassign', 'submit_for_approval', 'delegate', 'approve_routing'].includes(action)
   const needsEscalation = (action: string) => action === 'escalate'
-  const needsRemarks = (action: string) => ['approve', 'reject', 'return_for_revision', 'escalate'].includes(action)
-  const [escalationLevel, setEscalationLevel] = useState('Level 1')
+  const needsRemarks = (action: string) =>
+    ['approve', 'reject', 'return_for_revision', 'escalate', 'approve_step'].includes(action)
+  const needsDialog = (action: string) =>
+    needsAssign(action) ||
+    needsRemarks(action) ||
+    needsEscalation(action) ||
+    ['classify', 'route_info', 'draft_response', 'dispatch'].includes(action)
 
   const run = async (action: string) => {
-    if (needsAssign(action) && !assignedTo.trim()) {
+    if (needsAssign(action) && !assignedTo.trim() && action !== 'submit_for_approval') {
       setError('Select an assignee before continuing.')
       return
     }
     if (needsRemarks(action) && !remarks.trim()) {
       setError('Remarks are required for this action.')
+      return
+    }
+    if (action === 'draft_response' && !responseBody.trim() && !remarks.trim()) {
+      setError('Enter a response draft.')
+      return
+    }
+    if (action === 'route_info' && !infoUser.trim()) {
+      setError('Select an FYI recipient.')
       return
     }
     setError('')
@@ -117,9 +161,16 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
       reviewerName: action === 'submit_for_approval' ? assignedTo : undefined,
       escalatedTo: needsEscalation(action) ? assignedTo : undefined,
       escalationLevel: needsEscalation(action) ? escalationLevel : undefined,
+      category: action === 'classify' ? category : undefined,
+      responseBody: action === 'draft_response' ? responseBody || remarks : undefined,
+      dispatchChannel: action === 'dispatch' ? dispatchChannel : undefined,
+      dispatchRecipients: action === 'dispatch' ? remarks : undefined,
+      infoRecipients: action === 'route_info' ? [{ user: infoUser }] : undefined,
+      instructions: remarks || undefined,
     })
     setDialog(null)
     setRemarks('')
+    setResponseBody('')
     await onDone()
     await load()
   }
@@ -129,7 +180,12 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
       className="mt-5"
       title="Workflow"
       description="Authorized transitions from the current status."
-      headerAside={<Badge tone={statusTone(letter.status as LetterStatus)}>{letter.status}</Badge>}
+      headerAside={
+        <div className="flex items-center gap-2">
+          {letter.correspondenceCategory ? <Badge tone="blue">{letter.correspondenceCategory}</Badge> : null}
+          <Badge tone={statusTone(letter.status as LetterStatus)}>{letter.status}</Badge>
+        </div>
+      }
     >
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
@@ -144,7 +200,8 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
             onClick={() => {
               setRemarks('')
               setAssignedTo(letter.assignedTo || '')
-              if (needsAssign(action) || needsRemarks(action) || needsEscalation(action)) setDialog({ action })
+              setCategory((letter.correspondenceCategory as 'Information' | 'Actionable') || 'Actionable')
+              if (needsDialog(action)) setDialog({ action })
               else void run(action)
             }}
           />
@@ -171,6 +228,39 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
               <h2 className="text-sm font-bold text-slate-700">{workflowActionLabel(dialog.action)}</h2>
               <IconActionButton label="Close" icon={X} onClick={() => setDialog(null)} />
             </div>
+            {dialog.action === 'classify' && (
+              <label className="mb-3 flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-600">Letter type</span>
+                <select value={category} onChange={(e) => setCategory(e.target.value as 'Information' | 'Actionable')} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                  <option value="Actionable">Actionable</option>
+                  <option value="Information">Information / FYI</option>
+                </select>
+              </label>
+            )}
+            {dialog.action === 'route_info' && (
+              <label className="mb-3 flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-600">FYI recipient</span>
+                <select value={infoUser} onChange={(e) => setInfoUser(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                  <option value="">Select…</option>
+                  {users.map((user) => <option key={user.name} value={user.name}>{user.name}</option>)}
+                </select>
+              </label>
+            )}
+            {dialog.action === 'draft_response' && (
+              <label className="mb-3 flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-600">Response draft *</span>
+                <textarea value={responseBody} onChange={(e) => setResponseBody(e.target.value)} className="min-h-32 rounded-md border border-slate-200 px-3 py-2 text-xs" />
+              </label>
+            )}
+            {dialog.action === 'dispatch' && (
+              <label className="mb-3 flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-600">Channel</span>
+                <select value={dispatchChannel} onChange={(e) => setDispatchChannel(e.target.value as 'Internal' | 'External')} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
+                  <option value="Internal">Internal</option>
+                  <option value="External">External (Secretariat / Management)</option>
+                </select>
+              </label>
+            )}
             {(needsAssign(dialog.action) || needsEscalation(dialog.action)) && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">{needsEscalation(dialog.action) ? 'Escalate to' : dialog.action === 'submit_for_approval' ? 'Reviewer' : 'Assign to'}</span>
@@ -188,10 +278,12 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
                 </select>
               </label>
             )}
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-semibold text-slate-600">{needsRemarks(dialog.action) ? 'Remarks *' : 'Remarks'}</span>
-              <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-24 rounded-md border border-slate-200 px-3 py-2 text-xs" />
-            </label>
+            {dialog.action !== 'draft_response' && (
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-slate-600">{needsRemarks(dialog.action) ? 'Remarks *' : 'Remarks'}</span>
+                <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-24 rounded-md border border-slate-200 px-3 py-2 text-xs" />
+              </label>
+            )}
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setDialog(null)}>Cancel</Button>
               <Button onClick={() => void run(dialog.action)}>{workflowActionLabel(dialog.action)}</Button>
@@ -200,6 +292,116 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
         </div>
       )}
     </CollapsibleCard>
+  )
+}
+
+export function EnterpriseLifecyclePanel({ letter }: { letter: Letter }) {
+  const [routes, setRoutes] = useState<RouteStep[]>([])
+  const [items, setItems] = useState<ActionItem[]>([])
+  const [versions, setVersions] = useState<ResponseVersion[]>([])
+  const [steps, setSteps] = useState<ApprovalStep[]>([])
+  const [dispatches, setDispatches] = useState<DispatchRecord[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      try {
+        const [r, a, v, s, d] = await Promise.all([
+          fetchRouteSteps(letter.id),
+          fetchActionItems(letter.id),
+          fetchResponseVersions(letter.id),
+          fetchApprovalSteps(letter.id),
+          fetchDispatches(letter.id),
+        ])
+        if (!cancelled) {
+          setRoutes(r)
+          setItems(a)
+          setVersions(v)
+          setSteps(s)
+          setDispatches(d)
+        }
+      } catch {
+        if (!cancelled) {
+          setRoutes([])
+          setItems([])
+          setVersions([])
+          setSteps([])
+          setDispatches([])
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [letter.id, letter.status, letter.lastAction])
+
+  return (
+    <div className="mt-5 grid gap-5 lg:grid-cols-2">
+      <CollapsibleCard title="Route trail" description="Append-only routing history">
+        {loading && <p className="text-xs text-slate-500">Loading…</p>}
+        {!loading && routes.length === 0 && <p className="text-xs text-slate-500">No route steps yet.</p>}
+        <div className="flex flex-col gap-2">
+          {routes.slice().reverse().slice(0, 10).map((step) => (
+            <div key={step.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+              <p className="font-semibold text-slate-700">{step.stepType}{step.active ? ' · active' : ''}</p>
+              <p className="text-slate-500">{step.fromUser || '—'} → {step.toUser || '—'}</p>
+              {step.instructions && <p className="mt-1 text-slate-600">{step.instructions}</p>}
+              <p className="mt-1 text-[11px] text-slate-400">{formatDateTime(step.createdAt)}</p>
+            </div>
+          ))}
+        </div>
+      </CollapsibleCard>
+      <CollapsibleCard title="Action items" description="Who must do what">
+        {loading && <p className="text-xs text-slate-500">Loading…</p>}
+        {!loading && items.length === 0 && <p className="text-xs text-slate-500">No action items yet.</p>}
+        <div className="flex flex-col gap-2">
+          {items.slice().reverse().slice(0, 10).map((item) => (
+            <div key={item.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+              <p className="font-semibold text-slate-700">{item.assignee || 'Unassigned'} · {item.status}</p>
+              {item.instructions && <p className="text-slate-600">{item.instructions}</p>}
+              {item.dueDate && <p className="text-[11px] text-slate-400">Due {item.dueDate}</p>}
+            </div>
+          ))}
+        </div>
+      </CollapsibleCard>
+      <CollapsibleCard title="Response versions" description="Draft / approval lifecycle">
+        {!loading && versions.length === 0 && <p className="text-xs text-slate-500">No response drafts yet.</p>}
+        <div className="flex flex-col gap-2">
+          {versions.slice().reverse().map((ver) => (
+            <div key={ver.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+              <p className="font-semibold text-slate-700">v{ver.version} · {ver.status}</p>
+              <p className="text-slate-500">{ver.preparedBy}</p>
+              <p className="mt-1 line-clamp-3 text-slate-600">{ver.bodyText}</p>
+            </div>
+          ))}
+        </div>
+      </CollapsibleCard>
+      <CollapsibleCard title="Approval chain & dispatch">
+        {!loading && steps.length === 0 && dispatches.length === 0 && (
+          <p className="text-xs text-slate-500">No approval steps or dispatches yet.</p>
+        )}
+        <div className="flex flex-col gap-2">
+          {steps.map((step) => (
+            <div key={step.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+              <p className="font-semibold text-slate-700">Tier {step.tierOrder} · {step.status}</p>
+              <p className="text-slate-500">{step.reviewer || 'Unassigned reviewer'}</p>
+              {step.remarks && <p className="text-slate-600">{step.remarks}</p>}
+            </div>
+          ))}
+          {dispatches.map((row) => (
+            <div key={row.id} className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs">
+              <p className="font-semibold text-emerald-800">Dispatched · {row.channel}</p>
+              <p className="text-emerald-700">{row.dispatchedBy} → {row.recipients || '—'}</p>
+              <p className="text-[11px] text-emerald-600">{formatDateTime(row.dispatchedAt)}</p>
+            </div>
+          ))}
+        </div>
+      </CollapsibleCard>
+    </div>
   )
 }
 

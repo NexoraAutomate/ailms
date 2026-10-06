@@ -17,7 +17,7 @@ from app.models import User, UserSession
 _current_user_name: ContextVar[str | None] = ContextVar("current_user_name", default=None)
 _bearer = HTTPBearer(auto_error=False)
 
-ADMIN_ROLES = {"Administrator", "admin"}
+ADMIN_ROLES = {"Admin", "Administrator", "admin"}
 
 
 def set_request_user_name(name: str | None) -> None:

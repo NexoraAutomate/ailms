@@ -119,8 +119,15 @@ def list_letters(
     elif view == "archived":
         items = [item for item in items if item.isArchived]
     elif view == "mine":
+        from app.enterprise_workflow_service import letter_ids_for_user_inbox
+
         owner = assigned_to or actor
-        items = [item for item in items if item.assignedTo == owner]
+        inbox_ids = letter_ids_for_user_inbox(db, owner)
+        items = [
+            item
+            for item in items
+            if item.assignedTo == owner or item.id in {str(i) for i in inbox_ids}
+        ]
 
     if type:
         items = [item for item in items if item.type == type]

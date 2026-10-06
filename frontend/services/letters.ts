@@ -4,6 +4,19 @@ export type LetterType = 'Incoming' | 'Outgoing'
 export type LetterStatus =
   | 'Draft'
   | 'Registered'
+  | 'OCR Processed'
+  | 'LLM Analyzed'
+  | 'Validated'
+  | 'Classified'
+  | 'Pending Routing Approval'
+  | 'Routed'
+  | 'Action Assigned'
+  | 'In Progress'
+  | 'Response Drafted'
+  | 'Under Approval'
+  | 'Approved for Dispatch'
+  | 'Dispatched'
+  | 'Information Delivered'
   | 'Under Review'
   | 'Assigned'
   | 'Action in Progress'
@@ -51,6 +64,11 @@ export type Letter = {
   baseStatus?: string
   /** False in Catalog when the letter is not meant for the viewer. */
   accessible?: boolean
+  correspondenceCategory?: string
+  closeReason?: string
+  departmentId?: number | null
+  validatedAt?: string
+  classifiedAt?: string
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }
@@ -61,6 +79,19 @@ export const statusTone = (status: LetterStatus) =>
   ({
     Draft: 'slate',
     Registered: 'slate',
+    'OCR Processed': 'slate',
+    'LLM Analyzed': 'violet',
+    Validated: 'amber',
+    Classified: 'blue',
+    'Pending Routing Approval': 'amber',
+    Routed: 'blue',
+    'Action Assigned': 'blue',
+    'In Progress': 'indigo',
+    'Response Drafted': 'indigo',
+    'Under Approval': 'amber',
+    'Approved for Dispatch': 'green',
+    Dispatched: 'violet',
+    'Information Delivered': 'green',
     'Under Review': 'amber',
     Assigned: 'blue',
     'Action in Progress': 'indigo',

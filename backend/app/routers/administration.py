@@ -81,8 +81,8 @@ def delete_role(role_id: int, db: Session = Depends(get_db)) -> dict:
     row = db.get(Role, role_id)
     if not row:
         raise HTTPException(status_code=404, detail="Role not found")
-    if row.name == "Administrator":
-        raise HTTPException(status_code=400, detail="Cannot delete Administrator role")
+    if row.name in {"Administrator", "Admin"}:
+        raise HTTPException(status_code=400, detail="Cannot delete Admin role")
     db.delete(row)
     db.commit()
     return {"deleted": role_id}

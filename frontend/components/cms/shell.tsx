@@ -108,7 +108,7 @@ function Sidebar({
   const pathname = usePathname()
   const page = labelFromPathname(pathname)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
-  const isAdmin = me.role.trim().toLowerCase() === 'administrator'
+  const isAdmin = ['administrator', 'admin'].includes(me.role.trim().toLowerCase())
   const folded = !mobile && !expanded
 
   useEffect(() => {

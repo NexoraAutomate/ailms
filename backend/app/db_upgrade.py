@@ -393,3 +393,326 @@ def upgrade_department_org_schema(engine: Engine) -> None:
                     "ON cms_department_links (target_id)"
                 )
             )
+
+
+def upgrade_enterprise_workflow_schema(engine: Engine) -> None:
+    """Enterprise RouteStep / ActionItem / ResponseVersion / ApprovalStep / Dispatch."""
+    inspector = inspect(engine)
+
+    if inspector.has_table("cms_departments"):
+        columns = {col["name"] for col in inspector.get_columns("cms_departments")}
+        if "tier" not in columns:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE cms_departments ADD COLUMN tier VARCHAR(40) DEFAULT 'Division'")
+                )
+
+    if inspector.has_table("cms_letters"):
+        columns = {col["name"] for col in inspector.get_columns("cms_letters")}
+        statements: list[str] = []
+        if "correspondence_category" not in columns:
+            statements.append(
+                "ALTER TABLE cms_letters ADD COLUMN correspondence_category VARCHAR(40) DEFAULT ''"
+            )
+        if "close_reason" not in columns:
+            statements.append("ALTER TABLE cms_letters ADD COLUMN close_reason VARCHAR(60) DEFAULT ''")
+        if "department_id" not in columns:
+            statements.append(
+                "ALTER TABLE cms_letters ADD COLUMN department_id INTEGER "
+                "REFERENCES cms_departments(id) ON DELETE SET NULL"
+            )
+        if "validated_at" not in columns:
+            statements.append("ALTER TABLE cms_letters ADD COLUMN validated_at TIMESTAMP NULL")
+        if "classified_at" not in columns:
+            statements.append("ALTER TABLE cms_letters ADD COLUMN classified_at TIMESTAMP NULL")
+        if statements:
+            with engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+                if "department_id" not in columns:
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS ix_cms_letters_department_id "
+                            "ON cms_letters (department_id)"
+                        )
+                    )
+
+    if not inspector.has_table("cms_route_steps"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_route_steps (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL
+                            REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        step_type VARCHAR(40) DEFAULT 'ROUTE',
+                        from_department_id INTEGER
+                            REFERENCES cms_departments(id) ON DELETE SET NULL,
+                        to_department_id INTEGER
+                            REFERENCES cms_departments(id) ON DELETE SET NULL,
+                        from_user VARCHAR(120) DEFAULT '',
+                        to_user VARCHAR(120) DEFAULT '',
+                        instructions TEXT DEFAULT '',
+                        due_date DATE NULL,
+                        priority VARCHAR(40) DEFAULT '',
+                        active BOOLEAN DEFAULT TRUE,
+                        acknowledged_at TIMESTAMP NULL,
+                        created_by VARCHAR(120) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cms_route_steps_letter_id ON cms_route_steps (letter_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cms_route_steps_step_type ON cms_route_steps (step_type)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cms_route_steps_to_user ON cms_route_steps (to_user)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cms_route_steps_active ON cms_route_steps (active)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_route_steps_to_department_id "
+                    "ON cms_route_steps (to_department_id)"
+                )
+            )
+
+    if not inspector.has_table("cms_action_items"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_action_items (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL
+                            REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        parent_action_id INTEGER
+                            REFERENCES cms_action_items(id) ON DELETE SET NULL,
+                        department_id INTEGER
+                            REFERENCES cms_departments(id) ON DELETE SET NULL,
+                        assignee VARCHAR(120) DEFAULT '',
+                        status VARCHAR(40) DEFAULT 'Open',
+                        instructions TEXT DEFAULT '',
+                        due_date DATE NULL,
+                        blocked_reason TEXT DEFAULT '',
+                        created_by VARCHAR(120) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        updated_at TIMESTAMP DEFAULT NOW(),
+                        completed_at TIMESTAMP NULL
+                    )
+                    """
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cms_action_items_letter_id ON cms_action_items (letter_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cms_action_items_assignee ON cms_action_items (assignee)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cms_action_items_status ON cms_action_items (status)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_action_items_department_id "
+                    "ON cms_action_items (department_id)"
+                )
+            )
+
+    if not inspector.has_table("cms_response_versions"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_response_versions (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL
+                            REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        version INTEGER DEFAULT 1,
+                        body_text TEXT DEFAULT '',
+                        status VARCHAR(40) DEFAULT 'Draft',
+                        prepared_by VARCHAR(120) DEFAULT '',
+                        document_id INTEGER
+                            REFERENCES cms_documents(id) ON DELETE SET NULL,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        updated_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_response_versions_letter_id "
+                    "ON cms_response_versions (letter_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_response_versions_status "
+                    "ON cms_response_versions (status)"
+                )
+            )
+
+    if not inspector.has_table("cms_approval_steps"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_approval_steps (
+                        id SERIAL PRIMARY KEY,
+                        response_version_id INTEGER NOT NULL
+                            REFERENCES cms_response_versions(id) ON DELETE CASCADE,
+                        tier_order INTEGER DEFAULT 1,
+                        department_id INTEGER
+                            REFERENCES cms_departments(id) ON DELETE SET NULL,
+                        reviewer VARCHAR(120) DEFAULT '',
+                        status VARCHAR(40) DEFAULT 'Pending',
+                        remarks TEXT DEFAULT '',
+                        reviewed_at TIMESTAMP NULL,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_approval_steps_response_version_id "
+                    "ON cms_approval_steps (response_version_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_approval_steps_reviewer "
+                    "ON cms_approval_steps (reviewer)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_approval_steps_status "
+                    "ON cms_approval_steps (status)"
+                )
+            )
+
+    if not inspector.has_table("cms_dispatches"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_dispatches (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL
+                            REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        response_version_id INTEGER
+                            REFERENCES cms_response_versions(id) ON DELETE SET NULL,
+                        channel VARCHAR(40) DEFAULT 'Internal',
+                        dispatched_by VARCHAR(120) DEFAULT '',
+                        recipients TEXT DEFAULT '',
+                        notes TEXT DEFAULT '',
+                        dispatched_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_cms_dispatches_letter_id ON cms_dispatches (letter_id)")
+            )
+
+
+def migrate_enterprise_roles(db) -> None:
+    """Map legacy role strings to drawio canonical roles without unique collisions."""
+    from app.models import Role, User
+
+    mapping = {
+        "Administrator": "Admin",
+        "Correspondence Officer": "Coordinator",
+        "Department/User": "Actionist",
+        "Clerk": "Coordinator",
+        "admin": "Admin",
+    }
+    for old, new in mapping.items():
+        db.query(User).filter(User.role == old).update({User.role: new}, synchronize_session=False)
+
+        old_role = db.query(Role).filter(Role.name == old).one_or_none()
+        if not old_role:
+            continue
+        new_role = db.query(Role).filter(Role.name == new).one_or_none()
+        if new_role is None:
+            old_role.name = new
+        elif new_role.id != old_role.id:
+            # Canonical role already exists — drop the legacy duplicate row.
+            db.delete(old_role)
+    db.flush()
+
+
+def backfill_enterprise_route_actions(db) -> None:
+    """Create RouteStep + ActionItem for open letters that only have assigned_to."""
+    from app.models import ActionItem, Department, Letter, RouteStep
+
+    closed = {"Closed", "Completed", "Archived", "Rejected", "Information Delivered", "Dispatched"}
+    letters = (
+        db.query(Letter)
+        .filter(Letter.assigned_to != "", Letter.is_archived.is_(False))
+        .filter(~Letter.status.in_(closed))
+        .all()
+    )
+    dept_by_name = {d.name: d.id for d in db.query(Department).all()}
+
+    for letter in letters:
+        existing = db.query(ActionItem).filter(ActionItem.letter_id == letter.id).first()
+        if existing:
+            continue
+        dept_id = letter.department_id or dept_by_name.get(letter.department)
+        db.add(
+            RouteStep(
+                letter_id=letter.id,
+                step_type="ROUTE",
+                to_department_id=dept_id,
+                to_user=letter.assigned_to,
+                from_user=letter.assigned_by or letter.created_by or "",
+                instructions=letter.action_required or "",
+                due_date=letter.due_date,
+                priority=letter.priority or "",
+                active=True,
+                created_by=letter.assigned_by or letter.created_by or "system",
+            )
+        )
+        db.add(
+            ActionItem(
+                letter_id=letter.id,
+                department_id=dept_id,
+                assignee=letter.assigned_to,
+                status="Open",
+                instructions=letter.action_required or "",
+                due_date=letter.due_date,
+                created_by=letter.assigned_by or letter.created_by or "system",
+            )
+        )
+
+
+def infer_department_tiers(db) -> None:
+    """Infer Department.tier from tree depth when still default/empty."""
+    from app.models import Department
+
+    depts = db.query(Department).all()
+    by_id = {d.id: d for d in depts}
+    depth_cache: dict[int, int] = {}
+
+    def depth(dept_id: int | None) -> int:
+        if dept_id is None:
+            return 0
+        if dept_id in depth_cache:
+            return depth_cache[dept_id]
+        d = by_id.get(dept_id)
+        if not d or d.parent_id is None:
+            depth_cache[dept_id] = 0
+            return 0
+        depth_cache[dept_id] = depth(d.parent_id) + 1
+        return depth_cache[dept_id]
+
+    tier_by_depth = {
+        0: "Secretariat",
+        1: "Wing",
+        2: "Division",
+        3: "Section",
+    }
+    for d in depts:
+        if d.tier and d.tier not in {"", "Division"}:
+            continue
+        # Only overwrite blank or generic Division when parent chain exists
+        if d.tier == "Division" and d.parent_id is None and not any(
+            x.parent_id == d.id for x in depts
+        ):
+            continue
+        d.tier = tier_by_depth.get(depth(d.id), "Group")

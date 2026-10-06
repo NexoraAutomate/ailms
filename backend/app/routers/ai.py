@@ -27,9 +27,21 @@ from app.ai_service import (
 from app.database import get_db
 from app.ai.llm_provider import get_llm_provider
 from app.llm_client import LlmNotConfiguredError, llm_is_configured
-from app.services import add_audit, current_user_name
+from app.services import add_audit, current_user_name, resolve_user_role
+from app.enterprise_workflow_service import can_use_llm_analysis
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+def _require_llm_role(db: Session) -> None:
+    """Further LLM analysis is Management-level only; lower ranks use OCR registration."""
+    actor = current_user_name(db)
+    role = resolve_user_role(db, actor)
+    if not can_use_llm_analysis(role):
+        raise HTTPException(
+            status_code=403,
+            detail="LLM analysis is restricted to Management. Use OCR registration for letter intake.",
+        )
 
 
 class LetterRef(BaseModel):
@@ -144,6 +156,7 @@ def patch_letter_analysis_decisions(
 
 @router.post("/summarize")
 async def api_summarize(body: LetterRef, db: Session = Depends(get_db)) -> dict:
+    _require_llm_role(db)
     try:
         had_cache = get_cached_payload(db, body.letter_id, "summarize") is not None and not body.force
 
@@ -178,6 +191,7 @@ async def api_summarize(body: LetterRef, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/extract")
 async def api_extract(body: LetterRef, db: Session = Depends(get_db)) -> dict:
+    _require_llm_role(db)
     async def generate():
         _guard_configured()
         return await extract_fields(db, body.letter_id)
@@ -197,6 +211,7 @@ async def api_extract(body: LetterRef, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/classify")
 async def api_classify(body: LetterRef, db: Session = Depends(get_db)) -> dict:
+    _require_llm_role(db)
     async def generate():
         _guard_configured()
         return await classify(db, body.letter_id)
@@ -216,6 +231,7 @@ async def api_classify(body: LetterRef, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/recommend-actions")
 async def api_recommend(body: LetterRef, db: Session = Depends(get_db)) -> dict:
+    _require_llm_role(db)
     async def generate():
         _guard_configured()
         return await recommend_actions(db, body.letter_id)
@@ -235,6 +251,7 @@ async def api_recommend(body: LetterRef, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/urgency")
 async def api_urgency(body: LetterRef, db: Session = Depends(get_db)) -> dict:
+    _require_llm_role(db)
     async def generate():
         _guard_configured()
         return await urgency(db, body.letter_id)

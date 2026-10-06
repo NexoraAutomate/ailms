@@ -6,6 +6,7 @@ from app.database import Base, engine, ensure_database
 from app.db_upgrade import (
     upgrade_ai_registration_schema,
     upgrade_department_org_schema,
+    upgrade_enterprise_workflow_schema,
     upgrade_letter_archive_columns,
     upgrade_letter_body_text_column,
     upgrade_letter_ownership_columns,
@@ -115,6 +116,7 @@ def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
     upgrade_ai_registration_schema(engine)
     upgrade_department_org_schema(engine)
+    upgrade_enterprise_workflow_schema(engine)
     upgrade_notification_columns(engine)
     upgrade_letter_archive_columns(engine)
     upgrade_letter_body_text_column(engine)
@@ -125,6 +127,18 @@ def on_startup() -> None:
     try:
         seed_if_empty(db)
         ensure_department_org_layout(db)
+        from app.notification_service import backfill_notification_metadata
+        from app.ai.registration_commit import backfill_letter_body_text
+        from app.db_upgrade import (
+            backfill_enterprise_route_actions,
+            backfill_letter_ownership,
+            infer_department_tiers,
+            migrate_enterprise_roles,
+        )
+
+        # Migrate legacy role names before seeding canonical roles to avoid unique collisions.
+        migrate_enterprise_roles(db)
+        db.flush()
         ensure_administration_seed(db)
         ensure_auth_bootstrap(db)
         ensure_seed_avatars(db)
@@ -132,13 +146,12 @@ def on_startup() -> None:
         ensure_master_document_types(db)
         ensure_phase4b_samples(db)
         ensure_phase4d_samples(db)
-        from app.notification_service import backfill_notification_metadata
-        from app.ai.registration_commit import backfill_letter_body_text
-        from app.db_upgrade import backfill_letter_ownership
 
         backfill_notification_metadata(db)
         backfill_letter_body_text(db)
         backfill_letter_ownership(db)
+        infer_department_tiers(db)
+        backfill_enterprise_route_actions(db)
         touch_session(db, username="admin", display="Administrator")
         db.commit()
         run_reminder_cycle()

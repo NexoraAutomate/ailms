@@ -17,60 +17,128 @@ export type LetterRowActionId =
   | 'reopen'
   | 'close'
   | 'archive'
+  | 'validate'
+  | 'classify'
+  | 'approve_routing'
+  | 'route_info'
+  | 'close_information'
+  | 'delegate'
+  | 'handle_here'
+  | 'draft_response'
+  | 'approve_step'
+  | 'dispatch'
+
+const ENTERPRISE_PERMS = [
+  'validate', 'classify', 'approve_routing', 'route_info', 'acknowledge_info', 'close_information',
+  'delegate', 'handle_here', 'accept_action', 'start_action', 'block_action', 'complete_action',
+  'draft_response', 'submit_for_approval', 'approve_step', 'return_for_revision', 'dispatch',
+]
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
+  Admin: [
+    'assign', 'forward', 'reassign', 'add_action', 'request_response', 'request_clarification',
+    'mark_complete', 'submit_for_approval', 'approve', 'reject', 'return_for_revision',
+    'escalate', 'reopen', 'close', 'archive', ...ENTERPRISE_PERMS,
+  ],
   Administrator: [
     'assign', 'forward', 'reassign', 'add_action', 'request_response', 'request_clarification',
     'mark_complete', 'submit_for_approval', 'approve', 'reject', 'return_for_revision',
-    'escalate', 'reopen', 'close', 'archive',
+    'escalate', 'reopen', 'close', 'archive', ...ENTERPRISE_PERMS,
   ],
   Management: [
     'assign', 'forward', 'reassign', 'add_action', 'request_response', 'request_clarification',
     'mark_complete', 'submit_for_approval', 'approve', 'reject', 'return_for_revision',
-    'escalate', 'reopen', 'close', 'archive',
+    'escalate', 'reopen', 'close', 'archive', ...ENTERPRISE_PERMS,
+  ],
+  Manager: [
+    'assign', 'forward', 'reassign', 'add_action', 'request_response', 'request_clarification',
+    'mark_complete', 'submit_for_approval', 'approve', 'reject', 'return_for_revision',
+    'escalate', 'reopen', 'close',
+    'classify', 'route_info', 'close_information', 'delegate', 'handle_here',
+    'accept_action', 'start_action', 'block_action', 'complete_action',
+    'draft_response', 'approve_step', 'return_for_revision',
+  ],
+  Coordinator: [
+    'assign', 'forward', 'reassign', 'add_action', 'request_response', 'request_clarification',
+    'mark_complete', 'submit_for_approval', 'return_for_revision', 'escalate', 'reopen', 'close', 'archive',
+    'validate', 'classify', 'route_info', 'close_information', 'delegate', 'handle_here',
   ],
   'Correspondence Officer': [
     'assign', 'forward', 'reassign', 'add_action', 'request_response', 'request_clarification',
     'mark_complete', 'submit_for_approval', 'return_for_revision', 'escalate', 'reopen', 'close', 'archive',
+    'validate', 'classify', 'route_info', 'close_information', 'delegate', 'handle_here',
   ],
-  'Department/User': ['add_action', 'request_clarification', 'mark_complete', 'submit_for_approval'],
+  Actionist: [
+    'add_action', 'request_clarification', 'mark_complete', 'submit_for_approval',
+    'acknowledge_info', 'accept_action', 'start_action', 'block_action', 'complete_action',
+    'draft_response',
+  ],
+  'Department/User': [
+    'add_action', 'request_clarification', 'mark_complete', 'submit_for_approval',
+    'acknowledge_info', 'accept_action', 'start_action', 'block_action', 'complete_action',
+    'draft_response',
+  ],
+  Viewer: [],
 }
 
 const FROM_STATUSES: Record<string, string[]> = {
-  assign: ['Draft', 'Registered', 'Under Review', 'Reopened'],
-  forward: ['Registered', 'Assigned', 'Action in Progress'],
-  reassign: ['Assigned', 'Action in Progress', 'Awaiting Response'],
-  add_action: ['Registered', 'Assigned', 'Under Review', 'Awaiting Response', 'Returned for Revision', 'Reopened'],
-  request_response: ['Action in Progress', 'Assigned', 'Response Prepared'],
-  request_clarification: ['Action in Progress', 'Awaiting Response', 'Assigned'],
-  mark_complete: ['Action in Progress', 'Awaiting Response', 'Response Sent', 'Response Approved'],
-  submit_for_approval: ['Response Prepared', 'Action in Progress', 'Awaiting Response'],
-  approve: ['Approval Pending'],
-  reject: ['Approval Pending'],
-  return_for_revision: ['Approval Pending', 'Response Prepared'],
-  escalate: ['Action in Progress', 'Awaiting Response', 'Assigned', 'Approval Pending'],
-  reopen: ['Closed', 'Completed', 'Archived'],
-  close: ['Completed', 'Response Sent', 'Rejected'],
-  archive: ['Closed', 'Completed', 'Rejected'],
+  assign: ['Draft', 'Registered', 'Under Review', 'Reopened', 'Validated', 'Classified'],
+  forward: ['Registered', 'Assigned', 'Action in Progress', 'Action Assigned', 'In Progress', 'Routed'],
+  reassign: ['Assigned', 'Action in Progress', 'Awaiting Response', 'Action Assigned', 'In Progress'],
+  add_action: ['Registered', 'Assigned', 'Under Review', 'Awaiting Response', 'Returned for Revision', 'Reopened', 'Action Assigned', 'In Progress'],
+  request_response: ['Action in Progress', 'Assigned', 'Response Prepared', 'In Progress', 'Action Assigned', 'Response Drafted'],
+  request_clarification: ['Action in Progress', 'Awaiting Response', 'Assigned', 'In Progress', 'Action Assigned'],
+  mark_complete: ['Action in Progress', 'Awaiting Response', 'Response Sent', 'Response Approved', 'In Progress', 'Dispatched', 'Approved for Dispatch'],
+  submit_for_approval: ['Response Prepared', 'Action in Progress', 'Awaiting Response', 'Response Drafted', 'In Progress', 'Returned for Revision'],
+  approve: ['Approval Pending', 'Under Approval'],
+  reject: ['Approval Pending', 'Under Approval'],
+  return_for_revision: ['Approval Pending', 'Response Prepared', 'Under Approval', 'Response Drafted'],
+  escalate: ['Action in Progress', 'Awaiting Response', 'Assigned', 'Approval Pending', 'In Progress', 'Action Assigned', 'Under Approval'],
+  reopen: ['Closed', 'Completed', 'Archived', 'Information Delivered', 'Dispatched'],
+  close: ['Completed', 'Response Sent', 'Rejected', 'Dispatched', 'Information Delivered', 'Approved for Dispatch'],
+  archive: ['Closed', 'Completed', 'Rejected', 'Information Delivered'],
+  validate: ['Registered', 'OCR Processed', 'LLM Analyzed'],
+  classify: ['Validated', 'LLM Analyzed', 'OCR Processed', 'Registered'],
+  approve_routing: ['Classified', 'Pending Routing Approval'],
+  route_info: ['Classified', 'Routed'],
+  close_information: ['Routed', 'Classified', 'Information Delivered'],
+  delegate: ['Routed', 'Action Assigned', 'In Progress', 'Pending Routing Approval'],
+  handle_here: ['Routed', 'Action Assigned', 'Pending Routing Approval'],
+  draft_response: ['In Progress', 'Action Assigned', 'Returned for Revision', 'Response Drafted'],
+  approve_step: ['Under Approval'],
+  dispatch: ['Approved for Dispatch', 'Response Approved'],
 }
 
 const BUTTONS_BY_STATUS: Record<string, LetterRowActionId[]> = {
   Draft: ['edit', 'assign'],
-  Registered: ['edit', 'assign', 'forward', 'reply'],
-  'Under Review': ['edit', 'assign', 'reply'],
+  Registered: ['edit', 'validate', 'classify', 'assign', 'forward', 'reply'],
+  'OCR Processed': ['edit', 'validate', 'classify'],
+  'LLM Analyzed': ['edit', 'validate', 'classify'],
+  Validated: ['edit', 'classify'],
+  Classified: ['edit', 'approve_routing', 'route_info', 'close_information'],
+  'Pending Routing Approval': ['edit', 'approve_routing', 'delegate', 'handle_here'],
+  Routed: ['edit', 'delegate', 'handle_here', 'route_info', 'close_information', 'reply'],
+  'Action Assigned': ['edit', 'delegate', 'draft_response', 'reply', 'reassign', 'request_clarification', 'escalate'],
+  'In Progress': ['edit', 'draft_response', 'submit_for_approval', 'reply', 'mark_complete', 'escalate'],
+  'Response Drafted': ['edit', 'draft_response', 'submit_for_approval', 'return_for_revision'],
+  'Under Approval': ['approve_step', 'approve', 'reject', 'return_for_revision', 'escalate'],
+  'Approved for Dispatch': ['edit', 'dispatch', 'mark_complete'],
+  Dispatched: ['edit', 'close', 'mark_complete'],
+  'Information Delivered': ['close', 'archive', 'reopen'],
+  'Under Review': ['edit', 'assign', 'classify', 'reply'],
   Assigned: ['edit', 'forward', 'reply', 'reassign', 'request_clarification', 'escalate'],
-  'Action in Progress': ['edit', 'forward', 'reply', 'request_clarification', 'mark_complete', 'submit_for_approval', 'escalate'],
+  'Action in Progress': ['edit', 'forward', 'reply', 'request_clarification', 'mark_complete', 'submit_for_approval', 'escalate', 'draft_response'],
   'Awaiting Response': ['edit', 'reply', 'reassign', 'request_clarification', 'escalate', 'mark_complete'],
   'Response Prepared': ['edit', 'reply', 'submit_for_approval', 'return_for_revision'],
-  'Approval Pending': ['approve', 'reject', 'return_for_revision', 'escalate'],
-  'Response Approved': ['edit', 'mark_complete'],
+  'Approval Pending': ['approve', 'reject', 'return_for_revision', 'escalate', 'approve_step'],
+  'Response Approved': ['edit', 'dispatch', 'mark_complete'],
   'Response Sent': ['edit', 'mark_complete', 'close'],
   Completed: ['close', 'archive', 'reopen'],
   Closed: ['reopen', 'archive'],
   Rejected: ['close', 'archive'],
-  'Returned for Revision': ['edit', 'reply'],
+  'Returned for Revision': ['edit', 'reply', 'draft_response', 'submit_for_approval'],
   Escalated: ['edit', 'reassign', 'reply'],
-  Reopened: ['edit', 'assign', 'reply'],
+  Reopened: ['edit', 'assign', 'reply', 'validate', 'classify'],
 }
 
 export const letterActionLabel: Record<LetterRowActionId, string> = {
@@ -90,6 +158,16 @@ export const letterActionLabel: Record<LetterRowActionId, string> = {
   reopen: 'Reopen',
   close: 'Close',
   archive: 'Archive',
+  validate: 'Validate',
+  classify: 'Classify',
+  approve_routing: 'Approve routing',
+  route_info: 'Route FYI',
+  close_information: 'Close info',
+  delegate: 'Delegate',
+  handle_here: 'Handle here',
+  draft_response: 'Draft reply',
+  approve_step: 'Approve step',
+  dispatch: 'Dispatch',
 }
 
 export function isAdministrator(role: string) {
@@ -104,7 +182,7 @@ export function workflowStatus(letter: Letter) {
 }
 
 function permissionsFor(role: string) {
-  return new Set(ROLE_PERMISSIONS[role] ?? ROLE_PERMISSIONS['Department/User'])
+  return new Set(ROLE_PERMISSIONS[role] ?? ROLE_PERMISSIONS.Actionist ?? ROLE_PERMISSIONS['Department/User'])
 }
 
 function transitionAllowed(action: string, status: string, role: string) {
@@ -146,5 +224,11 @@ export function actionNeedsInput(action: LetterRowActionId) {
     'reject',
     'return_for_revision',
     'escalate',
+    'classify',
+    'approve_routing',
+    'route_info',
+    'delegate',
+    'draft_response',
+    'dispatch',
   ].includes(action)
 }

@@ -36,6 +36,11 @@ class LetterOut(BaseModel):
     baseStatus: str = ""
     # False when listed in the Catalog but not meant for the viewer.
     accessible: bool = True
+    correspondenceCategory: str = ""
+    closeReason: str = ""
+    departmentId: int | None = None
+    validatedAt: str = ""
+    classifiedAt: str = ""
 
 
 class LetterCreate(BaseModel):
@@ -162,6 +167,7 @@ class DepartmentOut(BaseModel):
     parentId: int | None = None
     posX: float = 0
     posY: float = 0
+    tier: str = "Division"
 
 
 class DepartmentLinkIn(BaseModel):
@@ -212,7 +218,8 @@ class UserIn(BaseModel):
     name: str
     username: str
     department: str = ""
-    role: str = "Department/User"
+    role: str = "Actionist"
+
     email: str = ""
     status: str = "Active"
     password: str
@@ -396,10 +403,29 @@ class WorkflowExecuteIn(BaseModel):
     remarks: str = ""
     assignedTo: str | None = None
     department: str | None = None
+    departmentId: int | None = None
     actionLabel: str | None = None
     reviewerName: str | None = None
     escalatedTo: str | None = None
     escalationLevel: str | None = None
+    category: str | None = None
+    actionItemId: int | None = None
+    responseBody: str | None = None
+    responseVersionId: int | None = None
+    approvalStepId: int | None = None
+    infoRecipients: list[dict] | None = None
+    dispatchChannel: str | None = None
+    dispatchRecipients: str | None = None
+    priority: str | None = None
+    dueDate: date | None = None
+    instructions: str | None = None
+    blockedReason: str | None = None
+    documentId: int | None = None
+
+    @field_validator("dueDate", mode="before")
+    @classmethod
+    def blank_due(cls, value: object) -> object:
+        return empty_to_none(value)
 
 
 class WorkflowTransitionOut(BaseModel):

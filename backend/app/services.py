@@ -25,7 +25,14 @@ from app.schemas import (
     UserOut,
 )
 
-CLOSED_STATUSES = {"Completed", "Closed", "Archived", "Rejected"}
+CLOSED_STATUSES = {
+    "Completed",
+    "Closed",
+    "Archived",
+    "Rejected",
+    "Information Delivered",
+    "Dispatched",
+}
 PENDING_STATUSES = {
     "Draft",
     "Registered",
@@ -136,6 +143,11 @@ def serialize_letter(
         isArchived=bool(getattr(letter, "is_archived", False)),
         baseStatus=letter.status,
         accessible=accessible,
+        correspondenceCategory=getattr(letter, "correspondence_category", "") or "",
+        closeReason=getattr(letter, "close_reason", "") or "",
+        departmentId=getattr(letter, "department_id", None),
+        validatedAt=letter.validated_at.isoformat() if getattr(letter, "validated_at", None) else "",
+        classifiedAt=letter.classified_at.isoformat() if getattr(letter, "classified_at", None) else "",
     )
 
 
@@ -158,6 +170,7 @@ def serialize_department(db: Session, department: Department) -> DepartmentOut:
         parentId=department.parent_id,
         posX=float(department.pos_x or 0),
         posY=float(department.pos_y or 0),
+        tier=getattr(department, "tier", None) or "Division",
     )
 
 
@@ -306,5 +319,18 @@ def current_user_name(db: Session) -> str:
 def resolve_user_role(db: Session, user_name: str) -> str:
     row = db.query(User).filter(User.name == user_name).one_or_none()
     if row:
-        return row.role
-    return "Department/User"
+        return normalize_role(row.role)
+    return "Actionist"
+
+
+ROLE_ALIASES = {
+    "Administrator": "Admin",
+    "admin": "Admin",
+    "Correspondence Officer": "Coordinator",
+    "Department/User": "Actionist",
+    "Clerk": "Coordinator",
+}
+
+
+def normalize_role(role: str) -> str:
+    return ROLE_ALIASES.get(role, role)

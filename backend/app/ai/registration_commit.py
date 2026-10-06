@@ -273,6 +273,10 @@ def approve_registration_job(
     job.reviewed_by = job.reviewed_by or actor
 
     letter = create_letter_record(db, letter_payload, actor=actor)
+    # AI registration path: OCR + LLM already ran — land in LLM Analyzed for Coordinator classify.
+    letter.status = "LLM Analyzed"
+    letter.last_action = "AI registration approved"
+    db.flush()
 
     create_document_from_staged_file(
         db,

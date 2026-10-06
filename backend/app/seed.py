@@ -29,6 +29,20 @@ MASTER_DATA = {
     "Statuses": [
         "Draft",
         "Registered",
+        "OCR Processed",
+        "LLM Analyzed",
+        "Validated",
+        "Classified",
+        "Pending Routing Approval",
+        "Routed",
+        "Action Assigned",
+        "In Progress",
+        "Response Drafted",
+        "Under Approval",
+        "Returned for Revision",
+        "Approved for Dispatch",
+        "Dispatched",
+        "Information Delivered",
         "Under Review",
         "Assigned",
         "Action in Progress",
@@ -40,7 +54,6 @@ MASTER_DATA = {
         "Completed",
         "Closed",
         "Rejected",
-        "Returned for Revision",
         "Escalated",
         "Reopened",
         "Archived",
@@ -125,13 +138,15 @@ ORGANIZATIONS = [
 ]
 
 USERS = [
-    ("A. Rahman", "arahman", "Coordination", "Administrator", "a.rahman@office.gov", "Active", datetime(2026, 9, 13, 9, 42)),
+    ("A. Rahman", "arahman", "Coordination", "Admin", "a.rahman@office.gov", "Active", datetime(2026, 9, 13, 9, 42)),
     ("S. Khan", "skhan", "Technical", "Management", "s.khan@office.gov", "Active", datetime(2026, 9, 13, 8, 18)),
-    ("N. Ahmed", "nahmed", "Finance", "Correspondence Officer", "n.ahmed@office.gov", "Active", datetime(2026, 9, 12, 16, 10)),
-    ("M. Iqbal", "miqbal", "Operations", "Department/User", "m.iqbal@office.gov", "Active", datetime(2026, 9, 11, 11, 30)),
-    ("F. Ali", "fali", "Administration", "Department/User", "f.ali@office.gov", "Inactive", datetime(2026, 9, 4, 10, 5)),
-    ("H. Masood", "hmasood", "External Relations", "Department/User", "h.masood@office.gov", "Active", datetime(2026, 9, 12, 14, 20)),
-    ("Z. Raza", "zraza", "Policy", "Correspondence Officer", "z.raza@office.gov", "Active", datetime(2026, 9, 13, 9, 5)),
+    ("N. Ahmed", "nahmed", "Finance", "Coordinator", "n.ahmed@office.gov", "Active", datetime(2026, 9, 12, 16, 10)),
+    ("M. Iqbal", "miqbal", "Operations", "Actionist", "m.iqbal@office.gov", "Active", datetime(2026, 9, 11, 11, 30)),
+    ("F. Ali", "fali", "Administration", "Actionist", "f.ali@office.gov", "Inactive", datetime(2026, 9, 4, 10, 5)),
+    ("H. Masood", "hmasood", "External Relations", "Actionist", "h.masood@office.gov", "Active", datetime(2026, 9, 12, 14, 20)),
+    ("Z. Raza", "zraza", "Policy", "Coordinator", "z.raza@office.gov", "Active", datetime(2026, 9, 13, 9, 5)),
+    ("R. Malik", "rmalik", "Technical", "Manager", "r.malik@office.gov", "Active", datetime(2026, 9, 13, 10, 0)),
+    ("L. Noor", "lnoor", "Coordination", "Viewer", "l.noor@office.gov", "Active", datetime(2026, 9, 13, 10, 5)),
 ]
 
 LETTERS = [

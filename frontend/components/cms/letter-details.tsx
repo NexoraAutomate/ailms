@@ -13,6 +13,7 @@ import {
   ApprovalEscalationPanel,
   CorrespondenceThreadPanel,
   DocumentsPanel,
+  EnterpriseLifecyclePanel,
   RelatedMeetingsPanel,
   WorkflowPanel,
 } from '@/components/cms/letter-panels'
@@ -118,6 +119,7 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
         </Card>
       </div>
       <WorkflowPanel letter={letter} users={users} onDone={refresh} />
+      <EnterpriseLifecyclePanel letter={letter} />
       <ApprovalEscalationPanel letter={letter} onDone={refresh} />
       <DocumentsPanel letter={letter} />
       <RelatedMeetingsPanel letter={letter} go={go} />

@@ -18,7 +18,7 @@ APPROVAL_STATUSES = {
     "Returned for Revision",
 }
 
-APPROVER_ROLES = {"Administrator", "Management"}
+APPROVER_ROLES = {"Admin", "Administrator", "Management", "Manager"}
 
 
 def serialize_approval(row: Approval) -> dict:

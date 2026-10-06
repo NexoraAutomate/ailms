@@ -70,7 +70,7 @@ type AppData = BootstrapData & {
   aiAudit: AiAuditEntry[]
 }
 
-const emptyMe: CurrentUser = { name: 'A. Rahman', role: 'Administrator', department: 'Coordination', initials: 'AR' }
+const emptyMe: CurrentUser = { name: 'A. Rahman', role: 'Admin', department: 'Coordination', initials: 'AR' }
 
 const AppDataContext = createContext<AppData | null>(null)
 

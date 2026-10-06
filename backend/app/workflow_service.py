@@ -11,12 +11,26 @@ from sqlalchemy.orm import Session
 from app.approval_service import latest_approval, sync_workflow_approval
 from app.escalation_service import sync_workflow_escalation
 from app.models import Letter, LetterAction, User, WorkflowTransition
-from app.services import CLOSED_STATUSES, add_audit, add_notification, current_user_name, resolve_user_role
+from app.services import CLOSED_STATUSES, add_audit, add_notification, current_user_name, normalize_role, resolve_user_role
 
 # Stored statuses (Overdue is derived in serializers, not written by workflow).
 WORKFLOW_STATUSES = {
     "Draft",
     "Registered",
+    "OCR Processed",
+    "LLM Analyzed",
+    "Validated",
+    "Classified",
+    "Pending Routing Approval",
+    "Routed",
+    "Action Assigned",
+    "In Progress",
+    "Response Drafted",
+    "Under Approval",
+    "Returned for Revision",
+    "Approved for Dispatch",
+    "Dispatched",
+    "Information Delivered",
     "Under Review",
     "Assigned",
     "Action in Progress",
@@ -28,14 +42,30 @@ WORKFLOW_STATUSES = {
     "Completed",
     "Closed",
     "Rejected",
-    "Returned for Revision",
     "Escalated",
     "Reopened",
     "Archived",
 }
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "Administrator": {
+    "Admin": {
+        "assign",
+        "forward",
+        "reassign",
+        "add_action",
+        "request_response",
+        "request_clarification",
+        "mark_complete",
+        "submit_for_approval",
+        "approve",
+        "reject",
+        "return_for_revision",
+        "escalate",
+        "reopen",
+        "close",
+        "archive",
+    },
+    "Administrator": {  # legacy alias
         "assign",
         "forward",
         "reassign",
@@ -69,7 +99,23 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "close",
         "archive",
     },
-    "Correspondence Officer": {
+    "Manager": {
+        "assign",
+        "forward",
+        "reassign",
+        "add_action",
+        "request_response",
+        "request_clarification",
+        "mark_complete",
+        "submit_for_approval",
+        "approve",
+        "reject",
+        "return_for_revision",
+        "escalate",
+        "reopen",
+        "close",
+    },
+    "Coordinator": {
         "assign",
         "forward",
         "reassign",
@@ -84,12 +130,34 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "close",
         "archive",
     },
-    "Department/User": {
+    "Correspondence Officer": {  # legacy
+        "assign",
+        "forward",
+        "reassign",
+        "add_action",
+        "request_response",
+        "request_clarification",
+        "mark_complete",
+        "submit_for_approval",
+        "return_for_revision",
+        "escalate",
+        "reopen",
+        "close",
+        "archive",
+    },
+    "Actionist": {
         "add_action",
         "request_clarification",
         "mark_complete",
         "submit_for_approval",
     },
+    "Department/User": {  # legacy
+        "add_action",
+        "request_clarification",
+        "mark_complete",
+        "submit_for_approval",
+    },
+    "Viewer": set(),
 }
 
 
@@ -164,8 +232,8 @@ def validate_transition(
     if action not in TRANSITION_RULES:
         raise HTTPException(status_code=400, detail=f"Unknown workflow action: {action}")
 
-    role = resolve_user_role(db, actor_name)
-    allowed = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS["Department/User"])
+    role = normalize_role(resolve_user_role(db, actor_name))
+    allowed = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS.get("Actionist", set()))
     if action not in allowed:
         raise HTTPException(status_code=403, detail="Access denied for this workflow action")
 
@@ -224,7 +292,48 @@ def execute_transition(
     reviewer_name: str | None = None,
     escalated_to: str | None = None,
     escalation_level: str | None = None,
+    category: str | None = None,
+    action_item_id: int | None = None,
+    response_body: str | None = None,
+    response_version_id: int | None = None,
+    approval_step_id: int | None = None,
+    info_recipients: list[dict] | None = None,
+    dispatch_channel: str | None = None,
+    dispatch_recipients: str | None = None,
+    priority: str | None = None,
+    due_date=None,
+    instructions: str | None = None,
+    blocked_reason: str | None = None,
+    document_id: int | None = None,
+    department_id: int | None = None,
 ) -> WorkflowTransition:
+    from app.enterprise_workflow_service import ENTERPRISE_ACTIONS, execute_enterprise_action
+
+    if action in ENTERPRISE_ACTIONS:
+        return execute_enterprise_action(
+            db,
+            letter=letter,
+            action=action,
+            actor_name=actor_name,
+            remarks=remarks,
+            assigned_to=assigned_to,
+            department=department,
+            department_id=department_id,
+            category=category,
+            action_item_id=action_item_id,
+            response_body=response_body,
+            response_version_id=response_version_id,
+            approval_step_id=approval_step_id,
+            info_recipients=info_recipients,
+            dispatch_channel=dispatch_channel,
+            dispatch_recipients=dispatch_recipients,
+            priority=priority,
+            due_date=due_date,
+            instructions=instructions,
+            blocked_reason=blocked_reason,
+            document_id=document_id,
+        )
+
     rule = validate_transition(db, letter=letter, action=action, actor_name=actor_name, reviewer_name=reviewer_name)
 
     from_status = stored_status(letter)
@@ -349,8 +458,10 @@ def execute_transition(
 
 
 def available_actions(db: Session, letter: Letter, actor_name: str) -> list[str]:
-    role = resolve_user_role(db, actor_name)
-    permitted = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS["Department/User"])
+    from app.enterprise_workflow_service import available_enterprise_actions
+
+    role = normalize_role(resolve_user_role(db, actor_name))
+    permitted = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS.get("Actionist", set()))
     current = stored_status(letter)
     if letter.status in {"Archived"} or current == "Archived":
         return []
@@ -362,6 +473,10 @@ def available_actions(db: Session, letter: Letter, actor_name: str) -> list[str]
         if rule.from_statuses is not None and current not in rule.from_statuses:
             continue
         actions.append(action)
+
+    for action in available_enterprise_actions(db, letter, actor_name):
+        if action not in actions:
+            actions.append(action)
     return actions
 
 

@@ -447,6 +447,9 @@ async def urgency(db: Session, letter_id: int) -> dict[str, Any]:
 
 
 async def draft_response(db: Session, letter_id: int, style: str = "default") -> dict[str, Any]:
+    from app.models import ResponseVersion
+    from datetime import datetime
+
     letter = db.get(Letter, letter_id)
     if not letter:
         raise ValueError("Letter not found")
@@ -455,7 +458,43 @@ async def draft_response(db: Session, letter_id: int, style: str = "default") ->
         f"Style requested: {style}."
     )
     user = f"Letter:\n{_letter_payload(letter)}"
-    return await chat_json(system=system, user=user)
+    data = await chat_json(system=system, user=user)
+    body = (data.get("text") or "").strip()
+    if body:
+        latest = (
+            db.query(ResponseVersion)
+            .filter(ResponseVersion.letter_id == letter.id)
+            .order_by(ResponseVersion.version.desc())
+            .first()
+        )
+        actor = letter.assigned_to or letter.created_by or "AI assist"
+        if latest and latest.status == "Draft":
+            latest.body_text = body
+            latest.updated_at = datetime.now()
+        else:
+            version = (latest.version + 1) if latest else 1
+            if latest and latest.status == "Approved":
+                latest.status = "Superseded"
+            db.add(
+                ResponseVersion(
+                    letter_id=letter.id,
+                    version=version,
+                    body_text=body,
+                    status="Draft",
+                    prepared_by=actor,
+                )
+            )
+        if letter.status in {
+            "In Progress",
+            "Action Assigned",
+            "Action in Progress",
+            "Returned for Revision",
+            "Assigned",
+        }:
+            letter.status = "Response Drafted"
+            letter.last_action = "AI draft assist"
+        db.flush()
+    return data
 
 
 async def natural_search(db: Session, query: str) -> dict[str, Any]:
