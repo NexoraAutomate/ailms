@@ -1,7 +1,7 @@
 /** Map legacy in-app page labels / tokens to App Router paths. */
 
 export const NAV_GROUPS = [
-  { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Monitoring'] as const },
+  { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Monitoring', 'Onboarding'] as const },
   {
     label: 'Letters',
     items: ['Inbox', 'Sent', 'Create', 'Track', 'Catalog'] as const,
@@ -33,6 +33,7 @@ const LABEL_TO_HREF: Record<string, string> = {
   Dashboard: '/',
   'My Actions': '/letters/my-actions',
   Monitoring: '/letters/monitoring',
+  Onboarding: '/onboarding',
   Inbox: '/letters/inbox',
   Sent: '/letters/sent',
   Create: '/letters/register',
@@ -117,6 +118,7 @@ export function labelFromPathname(pathname: string): string {
   if (pathname === '/' || pathname === '') return 'Dashboard'
   if (pathname === '/letters/my-actions') return 'My Actions'
   if (pathname === '/letters/monitoring') return 'Monitoring'
+  if (pathname === '/onboarding') return 'Onboarding'
   if (pathname === '/letters/inbox') return 'Inbox'
   if (pathname === '/letters/sent') return 'Sent'
   if (pathname.startsWith('/letters/register')) return 'Create'
