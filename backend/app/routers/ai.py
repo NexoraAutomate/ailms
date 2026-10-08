@@ -18,6 +18,7 @@ from app.ai_service import (
     classify,
     draft_response,
     extract_fields,
+    letter_qa,
     management_insights,
     natural_search,
     recommend_actions,
@@ -66,6 +67,14 @@ class ChatIn(BaseModel):
     message: str
     history: list[ChatHistoryItem] = Field(default_factory=list)
     context_letter_ids: list[int] = Field(default_factory=list, alias="contextLetterIds")
+
+    model_config = {"populate_by_name": True}
+
+
+class LetterQaIn(BaseModel):
+    letter_id: int = Field(alias="letterId")
+    message: str
+    history: list[ChatHistoryItem] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -331,3 +340,22 @@ async def api_chat(body: ChatIn, db: Session = Depends(get_db)) -> dict:
         history=history,
         context_letter_ids=list(body.context_letter_ids),
     )
+
+
+@router.post("/letter-qa")
+async def api_letter_qa(body: LetterQaIn, db: Session = Depends(get_db)) -> dict:
+    _guard_configured()
+    if not body.message.strip():
+        raise HTTPException(status_code=422, detail="Message is required")
+    history = [{"role": item.role, "content": item.content} for item in body.history]
+    try:
+        return await letter_qa(
+            db,
+            body.letter_id,
+            body.message.strip(),
+            history=history,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LlmNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

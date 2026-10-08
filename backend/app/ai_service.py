@@ -781,3 +781,43 @@ async def assistant_chat(
     )
     text = await chat_completion(system=system, user=user, temperature=0.3)
     return {"text": text.strip(), "result": search}
+
+
+async def letter_qa(
+    db: Session,
+    letter_id: int,
+    message: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Answer a user question about a single opened letter (metadata + body text)."""
+    letter = db.get(Letter, letter_id)
+    if not letter:
+        raise ValueError("Letter not found")
+
+    history_lines: list[str] = []
+    for item in (history or [])[-8:]:
+        role = str(item.get("role") or "user").strip().lower()
+        content = str(item.get("content") or item.get("text") or "").strip()
+        if content:
+            history_lines.append(f"{role}: {content}")
+    history_block = ("Conversation so far:\n" + "\n".join(history_lines) + "\n\n") if history_lines else ""
+
+    payload = _letter_payload(letter)
+    system = (
+        "You are the AILMS letter Q&A assistant. The user has opened one correspondence file "
+        "and is asking questions about it. Answer using only the provided letter record "
+        "(including bodyText / remarks when present). "
+        "Follow the user's formatting instructions precisely (length, sentence count, word limits). "
+        "If no formatting constraint is given, answer in plain professional English in 2-4 sentences. "
+        "If the letter record does not contain enough information, say what is missing. "
+        "Do not invent facts, dates, organizations, or actions that are not present in the data. "
+        "Do not discuss other letters unless they are referenced in this letter's fields."
+    )
+    user = (
+        f"{history_block}"
+        f"User question: {message}\n\n"
+        f"Opened letter:\n{payload}"
+    )
+    text = await chat_completion(system=system, user=user, temperature=0.3)
+    return {"text": text.strip(), "letterId": letter_id}

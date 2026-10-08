@@ -10,6 +10,12 @@ PyJWT>=2.9.0
 pymupdf>=1.24.0
 pillow>=10.0.0
 pytest>=8.0.0
-# Optional heavy OCR stack (CPU). Install when the host Python/OS supports it:
-#   pip install paddlepaddle paddleocr
+# Optional heavy OCR stack. Install when the host Python/OS supports it:
+#   CPU:  pip install paddlepaddle paddleocr
+#   GPU:  do NOT use plain PyPI `paddlepaddle-gpu` (stale 2.6.x). Use Paddle's index:
+#     pip uninstall -y paddlepaddle paddlepaddle-gpu
+#     pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+#     pip install paddleocr
+#     then set OCR_PADDLE_DEVICE=gpu
+#   (cu118 index if your NVIDIA driver is older; see PaddleOCR paddlepaddle_installation docs)
 # OCR_ENGINE=auto falls back to pymupdf_text (PDF embedded text) if paddleocr is missing.

@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.ai_service import (
     _is_followup_question,
@@ -57,7 +57,12 @@ class AiSearchKeywordTest(unittest.TestCase):
         db.query.return_value = query
 
         # Even if a filler token slips through, topic tokens should still match.
-        hits = _text_match_letters(db, "is there any letter pertaining to pension?")
+        with (
+            patch("app.services.current_user_name", return_value="Admin"),
+            patch("app.letter_access.resolve_user_role", return_value="Administrator"),
+            patch("app.letter_access.is_administrator", return_value=True),
+        ):
+            hits = _text_match_letters(db, "is there any letter pertaining to pension?")
         self.assertEqual([row.id for row in hits], [50])
 
 

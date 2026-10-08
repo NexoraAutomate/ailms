@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Copy, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
@@ -19,13 +19,16 @@ import {
   assessUrgency,
   classifyLetter,
   extractLetterInformation,
+  fetchAiStatus,
   fetchLetterAiAnalysis,
   generateDraftResponse,
+  letterQaChat,
   recommendActions,
   saveLetterAiDecisions,
   summarizeLetter,
   type ActionRecommendation,
   type AiAnalysisKind,
+  type AiBackendStatus,
   type AiDecision,
   type AiStatus,
   type ClassificationSuggestion,
@@ -38,11 +41,12 @@ import {
   type AiSummary,
 } from '@/services/ai'
 import type { Letter } from '@/services/letters'
+import { formatDateTime } from '@/lib/datetime'
 
 type ConfirmTarget = { title: string; current: string; suggested: string; reason?: string; apply: (value: string, decision: AiDecision) => Promise<void> }
 
 type PanelShared = {
-  canRegenerate: boolean
+  canRegenerate?: boolean
   stored?: StoredAiAnalysis | null
   onStored?: (kind: AiAnalysisKind, next: StoredAiAnalysis | null) => void
 }
@@ -869,6 +873,143 @@ function topicLabel(letter: Letter) {
   return 'Administrative'
 }
 
+type LetterQaMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  time: string
+}
+
+const LETTER_QA_PROMPTS = [
+  'What is this letter about?',
+  'What actions are required?',
+  'When is the deadline?',
+  'Who sent this letter?',
+  'What is the current status?',
+]
+
+function AILetterQA({ letter }: { letter: Letter }) {
+  const [input, setInput] = useState('')
+  const [status, setStatus] = useState<AiStatus>('idle')
+  const [messages, setMessages] = useState<LetterQaMessage[]>([])
+  const [aiBackend, setAiBackend] = useState<AiBackendStatus | null>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setMessages([])
+    setInput('')
+    setStatus('idle')
+    fetchAiStatus().then(setAiBackend)
+  }, [letter.id])
+
+  useEffect(() => {
+    const el = scrollerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages, status])
+
+  const ask = async (question: string) => {
+    const q = question.trim()
+    if (!q || status === 'generating') return
+    setInput('')
+    const userMessage: LetterQaMessage = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      text: q,
+      time: formatDateTime(new Date()),
+    }
+    const prior = messages
+    setMessages((current) => [...current, userMessage])
+    setStatus('generating')
+    try {
+      const history = [...prior, userMessage].slice(-8).map((item) => ({
+        role: item.role,
+        content: item.text,
+      }))
+      const reply = await letterQaChat(letter, q, history)
+      setMessages((current) => [
+        ...current,
+        {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          text: reply.text,
+          time: formatDateTime(new Date()),
+        },
+      ])
+      setStatus('idle')
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  return (
+    <div className="flex min-h-[360px] flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] text-slate-400">
+          Ask anything about {letter.number}
+          {aiBackend?.enabled ? ` · Live · ${aiBackend.provider}` : ' · Local fallback when LLM is unavailable'}
+        </p>
+        {messages.length > 0 && (
+          <Button size="sm" variant="outline" onClick={() => { setMessages([]); setStatus('idle') }}>
+            Clear chat
+          </Button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {LETTER_QA_PROMPTS.map((prompt) => (
+          <button
+            key={prompt}
+            type="button"
+            onClick={() => void ask(prompt)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
+          >
+            {prompt}
+          </button>
+        ))}
+      </div>
+      <div ref={scrollerRef} className="flex max-h-[320px] min-h-[200px] flex-1 flex-col gap-3 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+        {messages.length === 0 && status === 'idle' && (
+          <p className="text-xs text-slate-500">
+            Ask about the subject, body text, deadline, sender, required actions, or status for this letter.
+          </p>
+        )}
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            className={`max-w-[92%] rounded-lg p-3 ${message.role === 'user' ? 'ml-auto bg-[#0d3763] text-white' : 'bg-white shadow-sm'}`}
+          >
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <span className={`text-[10px] font-bold uppercase ${message.role === 'user' ? 'text-blue-100' : 'text-[#1769aa]'}`}>
+                {message.role === 'user' ? 'You' : 'AI'}
+              </span>
+              <span className={`text-[10px] ${message.role === 'user' ? 'text-blue-100' : 'text-slate-400'}`}>{message.time}</span>
+            </div>
+            <p className={`whitespace-pre-wrap text-xs leading-5 ${message.role === 'user' ? 'text-white' : 'text-slate-700'}`}>{message.text}</p>
+          </div>
+        ))}
+        {status === 'generating' && <AIStatusIndicator status="generating" label="AI is answering…" />}
+        {status === 'error' && <AIStatusIndicator status="error" label="Could not answer this question. Try again." />}
+      </div>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void ask(input)
+        }}
+      >
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask a question about this letter…"
+          className="h-10 flex-1 rounded-md border border-slate-200 px-3 text-xs"
+          disabled={status === 'generating'}
+        />
+        <Button type="submit" disabled={!input.trim() || status === 'generating'}>Ask</Button>
+      </form>
+      <AIAdvisoryNote />
+    </div>
+  )
+}
+
 export function AIIntelligencePanel({
   letter,
   letters,
@@ -882,7 +1023,7 @@ export function AIIntelligencePanel({
 }) {
   const [tab, setTab] = useState('Summarize')
   const [bundle, setBundle] = useState<LetterAiAnalysisBundle | null>(null)
-  const tabs = ['Summarize', 'Extract Information', 'Classify', 'Recommend Actions', 'Assess Urgency', 'Draft Response', 'Analyze Correspondence']
+  const tabs = ['Summarize', 'Extract Information', 'Classify', 'Recommend Actions', 'Assess Urgency', 'Draft Response', 'Analyze Correspondence', 'Q&A']
 
   useEffect(() => {
     let cancelled = false
@@ -936,7 +1077,9 @@ export function AIIntelligencePanel({
         ))}
       </div>
       <div className="border-t border-slate-100 p-3">
-        {!bundle ? (
+        {tab === 'Q&A' ? (
+          <AILetterQA letter={letter} />
+        ) : !bundle ? (
           <p className="text-[11px] text-slate-400">Loading stored AI analysis…</p>
         ) : (
           <>

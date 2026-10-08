@@ -71,12 +71,79 @@ class OcrEngine(Protocol):
         """
 
 
+def resolve_paddle_device(raw: str | None) -> str:
+    """Normalize OCR_PADDLE_DEVICE to a PaddleOCR ``device`` string.
+
+    Accepted: ``cpu``, ``gpu``, ``gpu:N``, and aliases ``cuda`` / ``cuda:N``.
+    """
+    value = (raw or "cpu").strip().lower()
+    if not value or value == "cpu":
+        return "cpu"
+    if value in {"gpu", "cuda"}:
+        return "gpu"
+    if value.startswith("gpu:"):
+        suffix = value.split(":", 1)[1].strip()
+        if not suffix.isdigit():
+            raise OcrError(
+                "OCR_ENGINE_ERROR",
+                f"Invalid OCR_PADDLE_DEVICE={raw!r}; expected gpu:N with integer N",
+            )
+        return f"gpu:{suffix}"
+    if value.startswith("cuda:"):
+        suffix = value.split(":", 1)[1].strip()
+        if not suffix.isdigit():
+            raise OcrError(
+                "OCR_ENGINE_ERROR",
+                f"Invalid OCR_PADDLE_DEVICE={raw!r}; expected cuda:N with integer N",
+            )
+        return f"gpu:{suffix}"
+    raise OcrError(
+        "OCR_ENGINE_ERROR",
+        f"Invalid OCR_PADDLE_DEVICE={raw!r}; use cpu, gpu, or gpu:0",
+    )
+
+
+def _ensure_paddle_device_ready(device: str) -> None:
+    """Fail fast with a clear message when GPU is requested but unavailable."""
+    if device == "cpu" or not device.startswith("gpu"):
+        return
+    try:
+        import paddle  # type: ignore[import-untyped]
+    except ImportError:
+        return
+    try:
+        compiled_cuda = bool(paddle.device.is_compiled_with_cuda())
+    except Exception:
+        return
+    if not compiled_cuda:
+        raise OcrError(
+            "OCR_ENGINE_ERROR",
+            "OCR_PADDLE_DEVICE requests GPU but the installed paddlepaddle build "
+            "is CPU-only (PyPI `paddlepaddle-gpu` is stale). Install from Paddle's "
+            "index, e.g. "
+            "`pip uninstall -y paddlepaddle paddlepaddle-gpu && "
+            "pip install paddlepaddle-gpu==3.2.0 "
+            "-i https://www.paddlepaddle.org.cn/packages/stable/cu126/`, "
+            "or set OCR_PADDLE_DEVICE=cpu",
+        )
+    try:
+        count = int(paddle.device.cuda.device_count())
+    except Exception:
+        return
+    if count < 1:
+        raise OcrError(
+            "OCR_ENGINE_ERROR",
+            "OCR_PADDLE_DEVICE requests GPU but no CUDA device was found. "
+            "Check drivers/CUDA or set OCR_PADDLE_DEVICE=cpu",
+        )
+
+
 class PaddleOcrEngine:
     """PaddleOCR wrapper (2.x `.ocr` and 3.x `.predict` shapes)."""
 
     name = "paddleocr"
 
-    def __init__(self, *, lang: str = "en") -> None:
+    def __init__(self, *, lang: str = "en", device: str | None = None) -> None:
         try:
             from paddleocr import PaddleOCR  # type: ignore[import-untyped]
         except ImportError as exc:
@@ -86,6 +153,9 @@ class PaddleOcrEngine:
                 "or set OCR_ENGINE=pymupdf_text",
             ) from exc
 
+        self.device = resolve_paddle_device(device)
+        _ensure_paddle_device_ready(self.device)
+
         # Windows + Paddle 3.x: oneDNN/PIR path raises NotImplementedError on infer.
         try:
             import paddle  # type: ignore[import-untyped]
@@ -94,13 +164,30 @@ class PaddleOcrEngine:
         except Exception:
             pass
 
-        self._ocr = PaddleOCR(
-            lang=lang,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            enable_mkldnn=False,
-        )
+        try:
+            try:
+                self._ocr = PaddleOCR(
+                    lang=lang,
+                    device=self.device,
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                    enable_mkldnn=False,
+                )
+            except TypeError:
+                # Older paddleocr (2.x) used use_gpu instead of device.
+                self._ocr = PaddleOCR(
+                    lang=lang,
+                    use_gpu=self.device != "cpu",
+                    use_angle_cls=False,
+                    enable_mkldnn=False,
+                )
+        except Exception as exc:
+            raise OcrError(
+                "OCR_ENGINE_ERROR",
+                f"Failed to init PaddleOCR on device={self.device}: {exc}",
+            ) from exc
+
         self.version = getattr(PaddleOCR, "__module__", "paddleocr")
         try:
             import paddleocr as _pkg  # type: ignore[import-untyped]
@@ -108,6 +195,7 @@ class PaddleOcrEngine:
             self.version = str(getattr(_pkg, "__version__", self.version))
         except Exception:
             pass
+        logger.info("PaddleOCR ready device=%s version=%s", self.device, self.version)
 
     def recognize_pdf_page(self, pdf_path: Path, page_index: int) -> list[OcrLine] | None:
         return None
@@ -248,12 +336,16 @@ def paddleocr_available() -> bool:
 def get_ocr_engine(name: str | None = None) -> OcrEngine:
     settings = get_settings()
     choice = (name or settings.ocr_engine or "auto").strip().lower()
+    paddle_kwargs = {
+        "lang": settings.ocr_paddle_lang,
+        "device": settings.ocr_paddle_device,
+    }
     if choice == "auto":
         if paddleocr_available():
-            return PaddleOcrEngine(lang=settings.ocr_paddle_lang)
+            return PaddleOcrEngine(**paddle_kwargs)
         return PyMuPdfTextEngine()
     if choice == "paddleocr":
-        return PaddleOcrEngine(lang=settings.ocr_paddle_lang)
+        return PaddleOcrEngine(**paddle_kwargs)
     if choice in {"pymupdf_text", "pymupdf", "text"}:
         return PyMuPdfTextEngine()
     raise OcrError("OCR_ENGINE_ERROR", f"Unknown OCR_ENGINE={choice!r}")
@@ -487,7 +579,7 @@ def build_ocr_artifact(
     engine: OcrEngine,
     errors: list[str],
 ) -> dict[str, Any]:
-    return {
+    artifact: dict[str, Any] = {
         "schemaVersion": SCHEMA_VERSION,
         "jobId": str(job_id),
         "stagedDocumentId": str(staged_document_id),
@@ -516,6 +608,10 @@ def build_ocr_artifact(
         ],
         "errors": errors,
     }
+    device = getattr(engine, "device", None)
+    if device:
+        artifact["device"] = device
+    return artifact
 
 
 def run_ocr_stage(

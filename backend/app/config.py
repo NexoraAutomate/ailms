@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     ocr_max_pages: int = 50
     ocr_max_image_pixels: int = 40_000_000
     ocr_paddle_lang: str = "en"
+    # PaddleOCR inference device: cpu | gpu | gpu:0 (requires paddlepaddle-gpu for gpu).
+    ocr_paddle_device: str = "cpu"
 
     # OCR normalization (step 6): max chars for combined LLM input text.
     llm_input_max_chars: int = 100_000

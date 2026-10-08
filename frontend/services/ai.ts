@@ -175,6 +175,7 @@ export const AI_ENDPOINTS = {
   analyze: '/api/ai/analyze-correspondence',
   insights: '/api/ai/management-insights',
   chat: '/api/ai/chat',
+  letterQa: '/api/ai/letter-qa',
   status: '/api/ai/status',
   letterAnalysis: (letterId: string | number) => `/api/ai/letters/${letterId}/analysis`,
   letterAnalysisKind: (letterId: string | number, kind: AiAnalysisKind) =>
@@ -553,6 +554,70 @@ export async function assistantChat(
       const result = await naturalLanguageSearchMock(message, letters, contextLetterIds)
       return { text: mockAssistantReply(message, result), result }
     },
+  )
+}
+
+export async function letterQaChat(
+  letter: Letter,
+  message: string,
+  history: ChatHistoryItem[] = [],
+): Promise<{ text: string }> {
+  return withLlm(
+    () =>
+      api.post<{ text: string; letterId?: number }>(AI_ENDPOINTS.letterQa, {
+        letterId: Number(letter.id),
+        message,
+        history,
+      }),
+    async () => {
+      await wait(320)
+      return { text: mockLetterQaReply(letter, message) }
+    },
+  )
+}
+
+function mockLetterQaReply(letter: Letter, message: string): string {
+  const q = message.toLowerCase()
+  const body = (letter.bodyText || '').trim() || (letter.remarks || '').trim()
+
+  if (/deadline|due date|when.*(due|respond)/.test(q)) {
+    return letter.dueDate
+      ? `The recorded due date for ${letter.number} is ${letter.dueDate}.`
+      : `No official due date is recorded for ${letter.number}.`
+  }
+  if (/who (sent|wrote|from)|sender|originat/.test(q)) {
+    return letter.from
+      ? `${letter.number} was sent by ${letter.from}.`
+      : `The sender organization is not recorded for ${letter.number}.`
+  }
+  if (/status|progress|where.*(stand|at)/.test(q)) {
+    const owner = letter.assignedTo ? ` It is currently owned by ${letter.assignedTo}.` : ''
+    return `${letter.number} is currently marked ${letter.status}.${owner}`
+  }
+  if (/action|require|need to|next step/.test(q)) {
+    const action = letter.actionRequired || letter.lastAction
+    return action
+      ? `Required / latest action for ${letter.number}: ${action}.`
+      : `No specific required action is recorded for ${letter.number} beyond normal review.`
+  }
+  if (/priority|urgenc/.test(q)) {
+    return `${letter.number} is recorded as ${letter.priority} priority.`
+  }
+  if (/summar|about|subject|content|say|mention|explain|what/.test(q)) {
+    if (body) {
+      return body.length > 500 ? `${body.slice(0, 500).trim()}…` : body
+    }
+    return (
+      `Letter ${letter.number} (${letter.type}) concerns “${letter.subject}”. ` +
+      `It is from ${letter.from || 'an unspecified sender'} to ${letter.to || 'the recorded recipient'}, ` +
+      `held by ${letter.department || 'the assigned department'}, status ${letter.status}.`
+    )
+  }
+  return (
+    `Based on the register entry for ${letter.number}: subject “${letter.subject}”, ` +
+    `status ${letter.status}, priority ${letter.priority}` +
+    (letter.dueDate ? `, due ${letter.dueDate}` : '') +
+    `. Ask a more specific question about the content, deadline, sender, or required action.`
   )
 }
 

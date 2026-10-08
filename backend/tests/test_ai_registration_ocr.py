@@ -19,6 +19,7 @@ from app.ai.ocr_service import (
     get_ocr_engine,
     load_ocr_artifact,
     ocr_document,
+    resolve_paddle_device,
     run_ocr_stage,
     write_ocr_artifact,
 )
@@ -39,6 +40,19 @@ class OcrUnitTest(unittest.TestCase):
     def test_get_engine_pymupdf_text(self) -> None:
         engine = get_ocr_engine("pymupdf_text")
         self.assertEqual(engine.name, "pymupdf_text")
+
+    def test_resolve_paddle_device(self) -> None:
+        self.assertEqual(resolve_paddle_device(None), "cpu")
+        self.assertEqual(resolve_paddle_device("CPU"), "cpu")
+        self.assertEqual(resolve_paddle_device("gpu"), "gpu")
+        self.assertEqual(resolve_paddle_device("cuda"), "gpu")
+        self.assertEqual(resolve_paddle_device("gpu:1"), "gpu:1")
+        self.assertEqual(resolve_paddle_device("cuda:0"), "gpu:0")
+        with self.assertRaises(OcrError) as ctx:
+            resolve_paddle_device("tpu")
+        self.assertEqual(ctx.exception.code, "OCR_ENGINE_ERROR")
+        with self.assertRaises(OcrError):
+            resolve_paddle_device("gpu:x")
 
     def test_ocr_sample_01_typed_letter(self) -> None:
         if not _SAMPLE_01.is_file():
