@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
   ArrowRight,
@@ -27,6 +27,7 @@ import {
   PRACTICE_STEPS,
   WORKFLOW_PIPELINE,
   defaultOnboardingProgress,
+  getRoleColor,
   loadOnboardingProgress,
   saveOnboardingProgress,
   type OnboardingChapterId,
@@ -56,6 +57,50 @@ function ProgressBar({ value }: { value: number }) {
         animate={{ width: `${Math.min(100, Math.max(0, value))}%` }}
         transition={{ duration: 0.35 }}
       />
+    </div>
+  )
+}
+
+/** Bold role name in that role's unique color (used everywhere in onboarding). */
+function RoleName({ name }: { name: string }) {
+  const color = getRoleColor(name)
+  return (
+    <strong className="font-bold" style={{ color: color.hex }}>
+      {name}
+    </strong>
+  )
+}
+
+/** Soft chip(s) naming which role(s) own a step. */
+function RoleChips({ roles }: { roles: readonly string[] }) {
+  if (!roles.length) return null
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {roles.map((role) => {
+        const color = getRoleColor(role)
+        return (
+          <span
+            key={role}
+            className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold"
+            style={{ color: color.hex, backgroundColor: color.soft, border: `1px solid ${color.border}` }}
+          >
+            {role}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+function RoleLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      {ONBOARDING_ROLES.map((role) => (
+        <span key={role.name} className="inline-flex items-center gap-1.5 text-[10px] text-slate-500">
+          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: role.color.hex }} />
+          <RoleName name={role.name} />
+        </span>
+      ))}
     </div>
   )
 }
@@ -96,7 +141,9 @@ function WelcomeChapter() {
       <p className="text-sm leading-6 text-slate-600">
         This system tracks every letter from registration through marking, routing, action items, response,
         and archive. Work is role-gated: what you see on a letter depends on your role and the current status.
+        Each step below lists the role(s) that typically act there.
       </p>
+      <RoleLegend />
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {WORKFLOW_PIPELINE.map((step, index) => (
           <div key={step.status} className="rounded-md border border-slate-200 bg-slate-50/80 p-3">
@@ -107,13 +154,19 @@ function WelcomeChapter() {
               <p className="text-xs font-bold text-slate-800">{step.status}</p>
             </div>
             <p className="text-[11px] leading-5 text-slate-500">{step.meaning}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Role</span>
+              <RoleChips roles={step.roles} />
+            </div>
           </div>
         ))}
       </div>
       <Card className="border-blue-100 bg-blue-50/50 p-4">
         <p className="text-xs font-semibold text-[#0d3763]">Tip</p>
         <p className="mt-1 text-xs leading-5 text-slate-600">
-          Open any letter to use the Workflow panel. Only authorized transitions for your role appear as actions.
+          Open any letter to use the Workflow panel. Only authorized transitions for your role appear as actions.{' '}
+          <RoleName name="Viewer" /> never sees transition buttons; <RoleName name="Admin" /> can override any
+          step.
         </p>
       </Card>
     </div>
@@ -131,24 +184,33 @@ function RolesChapter({
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
-        Select a role to see what it can do. New accounts typically start as <strong>Actionist</strong>; admins
-        elevate people in Settings → Users.
+        Roles are listed in the order a letter moves through the system — from intake to close. Each role keeps
+        the same color throughout this tour. New accounts typically start as <RoleName name="Actionist" />;{' '}
+        <RoleName name="Admin" /> elevates people in Settings → Users.
       </p>
       <div className="flex flex-wrap gap-2">
-        {ONBOARDING_ROLES.map((item) => (
-          <button
-            key={item.name}
-            type="button"
-            onClick={() => onSelectRole(item.name)}
-            className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition ${
-              selectedRole === item.name
-                ? 'border-[#0d3763] bg-[#0d3763] text-white'
-                : 'border-slate-200 bg-white text-slate-600 hover:border-blue-200'
-            }`}
-          >
-            {item.name}
-          </button>
-        ))}
+        {ONBOARDING_ROLES.map((item) => {
+          const active = selectedRole === item.name
+          return (
+            <button
+              key={item.name}
+              type="button"
+              onClick={() => onSelectRole(item.name)}
+              className="rounded-md border px-3 py-1.5 text-xs font-bold transition"
+              style={
+                active
+                  ? { backgroundColor: item.color.hex, borderColor: item.color.hex, color: '#fff' }
+                  : {
+                      backgroundColor: item.color.soft,
+                      borderColor: item.color.border,
+                      color: item.color.hex,
+                    }
+              }
+            >
+              {item.name}
+            </button>
+          )
+        })}
       </div>
       <AnimatePresence mode="wait">
         <motion.div
@@ -157,17 +219,26 @@ function RolesChapter({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.2 }}
-          className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+          className="rounded-lg border bg-white p-4 shadow-sm"
+          style={{ borderColor: role.color.border }}
         >
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-bold text-slate-800">{role.name}</h3>
-            <Badge tone="blue">{role.focus}</Badge>
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: role.color.hex }} />
+            <h3 className="text-sm font-bold" style={{ color: role.color.hex }}>
+              {role.name}
+            </h3>
+            <span
+              className="inline-flex items-center rounded-md px-2 py-1 text-[11px] font-semibold"
+              style={{ color: role.color.hex, backgroundColor: role.color.soft }}
+            >
+              {role.focus}
+            </span>
           </div>
           <p className="text-xs leading-5 text-slate-600">{role.summary}</p>
           <ul className="mt-3 space-y-1.5">
             {role.permissions.map((perm) => (
               <li key={perm} className="flex items-start gap-2 text-xs text-slate-700">
-                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" style={{ color: role.color.hex }} />
                 <span>{perm}</span>
               </li>
             ))}
@@ -179,24 +250,43 @@ function RolesChapter({
 }
 
 function RegisterChapter({ go }: { go: (target: string) => void }) {
+  const steps: { text: string; roles: string[] }[] = [
+    {
+      text: 'Open Letters → Create and choose Incoming or Outgoing.',
+      roles: ['Coordinator', 'Admin'],
+    },
+    {
+      text: 'Upload a scan (optional) — OCR fills number, subject, dates, and body.',
+      roles: ['Coordinator'],
+    },
+    {
+      text: 'Review the staged job if AI needs confirmation, then save the letter.',
+      roles: ['Coordinator'],
+    },
+    {
+      text: 'The letter starts as Registered and appears in Inbox / Track.',
+      roles: ['Coordinator', 'Viewer'],
+    },
+  ]
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
-        Use <strong>Create</strong> (Register Letter) to capture incoming or outgoing correspondence. You can
-        enter fields manually or upload a scan for OCR + AI extraction, then review before saving.
+        <RoleName name="Coordinator" /> (or <RoleName name="Admin" />) uses <strong>Create</strong> (Register
+        Letter) to capture incoming or outgoing correspondence. Enter fields manually or upload a scan for OCR +
+        AI extraction, then review before saving.
       </p>
       <ol className="space-y-3">
-        {[
-          'Open Letters → Create and choose Incoming or Outgoing.',
-          'Upload a scan (optional) — OCR fills number, subject, dates, and body.',
-          'Review the staged job if AI needs confirmation, then save the letter.',
-          'The letter starts as Registered and appears in Inbox / Track.',
-        ].map((step, i) => (
-          <li key={step} className="flex gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5">
+        {steps.map((step, i) => (
+          <li key={step.text} className="flex gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#1769aa] text-[11px] font-bold text-white">
               {i + 1}
             </span>
-            <span className="text-xs leading-5 text-slate-700">{step}</span>
+            <div className="min-w-0 flex-1">
+              <span className="text-xs leading-5 text-slate-700">{step.text}</span>
+              <div className="mt-1.5">
+                <RoleChips roles={step.roles} />
+              </div>
+            </div>
           </li>
         ))}
       </ol>
@@ -215,8 +305,8 @@ function MarkingChapter() {
   return (
     <div className="space-y-5">
       <p className="text-sm leading-6 text-slate-600">
-        <strong>Marking</strong> (classify) decides the path. Coordinators and managers set whether a letter is
-        Actionable or Information after validation.
+        <strong>Marking</strong> (classify) decides the path. <RoleName name="Coordinator" /> and{' '}
+        <RoleName name="Manager" /> set whether a letter is Actionable or Information after validation.
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <button
@@ -226,9 +316,13 @@ function MarkingChapter() {
             choice === 'actionable' ? 'border-[#0d3763] bg-blue-50 ring-1 ring-[#0d3763]/40' : 'border-slate-200 hover:border-blue-200'
           }`}
         >
-          <p className="text-sm font-bold text-slate-800">Actionable</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-bold text-slate-800">Actionable</p>
+            <RoleChips roles={['Coordinator', 'Manager']} />
+          </div>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Needs an owner, action items, response draft, approval, and dispatch before close.
+            Needs an owner, action items, response draft, approval, and dispatch before close. Marked by{' '}
+            <RoleName name="Coordinator" /> / <RoleName name="Manager" />.
           </p>
         </button>
         <button
@@ -238,9 +332,13 @@ function MarkingChapter() {
             choice === 'information' ? 'border-[#0d3763] bg-blue-50 ring-1 ring-[#0d3763]/40' : 'border-slate-200 hover:border-blue-200'
           }`}
         >
-          <p className="text-sm font-bold text-slate-800">Information / FYI</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-bold text-slate-800">Information / FYI</p>
+            <RoleChips roles={['Coordinator']} />
+          </div>
           <p className="mt-1 text-xs leading-5 text-slate-500">
             Route for awareness, acknowledge delivery, then close as information delivered — no reply chain.
+            Typically marked and closed by <RoleName name="Coordinator" />.
           </p>
         </button>
       </div>
@@ -250,9 +348,17 @@ function MarkingChapter() {
           animate={{ opacity: 1, y: 0 }}
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-900"
         >
-          {choice === 'actionable'
-            ? 'Next: approve routing → delegate / handle here → Actionist accepts the action item.'
-            : 'Next: route for information → recipients acknowledge → close information letter.'}
+          {choice === 'actionable' ? (
+            <>
+              Next: <RoleName name="Management" /> approves routing → <RoleName name="Manager" /> delegates →{' '}
+              <RoleName name="Actionist" /> accepts the action item.
+            </>
+          ) : (
+            <>
+              Next: <RoleName name="Coordinator" /> routes for information → <RoleName name="Actionist" />{' '}
+              acknowledges → <RoleName name="Coordinator" /> closes the information letter.
+            </>
+          )}
         </motion.div>
       )}
       <div className="rounded-lg border border-slate-200 p-4">
@@ -289,30 +395,56 @@ function MarkingChapter() {
 }
 
 function RoutingChapter() {
+  const steps: { title: string; detail: string; roles: string[] }[] = [
+    {
+      title: 'Validate',
+      detail: 'Confirm OCR fields, attachments, and parties.',
+      roles: ['Coordinator'],
+    },
+    {
+      title: 'Classify / Mark',
+      detail: 'Set Information vs Actionable.',
+      roles: ['Coordinator', 'Manager'],
+    },
+    {
+      title: 'Approve routing',
+      detail: 'Confirm owning department when required.',
+      roles: ['Management', 'Admin'],
+    },
+    {
+      title: 'Delegate / Handle here',
+      detail: 'Create an action item or keep ownership.',
+      roles: ['Manager', 'Coordinator'],
+    },
+    {
+      title: 'Assign / Forward / Reassign',
+      detail: 'Move ownership as the letter progresses.',
+      roles: ['Coordinator', 'Manager', 'Admin'],
+    },
+  ]
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
-        After registration, Coordinators <strong>validate</strong> data, then <strong>classify</strong> (mark)
-        the letter. Managers may approve routing, delegate to an Actionist, or handle the letter at their tier.
+        After registration, <RoleName name="Coordinator" /> <strong>validates</strong> data, then{' '}
+        <strong>classifies</strong> (marks) the letter. <RoleName name="Management" /> may approve routing;{' '}
+        <RoleName name="Manager" /> delegates to an <RoleName name="Actionist" /> or handles the letter at their
+        tier.
       </p>
       <div className="overflow-hidden rounded-lg border border-slate-200">
-        {[
-          ['Validate', 'Confirm OCR fields, attachments, and parties.'],
-          ['Classify / Mark', 'Set Information vs Actionable.'],
-          ['Approve routing', 'Confirm owning department when required.'],
-          ['Delegate / Handle here', 'Create an action item or keep ownership.'],
-          ['Assign / Forward / Reassign', 'Move ownership as the letter progresses.'],
-        ].map(([title, detail], index, arr) => (
+        {steps.map((step, index, arr) => (
           <div
-            key={title}
+            key={step.title}
             className={`flex gap-3 px-4 py-3 ${index < arr.length - 1 ? 'border-b border-slate-100' : ''} ${
               index % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'
             }`}
           >
             <span className="text-xs font-bold text-[#1769aa]">{String(index + 1).padStart(2, '0')}</span>
-            <div>
-              <p className="text-xs font-bold text-slate-800">{title}</p>
-              <p className="text-[11px] text-slate-500">{detail}</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-bold text-slate-800">{step.title}</p>
+                <RoleChips roles={step.roles} />
+              </div>
+              <p className="mt-0.5 text-[11px] text-slate-500">{step.detail}</p>
             </div>
           </div>
         ))}
@@ -322,30 +454,69 @@ function RoutingChapter() {
 }
 
 function ActionItemsChapter({ go }: { go: (target: string) => void }) {
-  const stages = [
-    { label: 'Assigned', detail: 'Manager/Coordinator created the item with instructions and due date.' },
-    { label: 'Accept', detail: 'Actionist takes ownership so status becomes clear.' },
-    { label: 'Start', detail: 'Work begins; Monitoring tracks days pending.' },
-    { label: 'Block', detail: 'Pause with a reason when waiting on external input.' },
-    { label: 'Complete', detail: 'Finish the item, then draft a response if a reply is required.' },
+  const stages: { label: string; detail: ReactNode; roles: string[] }[] = [
+    {
+      label: 'Assigned',
+      detail: (
+        <>
+          <RoleName name="Manager" /> / <RoleName name="Coordinator" /> created the item with instructions and due
+          date.
+        </>
+      ),
+      roles: ['Manager', 'Coordinator'],
+    },
+    {
+      label: 'Accept',
+      detail: (
+        <>
+          <RoleName name="Actionist" /> takes ownership so status becomes clear.
+        </>
+      ),
+      roles: ['Actionist'],
+    },
+    {
+      label: 'Start',
+      detail: 'Work begins; Monitoring tracks days pending.',
+      roles: ['Actionist'],
+    },
+    {
+      label: 'Block',
+      detail: 'Pause with a reason when waiting on external input.',
+      roles: ['Actionist'],
+    },
+    {
+      label: 'Complete',
+      detail: 'Finish the item, then draft a response if a reply is required.',
+      roles: ['Actionist'],
+    },
   ]
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
         Action items are the unit of work on an actionable letter. They appear under <strong>My Actions</strong>{' '}
-        for the assignee and drive status changes when accepted, blocked, or completed.
+        for the <RoleName name="Actionist" /> assignee and drive status changes when accepted, blocked, or
+        completed.
       </p>
       <div className="relative space-y-0 pl-3">
         <div className="absolute bottom-2 left-[19px] top-2 w-px bg-slate-200" />
-        {stages.map((stage) => (
-          <div key={stage.label} className="relative flex gap-3 py-2">
-            <span className="relative z-[1] mt-0.5 size-3.5 shrink-0 rounded-full border-2 border-[#1769aa] bg-white" />
-            <div>
-              <p className="text-xs font-bold text-slate-800">{stage.label}</p>
-              <p className="text-[11px] leading-5 text-slate-500">{stage.detail}</p>
+        {stages.map((stage) => {
+          const accent = getRoleColor(stage.roles[0] ?? 'Actionist')
+          return (
+            <div key={stage.label} className="relative flex gap-3 py-2">
+              <span
+                className="relative z-[1] mt-0.5 size-3.5 shrink-0 rounded-full border-2 bg-white"
+                style={{ borderColor: accent.hex }}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs font-bold text-slate-800">{stage.label}</p>
+                  <RoleChips roles={stage.roles} />
+                </div>
+                <p className="text-[11px] leading-5 text-slate-500">{stage.detail}</p>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <Button variant="outline" size="sm" onClick={() => go('My Actions')}>
         Open My Actions <ArrowRight data-icon="inline-end" />
@@ -355,30 +526,46 @@ function ActionItemsChapter({ go }: { go: (target: string) => void }) {
 }
 
 function ResponseChapter() {
+  const steps: { label: string; roles: string[] }[] = [
+    { label: 'Draft response', roles: ['Actionist'] },
+    { label: 'Submit for approval', roles: ['Actionist'] },
+    { label: 'Approve / Return', roles: ['Manager', 'Management'] },
+    { label: 'Dispatch', roles: ['Management', 'Admin'] },
+    { label: 'Close', roles: ['Manager', 'Management', 'Admin'] },
+    { label: 'Archive', roles: ['Manager', 'Admin'] },
+  ]
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
-        When a reply is needed, the Actionist drafts a response version, submits it for approval, and after
-        approval someone dispatches on an internal or external channel. Then close and archive.
+        When a reply is needed, the <RoleName name="Actionist" /> drafts a response version, submits it for
+        approval by <RoleName name="Manager" /> / <RoleName name="Management" />, then{' '}
+        <RoleName name="Management" /> or <RoleName name="Admin" /> dispatches on an internal or external channel.
+        Then close and archive.
       </p>
-      <div className="flex flex-wrap items-center gap-2">
-        {['Draft response', 'Submit for approval', 'Approve / Return', 'Dispatch', 'Close', 'Archive'].map(
-          (label, index, arr) => (
-            <div key={label} className="flex items-center gap-2">
-              <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700">
-                {label}
-              </span>
-              {index < arr.length - 1 && <ArrowRight className="size-3.5 text-slate-300" />}
-            </div>
-          ),
-        )}
+      <div className="flex flex-col gap-2">
+        {steps.map((step, index, arr) => (
+          <div key={step.label} className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700">
+              {step.label}
+            </span>
+            <RoleChips roles={step.roles} />
+            {index < arr.length - 1 && <ArrowRight className="size-3.5 text-slate-300" />}
+          </div>
+        ))}
       </div>
       <Card className="p-4">
         <p className="text-xs font-bold text-slate-700">Also available on the letter</p>
         <ul className="mt-2 space-y-1.5 text-xs text-slate-600">
-          <li>• Request clarification when instructions are unclear</li>
-          <li>• Escalate blocked or overdue work to a higher level</li>
-          <li>• Reopen closed letters if follow-up is required</li>
+          <li>
+            • <RoleName name="Actionist" /> — request clarification when instructions are unclear
+          </li>
+          <li>
+            • <RoleName name="Manager" /> / <RoleName name="Management" /> — escalate blocked or overdue work
+          </li>
+          <li>
+            • <RoleName name="Manager" /> / <RoleName name="Admin" /> — reopen closed letters if follow-up is
+            required
+          </li>
         </ul>
       </Card>
     </div>
@@ -386,17 +573,43 @@ function ResponseChapter() {
 }
 
 function WorkspaceChapter({ go }: { go: (target: string) => void }) {
-  const areas = [
-    { title: 'Inbox', href: 'Inbox', detail: 'Letters awaiting your attention or assignment.' },
-    { title: 'My Actions', href: 'My Actions', detail: 'Action items assigned to you with due dates.' },
-    { title: 'Monitoring', href: 'Monitoring', detail: 'Overdue, blocked, and aging correspondence.' },
-    { title: 'Track', href: 'Track', detail: 'Filter All / Incoming / Pending / Closed / Archived.' },
-    { title: 'Catalog', href: 'Catalog', detail: 'Browse retained correspondence for reference.' },
+  const areas: { title: string; href: string; detail: string; roles: string[] }[] = [
+    {
+      title: 'Inbox',
+      href: 'Inbox',
+      detail: 'Letters awaiting your attention or assignment.',
+      roles: ['Coordinator', 'Manager', 'Actionist'],
+    },
+    {
+      title: 'My Actions',
+      href: 'My Actions',
+      detail: 'Action items assigned to you with due dates.',
+      roles: ['Actionist'],
+    },
+    {
+      title: 'Monitoring',
+      href: 'Monitoring',
+      detail: 'Overdue, blocked, and aging correspondence.',
+      roles: ['Manager', 'Management', 'Admin'],
+    },
+    {
+      title: 'Track',
+      href: 'Track',
+      detail: 'Filter All / Incoming / Pending / Closed / Archived.',
+      roles: ['Coordinator', 'Manager', 'Viewer'],
+    },
+    {
+      title: 'Catalog',
+      href: 'Catalog',
+      detail: 'Browse retained correspondence for reference.',
+      roles: ['Viewer', 'Coordinator', 'Admin'],
+    },
   ]
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
-        Day-to-day work lives in Workspace and Letters. Use these views instead of searching status by status.
+        Day-to-day work lives in Workspace and Letters. Primary audiences differ by view — chips show who uses
+        each area most.
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
         {areas.map((area) => (
@@ -406,7 +619,10 @@ function WorkspaceChapter({ go }: { go: (target: string) => void }) {
             onClick={() => go(area.href)}
             className="rounded-md border border-slate-200 bg-white p-3 text-left transition hover:border-blue-200 hover:bg-blue-50/40"
           >
-            <p className="text-xs font-bold text-slate-800">{area.title}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs font-bold text-slate-800">{area.title}</p>
+              <RoleChips roles={area.roles} />
+            </div>
             <p className="mt-1 text-[11px] text-slate-500">{area.detail}</p>
           </button>
         ))}
@@ -416,18 +632,40 @@ function WorkspaceChapter({ go }: { go: (target: string) => void }) {
 }
 
 function AiChapter({ go }: { go: (target: string) => void }) {
+  const items: { title: string; detail: string; href: string; roles: string[] }[] = [
+    {
+      title: 'AI Assistant',
+      detail: 'Ask natural-language questions about letters and follow-ups.',
+      href: 'AI Assistant',
+      roles: ['Coordinator', 'Manager', 'Actionist', 'Viewer'],
+    },
+    {
+      title: 'Letter Analysis',
+      detail: 'Priority, risks, and suggested actions on a letter.',
+      href: 'Letter Analysis',
+      roles: ['Management', 'Admin'],
+    },
+    {
+      title: 'AI Insights',
+      detail: 'Management-facing patterns across correspondence.',
+      href: 'AI Insights',
+      roles: ['Management', 'Admin'],
+    },
+    {
+      title: 'OCR on Create',
+      detail: 'Extract fields from scans during registration.',
+      href: 'Create',
+      roles: ['Coordinator'],
+    },
+  ]
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
-        AI assists intake and discovery — it does not replace role-based workflow approval.
+        AI assists intake and discovery — it does not replace role-based workflow approval. LLM analysis beyond
+        OCR is gated to <RoleName name="Management" /> and <RoleName name="Admin" />.
       </p>
       <div className="grid gap-3">
-        {[
-          { title: 'AI Assistant', detail: 'Ask natural-language questions about letters and follow-ups.', href: 'AI Assistant' },
-          { title: 'Letter Analysis', detail: 'Priority, risks, and suggested actions on a letter.', href: 'Letter Analysis' },
-          { title: 'AI Insights', detail: 'Management-facing patterns across correspondence.', href: 'AI Insights' },
-          { title: 'OCR on Create', detail: 'Extract fields from scans during registration.', href: 'Create' },
-        ].map((item) => (
+        {items.map((item) => (
           <button
             key={item.title}
             type="button"
@@ -435,8 +673,11 @@ function AiChapter({ go }: { go: (target: string) => void }) {
             className="flex items-start gap-3 rounded-md border border-slate-200 px-3 py-3 text-left hover:bg-slate-50"
           >
             <Sparkles className="mt-0.5 size-4 shrink-0 text-[#1769aa]" />
-            <div>
-              <p className="text-xs font-bold text-slate-800">{item.title}</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-bold text-slate-800">{item.title}</p>
+                <RoleChips roles={item.roles} />
+              </div>
               <p className="text-[11px] text-slate-500">{item.detail}</p>
             </div>
           </button>
@@ -453,19 +694,21 @@ function PracticeChapter({
   onReset,
 }: {
   status: string
-  log: string[]
+  log: { roles: string[]; text: string }[]
   onAction: (action: PracticeAction) => void
   onReset: () => void
 }) {
   const step = PRACTICE_STEPS.find((s) => s.status === status) ?? PRACTICE_STEPS[0]
   const done = step.actions.length === 0
+  const activeRoles = step.actions[0]?.roles ?? []
 
   return (
     <div className="space-y-4">
       <p className="text-sm leading-6 text-slate-600">
-        Click through a sample letter. Each button is the role-appropriate next step — including marking
+        Click through a sample letter. Each button shows the role(s) that perform that step — including marking
         Information vs Actionable.
       </p>
+      <RoleLegend />
       <div className="rounded-lg border border-slate-200 bg-[#0d3763] p-4 text-white">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200/80">Sample letter</p>
@@ -473,15 +716,39 @@ function PracticeChapter({
         </div>
         <p className="text-sm font-semibold">SUPARCO / Coordination — Budget clarification request</p>
         <p className="mt-2 text-xs leading-5 text-blue-100/85">{step.prompt}</p>
+        {activeRoles.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-200/70">Act as</span>
+            <RoleChips roles={activeRoles} />
+          </div>
+        )}
       </div>
       <div className="flex flex-wrap gap-2">
-        {step.actions.map((action) => (
-          <Button key={action.id} size="sm" onClick={() => onAction(action)}>
-            <Play data-icon="inline-start" />
-            {action.label}
-            <span className="ml-1 text-[10px] font-normal opacity-80">({action.role})</span>
-          </Button>
-        ))}
+        {step.actions.map((action) => {
+          const accent = getRoleColor(action.roles[0] ?? 'Coordinator')
+          return (
+            <Button
+              key={action.id}
+              size="sm"
+              onClick={() => onAction(action)}
+              style={{ backgroundColor: accent.hex, borderColor: accent.hex }}
+            >
+              <Play data-icon="inline-start" />
+              {action.label}
+              <span className="ml-1.5 inline-flex gap-1">
+                {action.roles.map((role) => (
+                  <span
+                    key={role}
+                    className="rounded px-1 py-px text-[10px] font-bold"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.22)' }}
+                  >
+                    {role}
+                  </span>
+                ))}
+              </span>
+            </Button>
+          )
+        })}
         <Button variant="outline" size="sm" onClick={onReset}>
           <RotateCcw data-icon="inline-start" />
           Restart practice
@@ -497,8 +764,12 @@ function PracticeChapter({
           <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Your trail</p>
           <div className="space-y-1.5">
             {log.map((entry, index) => (
-              <div key={`${entry}-${index}`} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-                {entry}
+              <div
+                key={`${entry.text}-${index}`}
+                className="flex flex-wrap items-start gap-2 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600"
+              >
+                <RoleChips roles={entry.roles} />
+                <span className="min-w-0 flex-1">{entry.text}</span>
               </div>
             ))}
           </div>
@@ -554,7 +825,10 @@ function ChapterBody({
               practiceStatus: action.nextStatus,
               practiceLog: [
                 ...prev.practiceLog,
-                `${action.role}: ${action.label} → ${action.nextStatus.replace('-Info', '')}. ${action.note}`,
+                {
+                  roles: action.roles,
+                  text: `${action.label} → ${action.nextStatus.replace('-Info', '')}. ${action.note}`,
+                },
               ],
             }))
           }

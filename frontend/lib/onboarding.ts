@@ -12,11 +12,21 @@ export type OnboardingChapterId =
   | 'ai'
   | 'practice'
 
+export type OnboardingRoleColor = {
+  /** Solid accent used for bold role names and selected chips. */
+  hex: string
+  /** Soft fill for badges / chips. */
+  soft: string
+  /** Soft border paired with soft fill. */
+  border: string
+}
+
 export type OnboardingRole = {
   name: string
   summary: string
   focus: string
   permissions: string[]
+  color: OnboardingRoleColor
 }
 
 export type OnboardingChapter = {
@@ -41,50 +51,43 @@ export const ONBOARDING_CHAPTERS: OnboardingChapter[] = [
   { id: 'practice', title: 'Practice', subtitle: 'Walk a sample letter end to end', minutes: 4 },
 ]
 
+/** Roles in letter lifecycle order: entry → routing → work → close → read-only. */
 export const ONBOARDING_ROLES: OnboardingRole[] = [
-  {
-    name: 'Admin',
-    summary: 'Full control of users, configuration, and every workflow transition.',
-    focus: 'System ownership, overrides, and audit.',
-    permissions: [
-      'Validate & classify letters',
-      'Approve routing and dispatch',
-      'Assign, reassign, escalate, close, archive',
-      'Manage users, roles, and master data',
-    ],
-  },
-  {
-    name: 'Management',
-    summary: 'Executive oversight with the same workflow powers as Admin on letters.',
-    focus: 'Approvals, escalations, and strategic routing.',
-    permissions: [
-      'Approve routing and response steps',
-      'Escalate overdue or blocked work',
-      'Close and archive correspondence',
-      'Monitor department performance',
-    ],
-  },
-  {
-    name: 'Manager',
-    summary: 'Department lead who routes work, delegates, and reviews responses.',
-    focus: 'Delegation, approvals, and completion.',
-    permissions: [
-      'Classify and route letters',
-      'Delegate or handle at this tier',
-      'Approve response steps',
-      'Escalate, reopen, and close',
-    ],
-  },
   {
     name: 'Coordinator',
     summary: 'Correspondence officer who validates intake and keeps letters moving.',
-    focus: 'Registration quality, classification, and handoffs.',
+    focus: 'First touch — registration, classification, and handoffs.',
     permissions: [
       'Validate OCR / registration data',
       'Classify Information vs Actionable',
       'Assign, forward, and reassign',
       'Route FYI and close information letters',
     ],
+    color: { hex: '#0d9488', soft: '#f0fdfa', border: '#5eead4' },
+  },
+  {
+    name: 'Management',
+    summary: 'Executive oversight with the same workflow powers as Admin on letters.',
+    focus: 'Routing approval, escalations, and dispatch authority.',
+    permissions: [
+      'Approve routing and response steps',
+      'Escalate overdue or blocked work',
+      'Close and archive correspondence',
+      'Monitor department performance',
+    ],
+    color: { hex: '#9f1239', soft: '#fff1f2', border: '#fda4af' },
+  },
+  {
+    name: 'Manager',
+    summary: 'Department lead who routes work, delegates, and reviews responses.',
+    focus: 'Delegation, department approvals, and completion.',
+    permissions: [
+      'Classify and route letters',
+      'Delegate or handle at this tier',
+      'Approve response steps',
+      'Escalate, reopen, and close',
+    ],
+    color: { hex: '#c2410c', soft: '#fff7ed', border: '#fdba74' },
   },
   {
     name: 'Actionist',
@@ -96,31 +99,93 @@ export const ONBOARDING_ROLES: OnboardingRole[] = [
       'Draft a response and submit for approval',
       'Acknowledge information (FYI) letters',
     ],
+    color: { hex: '#15803d', soft: '#ecfdf5', border: '#6ee7b7' },
+  },
+  {
+    name: 'Admin',
+    summary: 'Full control of users, configuration, and every workflow transition.',
+    focus: 'Overrides, dispatch, and system ownership.',
+    permissions: [
+      'Validate & classify letters',
+      'Approve routing and dispatch',
+      'Assign, reassign, escalate, close, archive',
+      'Manage users, roles, and master data',
+    ],
+    color: { hex: '#0d3763', soft: '#eff6ff', border: '#93c5fd' },
   },
   {
     name: 'Viewer',
     summary: 'Read-only access for stakeholders who need visibility without edits.',
     focus: 'Search, catalog, and status tracking.',
     permissions: ['View letters they can access', 'No workflow transitions'],
+    color: { hex: '#475569', soft: '#f8fafc', border: '#cbd5e1' },
   },
 ]
 
+const FALLBACK_ROLE_COLOR: OnboardingRoleColor = {
+  hex: '#334155',
+  soft: '#f8fafc',
+  border: '#cbd5e1',
+}
+
+export function getRoleColor(roleName: string): OnboardingRoleColor {
+  const match = ONBOARDING_ROLES.find((r) => r.name.toLowerCase() === roleName.trim().toLowerCase())
+  return match?.color ?? FALLBACK_ROLE_COLOR
+}
+
 export const WORKFLOW_PIPELINE = [
-  { status: 'Registered', meaning: 'Letter captured with metadata (and optionally OCR).' },
-  { status: 'Validated', meaning: 'Coordinator confirms fields and attachments are correct.' },
-  { status: 'Classified', meaning: 'Marked Information (FYI) or Actionable.' },
-  { status: 'Routed / Assigned', meaning: 'Sent to a department or action owner.' },
-  { status: 'In Progress', meaning: 'Actionist accepted and is working the item.' },
-  { status: 'Response Drafted', meaning: 'Reply prepared for review.' },
-  { status: 'Under Approval', meaning: 'Manager / Management reviews the draft.' },
-  { status: 'Dispatched', meaning: 'Final response sent internally or externally.' },
-  { status: 'Closed / Archived', meaning: 'Work finished; letter retained in Catalog.' },
+  {
+    status: 'Registered',
+    meaning: 'Letter captured with metadata (and optionally OCR).',
+    roles: ['Coordinator', 'Admin'],
+  },
+  {
+    status: 'Validated',
+    meaning: 'Coordinator confirms fields and attachments are correct.',
+    roles: ['Coordinator'],
+  },
+  {
+    status: 'Classified',
+    meaning: 'Marked Information (FYI) or Actionable.',
+    roles: ['Coordinator', 'Manager'],
+  },
+  {
+    status: 'Routed / Assigned',
+    meaning: 'Sent to a department or action owner.',
+    roles: ['Management', 'Manager', 'Coordinator'],
+  },
+  {
+    status: 'In Progress',
+    meaning: 'Actionist accepted and is working the item.',
+    roles: ['Actionist'],
+  },
+  {
+    status: 'Response Drafted',
+    meaning: 'Reply prepared for review.',
+    roles: ['Actionist'],
+  },
+  {
+    status: 'Under Approval',
+    meaning: 'Manager / Management reviews the draft.',
+    roles: ['Manager', 'Management'],
+  },
+  {
+    status: 'Dispatched',
+    meaning: 'Final response sent internally or externally.',
+    roles: ['Management', 'Admin'],
+  },
+  {
+    status: 'Closed / Archived',
+    meaning: 'Work finished; letter retained in Catalog.',
+    roles: ['Manager', 'Management', 'Admin'],
+  },
 ] as const
 
 export type PracticeAction = {
   id: string
   label: string
-  role: string
+  /** Canonical role name(s) that perform this practice click. */
+  roles: string[]
   nextStatus: string
   note: string
 }
@@ -140,7 +205,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'validate',
         label: 'Validate',
-        role: 'Coordinator',
+        roles: ['Coordinator'],
         nextStatus: 'Validated',
         note: 'You confirmed number, subject, dates, and attachments look correct.',
       },
@@ -153,14 +218,14 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'classify-actionable',
         label: 'Mark as Actionable',
-        role: 'Coordinator',
+        roles: ['Coordinator'],
         nextStatus: 'Classified',
         note: 'Marked Actionable — someone must accept and complete work.',
       },
       {
         id: 'classify-info',
         label: 'Mark as Information',
-        role: 'Coordinator',
+        roles: ['Coordinator'],
         nextStatus: 'Classified-Info',
         note: 'Marked Information / FYI — route for awareness, no action owner required.',
       },
@@ -173,7 +238,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'delegate',
         label: 'Delegate to Actionist',
-        role: 'Manager',
+        roles: ['Manager'],
         nextStatus: 'Action Assigned',
         note: 'Action item created for Finance · Due in 5 days.',
       },
@@ -186,7 +251,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'route-info',
         label: 'Route for information',
-        role: 'Coordinator',
+        roles: ['Coordinator'],
         nextStatus: 'Information Delivered',
         note: 'FYI recipients notified. They can acknowledge from My Actions.',
       },
@@ -199,7 +264,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'close-info',
         label: 'Close information letter',
-        role: 'Coordinator',
+        roles: ['Coordinator'],
         nextStatus: 'Closed',
         note: 'Information path finished. Catalog retains the record.',
       },
@@ -212,7 +277,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'accept',
         label: 'Accept action',
-        role: 'Actionist',
+        roles: ['Actionist'],
         nextStatus: 'In Progress',
         note: 'Action item accepted. Status moves to In Progress.',
       },
@@ -225,14 +290,14 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'draft',
         label: 'Draft response',
-        role: 'Actionist',
+        roles: ['Actionist'],
         nextStatus: 'Response Drafted',
         note: 'Response version v1 prepared and ready for approval.',
       },
       {
         id: 'block',
         label: 'Block action',
-        role: 'Actionist',
+        roles: ['Actionist'],
         nextStatus: 'In Progress',
         note: 'Blocked with a reason (waiting on external data). Managers see this in Monitoring.',
       },
@@ -245,7 +310,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'submit',
         label: 'Submit for approval',
-        role: 'Actionist',
+        roles: ['Actionist'],
         nextStatus: 'Under Approval',
         note: 'Approval step opened for the department Manager.',
       },
@@ -258,14 +323,14 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'approve',
         label: 'Approve step',
-        role: 'Manager',
+        roles: ['Manager'],
         nextStatus: 'Approved for Dispatch',
         note: 'Response approved. Ready for dispatch.',
       },
       {
         id: 'return',
         label: 'Return for revision',
-        role: 'Manager',
+        roles: ['Manager'],
         nextStatus: 'Response Drafted',
         note: 'Returned with remarks. Actionist revises the draft.',
       },
@@ -278,7 +343,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'dispatch',
         label: 'Dispatch',
-        role: 'Admin / Coordinator',
+        roles: ['Management', 'Admin'],
         nextStatus: 'Dispatched',
         note: 'Outgoing reply recorded with channel and recipients.',
       },
@@ -291,7 +356,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
       {
         id: 'close',
         label: 'Close & archive',
-        role: 'Manager',
+        roles: ['Manager', 'Management', 'Admin'],
         nextStatus: 'Archived',
         note: 'Letter closed and available in Catalog / Archive views.',
       },
@@ -309,22 +374,46 @@ export const PRACTICE_STEPS: PracticeStep[] = [
   },
 ]
 
+export type PracticeLogEntry = {
+  roles: string[]
+  text: string
+}
+
 export type OnboardingProgress = {
   completed: OnboardingChapterId[]
   current: OnboardingChapterId
   selectedRole: string
   practiceStatus: string
-  practiceLog: string[]
+  practiceLog: PracticeLogEntry[]
 }
 
 export function defaultOnboardingProgress(): OnboardingProgress {
   return {
     completed: [],
     current: 'welcome',
-    selectedRole: 'Actionist',
+    selectedRole: 'Coordinator',
     practiceStatus: 'Registered',
     practiceLog: [],
   }
+}
+
+function normalizePracticeLog(raw: unknown): PracticeLogEntry[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((entry): PracticeLogEntry | null => {
+      if (typeof entry === 'string') {
+        return { roles: [], text: entry }
+      }
+      if (entry && typeof entry === 'object' && 'text' in entry) {
+        const roles = Array.isArray((entry as PracticeLogEntry).roles)
+          ? (entry as PracticeLogEntry).roles.filter((r): r is string => typeof r === 'string')
+          : []
+        const text = String((entry as PracticeLogEntry).text ?? '')
+        return text ? { roles, text } : null
+      }
+      return null
+    })
+    .filter((entry): entry is PracticeLogEntry => entry !== null)
 }
 
 export function loadOnboardingProgress(): OnboardingProgress {
@@ -345,6 +434,7 @@ export function loadOnboardingProgress(): OnboardingProgress {
       current: ONBOARDING_CHAPTERS.some((c) => c.id === parsed.current)
         ? (parsed.current as OnboardingChapterId)
         : 'welcome',
+      practiceLog: normalizePracticeLog(parsed.practiceLog),
     }
   } catch {
     return defaultOnboardingProgress()
