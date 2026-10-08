@@ -789,14 +789,52 @@ async def letter_qa(
     message: str,
     *,
     history: list[dict[str, str]] | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
-    """Answer a user question about a single opened letter (metadata + body text)."""
+    """Answer a user question about a single opened letter (metadata + body text).
+
+    Standalone questions (no history) use exact-match cache + deterministic field
+    answers so repeated prompts skip the LLM.
+    """
+    from app.ai_qa_cache import (
+        get_cached_answer,
+        record_cache_hit,
+        try_deterministic_answer,
+        upsert_qa_answer,
+    )
+    from app.config import get_settings
+
     letter = db.get(Letter, letter_id)
     if not letter:
         raise ValueError("Letter not found")
 
+    history_items = list(history or [])
+    standalone = len(history_items) == 0
+    q = (message or "").strip()
+
+    if standalone and not force:
+        cached = get_cached_answer(db, letter, q)
+        if cached is not None:
+            record_cache_hit(db, cached)
+            return {
+                "text": (cached.answer or "").strip(),
+                "letterId": letter_id,
+                "cached": True,
+                "source": cached.source or "cache",
+            }
+
+        deterministic = try_deterministic_answer(letter, q)
+        if deterministic:
+            upsert_qa_answer(db, letter, q, deterministic, source="deterministic")
+            return {
+                "text": deterministic,
+                "letterId": letter_id,
+                "cached": False,
+                "source": "deterministic",
+            }
+
     history_lines: list[str] = []
-    for item in (history or [])[-8:]:
+    for item in history_items[-8:]:
         role = str(item.get("role") or "user").strip().lower()
         content = str(item.get("content") or item.get("text") or "").strip()
         if content:
@@ -820,4 +858,15 @@ async def letter_qa(
         f"Opened letter:\n{payload}"
     )
     text = await chat_completion(system=system, user=user, temperature=0.3)
-    return {"text": text.strip(), "letterId": letter_id}
+    answer = text.strip()
+    if standalone:
+        settings = get_settings()
+        upsert_qa_answer(
+            db,
+            letter,
+            q,
+            answer,
+            source="llm",
+            model_id=settings.active_llm_model or "",
+        )
+    return {"text": answer, "letterId": letter_id, "cached": False, "source": "llm"}

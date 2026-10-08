@@ -164,6 +164,49 @@ def upgrade_ai_registration_schema(engine: Engine) -> None:
                     conn.execute(text(stmt))
 
 
+def upgrade_letter_qa_cache_schema(engine: Engine) -> None:
+    """Create letter Q&A cache table for repeated-question LLM savings."""
+    inspector = inspect(engine)
+    if inspector.has_table("cms_letter_qa_cache"):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE cms_letter_qa_cache (
+                    id SERIAL PRIMARY KEY,
+                    letter_id INTEGER NOT NULL
+                        REFERENCES cms_letters(id) ON DELETE CASCADE,
+                    question TEXT DEFAULT '',
+                    question_normalized VARCHAR(500) DEFAULT '',
+                    question_hash VARCHAR(64) NOT NULL,
+                    answer TEXT DEFAULT '',
+                    content_fingerprint VARCHAR(64) DEFAULT '',
+                    model_id VARCHAR(120) DEFAULT '',
+                    source VARCHAR(40) DEFAULT 'llm',
+                    hit_count INTEGER DEFAULT 0,
+                    asked_by VARCHAR(120) DEFAULT '',
+                    asked_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    CONSTRAINT uq_letter_qa_question UNIQUE (letter_id, question_hash)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_cms_letter_qa_cache_letter_id "
+                "ON cms_letter_qa_cache (letter_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_cms_letter_qa_cache_question_hash "
+                "ON cms_letter_qa_cache (question_hash)"
+            )
+        )
+
+
 def upgrade_notification_columns(engine: Engine) -> None:
     columns = {col["name"] for col in inspect(engine).get_columns("cms_notifications")} if inspect(engine).has_table("cms_notifications") else set()
     if not columns:

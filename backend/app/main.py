@@ -10,6 +10,7 @@ from app.db_upgrade import (
     upgrade_letter_archive_columns,
     upgrade_letter_body_text_column,
     upgrade_letter_ownership_columns,
+    upgrade_letter_qa_cache_schema,
     upgrade_notification_columns,
     upgrade_user_auth_schema,
     upgrade_user_created_at,
@@ -118,6 +119,7 @@ def on_startup() -> None:
     upgrade_ai_registration_schema(engine)
     upgrade_department_org_schema(engine)
     upgrade_enterprise_workflow_schema(engine)
+    upgrade_letter_qa_cache_schema(engine)
     upgrade_notification_columns(engine)
     upgrade_letter_archive_columns(engine)
     upgrade_letter_body_text_column(engine)

@@ -21,6 +21,7 @@ import {
   extractLetterInformation,
   fetchAiStatus,
   fetchLetterAiAnalysis,
+  fetchLetterQuestions,
   generateDraftResponse,
   letterQaChat,
   recommendActions,
@@ -36,6 +37,7 @@ import {
   type DraftResponse,
   type ExtractedField,
   type LetterAiAnalysisBundle,
+  type LetterQaQuestionItem,
   type StoredAiAnalysis,
   type UrgencyAssessment,
   type AiSummary,
@@ -873,13 +875,6 @@ function topicLabel(letter: Letter) {
   return 'Administrative'
 }
 
-type LetterQaMessage = {
-  id: string
-  role: 'user' | 'assistant'
-  text: string
-  time: string
-}
-
 const LETTER_QA_PROMPTS = [
   'What is this letter about?',
   'What actions are required?',
@@ -888,18 +883,42 @@ const LETTER_QA_PROMPTS = [
   'What is the current status?',
 ]
 
+type LetterQaMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  time: string
+  cached?: boolean
+  source?: string
+}
+
 function AILetterQA({ letter }: { letter: Letter }) {
   const [input, setInput] = useState('')
   const [status, setStatus] = useState<AiStatus>('idle')
   const [messages, setMessages] = useState<LetterQaMessage[]>([])
   const [aiBackend, setAiBackend] = useState<AiBackendStatus | null>(null)
+  const [previousQuestions, setPreviousQuestions] = useState<LetterQaQuestionItem[]>([])
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>(LETTER_QA_PROMPTS)
   const scrollerRef = useRef<HTMLDivElement>(null)
+
+  const reloadQuestions = (letterId: string | number = letter.id) => {
+    void fetchLetterQuestions(letterId).then((bundle) => {
+      setPreviousQuestions(bundle.questions ?? [])
+      setSuggestedQuestions(bundle.suggested?.length ? bundle.suggested : LETTER_QA_PROMPTS)
+    })
+  }
 
   useEffect(() => {
     setMessages([])
     setInput('')
     setStatus('idle')
+    setPreviousQuestions([])
+    setSuggestedQuestions(LETTER_QA_PROMPTS)
     fetchAiStatus().then(setAiBackend)
+    void fetchLetterQuestions(letter.id).then((bundle) => {
+      setPreviousQuestions(bundle.questions ?? [])
+      setSuggestedQuestions(bundle.suggested?.length ? bundle.suggested : LETTER_QA_PROMPTS)
+    })
   }, [letter.id])
 
   useEffect(() => {
@@ -907,7 +926,7 @@ function AILetterQA({ letter }: { letter: Letter }) {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, status])
 
-  const ask = async (question: string) => {
+  const ask = async (question: string, options?: { asStandalone?: boolean }) => {
     const q = question.trim()
     if (!q || status === 'generating') return
     setInput('')
@@ -921,10 +940,14 @@ function AILetterQA({ letter }: { letter: Letter }) {
     setMessages((current) => [...current, userMessage])
     setStatus('generating')
     try {
-      const history = [...prior, userMessage].slice(-8).map((item) => ({
-        role: item.role,
-        content: item.text,
-      }))
+      // Suggested / previous chips are standalone so they can hit the server cache.
+      // History is prior turns only (current question is sent as `message`).
+      const history = options?.asStandalone
+        ? []
+        : prior.slice(-8).map((item) => ({
+            role: item.role,
+            content: item.text,
+          }))
       const reply = await letterQaChat(letter, q, history)
       setMessages((current) => [
         ...current,
@@ -933,9 +956,12 @@ function AILetterQA({ letter }: { letter: Letter }) {
           role: 'assistant',
           text: reply.text,
           time: formatDateTime(new Date()),
+          cached: reply.cached,
+          source: reply.source,
         },
       ])
       setStatus('idle')
+      reloadQuestions()
     } catch {
       setStatus('error')
     }
@@ -954,18 +980,51 @@ function AILetterQA({ letter }: { letter: Letter }) {
           </Button>
         )}
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        {LETTER_QA_PROMPTS.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            onClick={() => void ask(prompt)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50"
-          >
-            {prompt}
-          </button>
-        ))}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Suggested</p>
+          <div className="flex flex-wrap gap-1.5">
+            {suggestedQuestions.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => void ask(prompt, { asStandalone: true })}
+                className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-[11px] text-slate-600 hover:bg-slate-100"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+            Previously asked
+            {previousQuestions.length > 0 ? ` · ${previousQuestions.length}` : ''}
+          </p>
+          {previousQuestions.length === 0 ? (
+            <p className="text-[11px] text-slate-400">No cached questions for this letter yet. Asking one saves it for reuse.</p>
+          ) : (
+            <div className="flex max-h-28 flex-col gap-1 overflow-y-auto">
+              {previousQuestions.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => void ask(item.question, { asStandalone: true })}
+                  className="flex items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[11px] text-slate-600 hover:bg-slate-50"
+                  title={item.valid === false ? 'Letter changed — will refresh answer' : 'Reuse cached answer when valid'}
+                >
+                  <span className="line-clamp-2">{item.question}</span>
+                  <span className="shrink-0 text-[10px] text-slate-400">
+                    {item.valid === false ? 'stale' : item.hitCount > 0 ? `×${item.hitCount}` : 'cached'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+
       <div ref={scrollerRef} className="flex max-h-[320px] min-h-[200px] flex-1 flex-col gap-3 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/60 p-3">
         {messages.length === 0 && status === 'idle' && (
           <p className="text-xs text-slate-500">
@@ -981,7 +1040,11 @@ function AILetterQA({ letter }: { letter: Letter }) {
               <span className={`text-[10px] font-bold uppercase ${message.role === 'user' ? 'text-blue-100' : 'text-[#1769aa]'}`}>
                 {message.role === 'user' ? 'You' : 'AI'}
               </span>
-              <span className={`text-[10px] ${message.role === 'user' ? 'text-blue-100' : 'text-slate-400'}`}>{message.time}</span>
+              <span className={`text-[10px] ${message.role === 'user' ? 'text-blue-100' : 'text-slate-400'}`}>
+                {message.time}
+                {message.role === 'assistant' && message.cached ? ' · cached' : ''}
+                {message.role === 'assistant' && !message.cached && message.source === 'deterministic' ? ' · instant' : ''}
+              </span>
             </div>
             <p className={`whitespace-pre-wrap text-xs leading-5 ${message.role === 'user' ? 'text-white' : 'text-slate-700'}`}>{message.text}</p>
           </div>

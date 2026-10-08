@@ -182,7 +182,43 @@ export const AI_ENDPOINTS = {
     `/api/ai/letters/${letterId}/analysis/${kind}`,
   letterAnalysisDecisions: (letterId: string | number, kind: AiAnalysisKind) =>
     `/api/ai/letters/${letterId}/analysis/${kind}/decisions`,
+  letterQuestions: (letterId: string | number) => `/api/ai/letters/${letterId}/questions`,
 } as const
+
+export type LetterQaQuestionItem = {
+  id: number
+  question: string
+  hitCount: number
+  askedBy: string
+  askedAt: string | null
+  updatedAt?: string | null
+  source?: string
+  valid?: boolean
+}
+
+export type LetterQuestionsBundle = {
+  letterId: number
+  questions: LetterQaQuestionItem[]
+  suggested: string[]
+}
+
+export async function fetchLetterQuestions(letterId: string | number): Promise<LetterQuestionsBundle> {
+  try {
+    return await api.get<LetterQuestionsBundle>(AI_ENDPOINTS.letterQuestions(letterId))
+  } catch {
+    return {
+      letterId: Number(letterId),
+      questions: [],
+      suggested: [
+        'What is this letter about?',
+        'What actions are required?',
+        'When is the deadline?',
+        'Who sent this letter?',
+        'What is the current status?',
+      ],
+    }
+  }
+}
 
 export async function fetchLetterAiAnalysis(letterId: string | number): Promise<LetterAiAnalysisBundle> {
   return api.get<LetterAiAnalysisBundle>(AI_ENDPOINTS.letterAnalysis(letterId))
@@ -557,23 +593,31 @@ export async function assistantChat(
   )
 }
 
+export type LetterQaReply = {
+  text: string
+  letterId?: number
+  cached?: boolean
+  source?: string
+}
+
 export async function letterQaChat(
   letter: Letter,
   message: string,
   history: ChatHistoryItem[] = [],
-): Promise<{ text: string }> {
-  return withLlm(
-    () =>
-      api.post<{ text: string; letterId?: number }>(AI_ENDPOINTS.letterQa, {
-        letterId: Number(letter.id),
-        message,
-        history,
-      }),
-    async () => {
-      await wait(320)
-      return { text: mockLetterQaReply(letter, message) }
-    },
-  )
+  options?: { force?: boolean },
+): Promise<LetterQaReply> {
+  // Always hit the API first: cache / deterministic answers work without a live LLM.
+  try {
+    return await api.post<LetterQaReply>(AI_ENDPOINTS.letterQa, {
+      letterId: Number(letter.id),
+      message,
+      history,
+      force: options?.force ?? false,
+    })
+  } catch {
+    await wait(320)
+    return { text: mockLetterQaReply(letter, message), cached: false, source: 'mock' }
+  }
 }
 
 function mockLetterQaReply(letter: Letter, message: string): string {

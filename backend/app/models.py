@@ -263,6 +263,29 @@ class LetterAiAnalysis(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class LetterQaCache(Base):
+    """Cached letter Q&A answers keyed by normalized question + letter content fingerprint."""
+
+    __tablename__ = "cms_letter_qa_cache"
+    __table_args__ = (
+        UniqueConstraint("letter_id", "question_hash", name="uq_letter_qa_question"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    question: Mapped[str] = mapped_column(Text, default="")
+    question_normalized: Mapped[str] = mapped_column(String(500), default="")
+    question_hash: Mapped[str] = mapped_column(String(64), index=True)
+    answer: Mapped[str] = mapped_column(Text, default="")
+    content_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    model_id: Mapped[str] = mapped_column(String(120), default="")
+    source: Mapped[str] = mapped_column(String(40), default="llm")
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    asked_by: Mapped[str] = mapped_column(String(120), default="")
+    asked_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class Approval(Base):
     __tablename__ = "cms_approvals"
 

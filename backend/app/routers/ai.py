@@ -11,6 +11,7 @@ from app.ai_analysis_store import (
     save_client_analysis,
     save_decisions,
 )
+from app.ai_qa_cache import list_letter_questions
 from app.ai_service import (
     ai_status,
     analyze_correspondence,
@@ -75,6 +76,7 @@ class LetterQaIn(BaseModel):
     letter_id: int = Field(alias="letterId")
     message: str
     history: list[ChatHistoryItem] = Field(default_factory=list)
+    force: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -342,19 +344,45 @@ async def api_chat(body: ChatIn, db: Session = Depends(get_db)) -> dict:
     )
 
 
+@router.get("/letters/{letter_id}/questions")
+def api_letter_questions(letter_id: int, db: Session = Depends(get_db)) -> dict:
+    """Previously asked (cached) questions plus suggested prompts for a letter."""
+    try:
+        return list_letter_questions(db, letter_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/letter-qa")
 async def api_letter_qa(body: LetterQaIn, db: Session = Depends(get_db)) -> dict:
-    _guard_configured()
     if not body.message.strip():
         raise HTTPException(status_code=422, detail="Message is required")
     history = [{"role": item.role, "content": item.content} for item in body.history]
+    message = body.message.strip()
     try:
-        return await letter_qa(
+        from app.ai_qa_cache import assert_letter_for_qa, get_cached_answer, try_deterministic_answer
+
+        letter = assert_letter_for_qa(db, body.letter_id)
+        standalone = len(history) == 0
+        can_skip_llm = (
+            standalone
+            and not body.force
+            and (
+                get_cached_answer(db, letter, message) is not None
+                or try_deterministic_answer(letter, message) is not None
+            )
+        )
+        if not can_skip_llm:
+            _guard_configured()
+        result = await letter_qa(
             db,
             body.letter_id,
-            body.message.strip(),
+            message,
             history=history,
+            force=body.force,
         )
+        db.commit()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LlmNotConfiguredError as exc:
