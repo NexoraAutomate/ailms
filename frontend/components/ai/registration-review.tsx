@@ -5,6 +5,7 @@ import { useAppData } from '@/components/app-provider'
 import { AIAdvisoryNote } from '@/components/ai/common'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { Button } from '@/components/ui/button'
+import { api } from '@/lib/api'
 import {
   approveRegistrationJob,
   getRegistrationJob,
@@ -15,6 +16,7 @@ import {
   type AiRegistrationEvidence,
   type AiRegistrationJob,
   type AiRegistrationJobStatus,
+  type AiRegistrationStagedDocumentInfo,
 } from '@/services/ai-registration'
 
 const EDITABLE_FIELDS = [
@@ -139,6 +141,24 @@ function evidenceForField(evidence: AiRegistrationEvidence[] | undefined, field:
   return evidence.filter((item) => item.field === field && (item.snippet || item.page != null))
 }
 
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i
+
+function isStagedImage(staged: AiRegistrationStagedDocumentInfo | null | undefined): boolean {
+  if (!staged) return false
+  if (staged.mimeType?.startsWith('image/')) return true
+  return IMAGE_EXT.test(staged.originalFilename || '')
+}
+
+function previewApiPath(url: string): string {
+  if (!url) return ''
+  if (url.startsWith('/')) return url
+  try {
+    return new URL(url).pathname
+  } catch {
+    return url
+  }
+}
+
 export function RegistrationReview({
   jobId,
   go,
@@ -158,6 +178,8 @@ export function RegistrationReview({
   const [showReject, setShowReject] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
   const [expandedEvidence, setExpandedEvidence] = useState<Record<string, boolean>>({})
+  const [previewObjectUrl, setPreviewObjectUrl] = useState('')
+  const [previewLoadError, setPreviewLoadError] = useState('')
 
   const applyJob = useCallback((next: AiRegistrationJob) => {
     setJob(next)
@@ -194,9 +216,51 @@ export function RegistrationReview({
   const requiredOk = Boolean(form.number.trim() && form.letterDate.trim() && form.subject.trim())
   const editable = job?.status === 'NEEDS_REVIEW'
   const previewUrl = resolveStagedPreviewUrl(job?.stagedDocument)
-  const isImage = Boolean(job?.stagedDocument?.mimeType?.startsWith('image/'))
+  const isImage = isStagedImage(job?.stagedDocument)
   const aiSet = useMemo(() => new Set(job?.aiGenerated ?? []), [job?.aiGenerated])
   const overrides = job?.userOverrides ?? {}
+
+  useEffect(() => {
+    setPreviewLoadError('')
+    setPreviewObjectUrl('')
+    if (!previewUrl) return
+
+    const path = previewApiPath(previewUrl)
+    const filename = job?.stagedDocument?.originalFilename || ''
+    const declaredMime = job?.stagedDocument?.mimeType || ''
+    let cancelled = false
+    let created: string | null = null
+
+    ;(async () => {
+      try {
+        const blob = await api.download(path)
+        if (cancelled) return
+        const rawType = (blob.type || declaredMime || '').toLowerCase()
+        const generic = !rawType || rawType === 'application/octet-stream' || rawType === 'binary/octet-stream'
+        let type = blob.type || declaredMime
+        if (generic) {
+          if (isImage) {
+            const ext = filename.match(IMAGE_EXT)?.[1]?.toLowerCase()
+            type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/png'
+          } else {
+            type = 'application/pdf'
+          }
+        }
+        const typed = type && type !== blob.type ? new Blob([blob], { type }) : blob
+        created = URL.createObjectURL(typed)
+        setPreviewObjectUrl(created)
+      } catch (err) {
+        if (!cancelled) {
+          setPreviewLoadError(err instanceof Error ? err.message : 'Failed to load document preview')
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (created) URL.revokeObjectURL(created)
+    }
+  }, [previewUrl, isImage, job?.stagedDocument?.mimeType, job?.stagedDocument?.originalFilename])
 
   const setField = (key: EditableField, value: string) => {
     setForm((current) => ({ ...current, [key]: value }))
@@ -458,10 +522,14 @@ export function RegistrationReview({
           <div className="min-h-0 flex-1 bg-slate-50 p-3">
             {!previewUrl ? (
               <p className="text-xs text-slate-500">No preview available for this job.</p>
+            ) : previewLoadError ? (
+              <p className="text-xs text-red-600">{previewLoadError}</p>
+            ) : !previewObjectUrl ? (
+              <p className="text-xs text-slate-500">Loading preview…</p>
             ) : isImage ? (
-              <img src={previewUrl} alt="Staged document" className="mx-auto max-h-[calc(70vh-4rem)] max-w-full object-contain" />
+              <img src={previewObjectUrl} alt="Staged document" className="mx-auto max-h-[calc(70vh-4rem)] max-w-full object-contain" />
             ) : (
-              <iframe title="Staged document preview" src={previewUrl} className="h-[calc(70vh-4rem)] w-full rounded border border-slate-200 bg-white" />
+              <iframe title="Staged document preview" src={previewObjectUrl} className="h-[calc(70vh-4rem)] w-full rounded border border-slate-200 bg-white" />
             )}
           </div>
         </Card>

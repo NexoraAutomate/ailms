@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadF
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.ai.extraction_service import load_extraction_artifact
 from app.ai.ingestion_service import serialize_staged_document, stage_document_upload
 from app.ai.job_service import (
     create_registration_job,
@@ -15,9 +16,9 @@ from app.ai.job_service import (
     retry_registration_job,
     serialize_job_create,
 )
-from app.ai.extraction_service import load_extraction_artifact
 from app.ai.ocr_normalize import load_normalized_artifact
 from app.ai.ocr_service import load_ocr_artifact
+from app.ai.registration_commit import approve_registration_job
 from app.ai.review_service import (
     assert_job_access,
     enrich_job_payload,
@@ -26,7 +27,6 @@ from app.ai.review_service import (
     reject_job,
     request_rerun,
 )
-from app.ai.registration_commit import approve_registration_job
 from app.ai.validation_service import load_validation_artifact
 from app.config import get_settings
 from app.database import get_db
@@ -39,6 +39,7 @@ from app.schemas import (
     AiRegistrationRejectIn,
     StagedDocumentOut,
 )
+from app.storage_service import resolve_media_type
 
 router = APIRouter(prefix="/ai-registration", tags=["ai-registration"])
 
@@ -73,11 +74,13 @@ async def create_staged_document(
 def preview_staged_document(staged_id: int, db: Session = Depends(get_db)) -> FileResponse:
     """Inline preview of a staged PDF/image (same ownership rules as jobs)."""
     staged, path = get_staged_document_for_preview(db, staged_id)
+    media_type = resolve_media_type(staged.original_filename, staged.mime_type)
+    # Omit filename so Starlette does not emit Content-Disposition with a name;
+    # attachment-style disposition (or octet-stream + filename) triggers downloads.
     return FileResponse(
         path,
-        media_type=staged.mime_type or "application/octet-stream",
-        filename=staged.original_filename,
-        content_disposition_type="inline",
+        media_type=media_type,
+        headers={"Content-Disposition": "inline"},
     )
 
 

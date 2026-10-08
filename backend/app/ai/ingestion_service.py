@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 from app.models import AiStagedDocument
 from app.services import add_audit, current_user_name
 from app.storage_service import (
-    MIME_BY_EXT,
     build_staging_storage_key,
+    resolve_media_type,
     resolve_storage_path,
     validate_staged_upload,
 )
@@ -52,8 +52,8 @@ async def stage_document_upload(
     """
     content = await upload.read()
     size = len(content)
-    original, ext = validate_staged_upload(upload, size)
-    mime = upload.content_type or MIME_BY_EXT.get(ext, "application/octet-stream")
+    original, _ext = validate_staged_upload(upload, size)
+    mime = resolve_media_type(original, upload.content_type)
     checksum = hashlib.sha256(content).hexdigest()
     actor = actor or current_user_name(db)
 

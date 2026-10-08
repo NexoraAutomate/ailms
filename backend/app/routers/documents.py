@@ -12,7 +12,7 @@ from app.document_service import (
 )
 from app.models import Document, DocumentVersion
 from app.schemas import DocumentOut, DocumentVersionOut
-from app.storage_service import can_preview, resolve_storage_path
+from app.storage_service import can_preview, resolve_media_type, resolve_storage_path
 
 router = APIRouter(tags=["documents"])
 
@@ -104,11 +104,11 @@ def preview_version(version_id: int, db: Session = Depends(get_db)) -> FileRespo
     path = resolve_storage_path(version.storage_key)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+    media_type = resolve_media_type(version.original_filename, version.mime_type)
     return FileResponse(
         path,
-        media_type=version.mime_type,
-        filename=version.original_filename,
-        content_disposition_type="inline",
+        media_type=media_type,
+        headers={"Content-Disposition": "inline"},
     )
 
 

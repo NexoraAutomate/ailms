@@ -108,8 +108,24 @@ def validate_upload(
     if ext not in allowed:
         raise HTTPException(status_code=415, detail="Unsupported file type")
 
-    mime = file.content_type or MIME_BY_EXT.get(ext, "application/octet-stream")
     return original, ext
+
+
+def resolve_media_type(filename: str | None, declared: str | None = None) -> str:
+    """Pick a usable Content-Type from extension when the client sends a generic MIME.
+
+    Browsers often upload PDFs/images as ``application/octet-stream``. Serving that
+    type makes Chrome/Edge download the file instead of rendering it inline.
+    """
+    ext = Path(filename or "").suffix.lower()
+    from_ext = MIME_BY_EXT.get(ext)
+    raw = (declared or "").strip()
+    lowered = raw.lower()
+    if from_ext and (not lowered or lowered in {"application/octet-stream", "binary/octet-stream"}):
+        return from_ext
+    if raw:
+        return raw
+    return from_ext or "application/octet-stream"
 
 
 def validate_staged_upload(file: UploadFile, size: int) -> tuple[str, str]:
