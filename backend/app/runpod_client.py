@@ -312,7 +312,7 @@ async def chat_completion_runpod(
         logger.info(
             "Runpod completion endpoint=%s model=%s latencyMs=%d status=%s",
             settings.runpod_endpoint_id,
-            settings.llm_model,
+            settings.active_llm_model,
             latency_ms,
             data.get("status"),
         )
@@ -323,7 +323,7 @@ async def probe_runpod_health() -> dict[str, Any]:
     """Probe Runpod endpoint health (GET /health)."""
     settings = get_settings()
     provider = "runpod"
-    model = settings.llm_model
+    model = settings.active_llm_model
     if not runpod_is_configured(settings):
         return {
             "status": "error",

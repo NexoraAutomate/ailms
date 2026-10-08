@@ -26,11 +26,11 @@ from app.llm_client import llm_is_configured  # noqa: E402
 
 async def main() -> int:
     settings = get_settings()
-    print(f"provider={settings.llm_provider} model={settings.llm_model}")
-    print(f"base_url={settings.llm_base_url}")
+    print(f"provider={settings.llm_provider} model={settings.active_llm_model}")
+    print(f"base_url={settings.active_llm_base_url}")
 
     if not llm_is_configured():
-        print("ERROR: LLM is not configured (check LLM_ENABLED / LLM_BASE_URL / LLM_API_KEY).")
+        print("ERROR: LLM is not configured (check LLM_ENABLED / LLM_PROVIDER / profile keys).")
         return 1
 
     provider = get_llm_provider()
@@ -49,7 +49,7 @@ async def main() -> int:
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         print(f"ERROR: sample completion failed: {detail}")
-        print(f"Hint: run `ollama pull {settings.llm_model}` if the model is missing.")
+        print(f"Hint: run `ollama pull {settings.active_llm_model}` if the model is missing.")
         return 1
 
     print(f"sample_completion={json.dumps(result)}")

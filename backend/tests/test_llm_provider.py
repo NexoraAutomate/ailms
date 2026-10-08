@@ -15,13 +15,23 @@ def _settings(**overrides) -> Settings:
         llm_enabled=True,
         llm_provider="ollama",
         llm_api_key="",
-        llm_base_url="http://127.0.0.1:11434/v1",
-        llm_model="qwen2.5:7b",
+        llm_base_url="",
+        llm_model="",
         llm_timeout_seconds=120,
         llm_max_tokens=4096,
         llm_extra_body_json="",
         llm_allowed_hosts="127.0.0.1,localhost",
         ai_log_document_text=False,
+        llm_ollama_base_url="http://127.0.0.1:11434/v1",
+        llm_ollama_api_key="",
+        llm_ollama_model="qwen2.5:7b",
+        llm_vllm_base_url="http://127.0.0.1:8001/v1",
+        llm_vllm_api_key="",
+        llm_vllm_model="Qwen/Qwen3-8B",
+        llm_openai_base_url="https://api.openai.com/v1",
+        llm_openai_api_key="",
+        llm_openai_model="gpt-4o-mini",
+        llm_runpod_model="Qwen/Qwen3-8B",
         runpod_api_key="",
         runpod_endpoint_id="br96s8zyygjs24",
         runpod_use_async=False,
@@ -35,30 +45,20 @@ def _settings(**overrides) -> Settings:
 class LlmProviderConfigTest(unittest.TestCase):
     def test_ollama_configured_without_api_key(self):
         """Local Ollama needs base URL only — no cloud API key."""
-        with patch("app.llm_client.get_settings", return_value=_settings(llm_api_key="")):
+        with patch("app.llm_client.get_settings", return_value=_settings()):
             self.assertTrue(llm_is_configured())
 
     def test_vllm_configured_without_api_key(self):
         with patch(
             "app.llm_client.get_settings",
-            return_value=_settings(
-                llm_provider="vllm",
-                llm_api_key="",
-                llm_base_url="http://127.0.0.1:8001/v1",
-                llm_model="Qwen/Qwen3-8B",
-            ),
+            return_value=_settings(llm_provider="vllm"),
         ):
             self.assertTrue(llm_is_configured())
 
     def test_openai_requires_api_key(self):
         with patch(
             "app.llm_client.get_settings",
-            return_value=_settings(
-                llm_provider="openai",
-                llm_api_key="",
-                llm_base_url="https://api.openai.com/v1",
-                llm_model="gpt-4o-mini",
-            ),
+            return_value=_settings(llm_provider="openai", llm_openai_api_key=""),
         ):
             self.assertFalse(llm_is_configured())
 
@@ -67,9 +67,6 @@ class LlmProviderConfigTest(unittest.TestCase):
             "app.llm_client.get_settings",
             return_value=_settings(
                 llm_provider="runpod",
-                llm_api_key="",
-                llm_base_url="",
-                llm_model="Qwen/Qwen3-8B",
                 runpod_api_key="rpa_x",
                 runpod_endpoint_id="br96s8zyygjs24",
             ),
@@ -89,16 +86,47 @@ class LlmProviderConfigTest(unittest.TestCase):
     def test_disabled_not_configured(self):
         with patch(
             "app.llm_client.get_settings",
-            return_value=_settings(llm_enabled=False, llm_api_key="ollama"),
+            return_value=_settings(llm_enabled=False),
         ):
             self.assertFalse(llm_is_configured())
 
     def test_ollama_requires_base_url(self):
         with patch(
             "app.llm_client.get_settings",
-            return_value=_settings(llm_base_url=""),
+            return_value=_settings(llm_ollama_base_url=""),
         ):
             self.assertFalse(llm_is_configured())
+
+
+class LlmProviderProfileSwitchTest(unittest.TestCase):
+    def test_switching_provider_changes_active_model_and_url(self):
+        ollama = _settings(llm_provider="ollama")
+        runpod = _settings(llm_provider="runpod", runpod_api_key="rpa_x")
+        openai = _settings(llm_provider="openai", llm_openai_api_key="sk-test")
+
+        self.assertEqual(ollama.active_llm_model, "qwen2.5:7b")
+        self.assertEqual(ollama.active_llm_base_url, "http://127.0.0.1:11434/v1")
+
+        self.assertEqual(runpod.active_llm_model, "Qwen/Qwen3-8B")
+        self.assertEqual(runpod.active_llm_base_url, "")
+
+        self.assertEqual(openai.active_llm_model, "gpt-4o-mini")
+        self.assertEqual(openai.active_llm_base_url, "https://api.openai.com/v1")
+        self.assertEqual(openai.active_llm_api_key, "sk-test")
+
+    def test_auto_allowlist_follows_provider(self):
+        self.assertEqual(
+            _settings(llm_provider="ollama", llm_allowed_hosts="auto").active_llm_allowed_hosts,
+            "127.0.0.1,localhost",
+        )
+        self.assertEqual(
+            _settings(llm_provider="openai", llm_allowed_hosts="auto").active_llm_allowed_hosts,
+            "api.openai.com",
+        )
+        self.assertEqual(
+            _settings(llm_provider="runpod", llm_allowed_hosts="auto").active_llm_allowed_hosts,
+            "api.runpod.ai",
+        )
 
 
 class LlmProviderFactoryTest(unittest.TestCase):
@@ -109,7 +137,7 @@ class LlmProviderFactoryTest(unittest.TestCase):
         self.assertEqual(provider.model_id, "qwen2.5:7b")
 
     def test_provider_is_configured_delegates(self):
-        settings = _settings(llm_api_key="")
+        settings = _settings()
         provider = OpenAiCompatibleProvider(settings=settings)
         with patch("app.ai.llm_provider.llm_is_configured", return_value=True):
             self.assertTrue(provider.is_configured())
@@ -144,12 +172,12 @@ class LlmAuthHeaderTest(unittest.TestCase):
     def test_local_provider_sends_dummy_key_when_empty(self):
         from app.llm_client import _auth_header_value
 
-        with patch("app.llm_client.get_settings", return_value=_settings(llm_api_key="")):
+        with patch("app.llm_client.get_settings", return_value=_settings(llm_ollama_api_key="")):
             self.assertEqual(_auth_header_value(), "ollama")
 
         with patch(
             "app.llm_client.get_settings",
-            return_value=_settings(llm_provider="vllm", llm_api_key=""),
+            return_value=_settings(llm_provider="vllm", llm_vllm_api_key=""),
         ):
             self.assertEqual(_auth_header_value(), "EMPTY")
 
@@ -165,7 +193,7 @@ class LlmHostAllowlistTest(unittest.TestCase):
 
         with self.assertRaises(LlmHostNotAllowedError):
             assert_llm_host_allowed(
-                _settings(llm_base_url="https://api.openai.com/v1")
+                _settings(llm_ollama_base_url="https://api.openai.com/v1")
             )
 
     def test_empty_allowlist_disables_filter(self):
@@ -173,7 +201,7 @@ class LlmHostAllowlistTest(unittest.TestCase):
 
         assert_llm_host_allowed(
             _settings(
-                llm_base_url="https://api.openai.com/v1",
+                llm_ollama_base_url="https://api.openai.com/v1",
                 llm_allowed_hosts="",
             )
         )

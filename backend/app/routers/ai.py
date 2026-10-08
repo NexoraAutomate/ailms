@@ -85,9 +85,9 @@ def _guard_configured() -> None:
         raise HTTPException(
             status_code=503,
             detail=(
-                "LLM not configured. For local Ollama set LLM_PROVIDER=ollama, "
-                "LLM_BASE_URL, and LLM_MODEL. For Runpod set LLM_PROVIDER=runpod, "
-                "RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID, and LLM_MODEL."
+                "LLM not configured. Set LLM_PROVIDER (ollama|runpod|vllm|openai) "
+                "and fill that provider's profile keys in .env "
+                "(e.g. LLM_OLLAMA_* or RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID)."
             ),
         )
 

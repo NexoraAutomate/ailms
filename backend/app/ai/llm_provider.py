@@ -53,11 +53,11 @@ class OpenAiCompatibleProvider:
 
     @property
     def provider_name(self) -> str:
-        return self._settings.llm_provider.strip().lower()
+        return self._settings.provider_key
 
     @property
     def model_id(self) -> str:
-        return self._settings.llm_model
+        return self._settings.active_llm_model
 
     def is_configured(self) -> bool:
         return llm_is_configured()

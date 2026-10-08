@@ -6,6 +6,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 _ENV_FILE = _BACKEND_ROOT / ".env"
 
+# Host allowlists applied when LLM_ALLOWED_HOSTS=auto (the default).
+_PROVIDER_ALLOWED_HOSTS: dict[str, str] = {
+    "ollama": "127.0.0.1,localhost",
+    "vllm": "127.0.0.1,localhost",
+    "openai": "api.openai.com",
+    "runpod": "api.runpod.ai",
+}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -55,20 +63,38 @@ class Settings(BaseSettings):
     # Structured extraction (step 7): max chars of combined text sent to the LLM.
     extraction_max_chars: int = 24_000
 
+    # Flip only this to switch backends: ollama | runpod | vllm | openai
     llm_enabled: bool = True
     llm_provider: str = "ollama"
-    llm_api_key: str = "ollama"
-    llm_base_url: str = "http://127.0.0.1:11434/v1"
-    llm_model: str = "qwen3:8b"
     llm_timeout_seconds: int = 120
     llm_max_tokens: int = 4096
     # Optional JSON object string merged into chat/completions request body (advanced).
     llm_extra_body_json: str = ""
-    # Comma-separated hostnames allowed for LLM HTTP egress (empty = no host filter).
-    # Default locks local providers to loopback; add api.openai.com / api.runpod.ai for cloud.
-    llm_allowed_hosts: str = "127.0.0.1,localhost"
+    # Host allowlist: "auto" derives from LLM_PROVIDER; empty disables the filter;
+    # otherwise a comma-separated hostname list.
+    llm_allowed_hosts: str = "auto"
     # When true, DEBUG-level logs may include document/user prompt text.
     ai_log_document_text: bool = False
+
+    # Legacy flat keys (fallback when a provider profile field is empty).
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_model: str = ""
+
+    # Per-provider profiles — keep all filled; only LLM_PROVIDER selects which is active.
+    llm_ollama_base_url: str = "http://127.0.0.1:11434/v1"
+    llm_ollama_api_key: str = "ollama"
+    llm_ollama_model: str = "qwen3:8b"
+
+    llm_vllm_base_url: str = "http://127.0.0.1:8001/v1"
+    llm_vllm_api_key: str = "EMPTY"
+    llm_vllm_model: str = "Qwen/Qwen3-8B"
+
+    llm_openai_base_url: str = "https://api.openai.com/v1"
+    llm_openai_api_key: str = ""
+    llm_openai_model: str = "gpt-4o-mini"
+
+    llm_runpod_model: str = "Qwen/Qwen3-8B"
 
     # Runpod Serverless queue-based vLLM (LLM_PROVIDER=runpod).
     runpod_api_key: str = ""
@@ -78,6 +104,52 @@ class Settings(BaseSettings):
     runpod_poll_interval_seconds: float = 2.0
     # Cover cold start (model download/load) + generation; raise if jobs still time out.
     runpod_max_wait_seconds: int = 900
+
+    @property
+    def provider_key(self) -> str:
+        return self.llm_provider.strip().lower()
+
+    @property
+    def active_llm_model(self) -> str:
+        specific = {
+            "ollama": self.llm_ollama_model,
+            "vllm": self.llm_vllm_model,
+            "openai": self.llm_openai_model,
+            "runpod": self.llm_runpod_model,
+        }.get(self.provider_key, "")
+        return (specific or self.llm_model or "").strip()
+
+    @property
+    def active_llm_base_url(self) -> str:
+        specific = {
+            "ollama": self.llm_ollama_base_url,
+            "vllm": self.llm_vllm_base_url,
+            "openai": self.llm_openai_base_url,
+            "runpod": "",
+        }.get(self.provider_key, "")
+        return (specific or self.llm_base_url or "").strip()
+
+    @property
+    def active_llm_api_key(self) -> str:
+        specific = {
+            "ollama": self.llm_ollama_api_key,
+            "vllm": self.llm_vllm_api_key,
+            "openai": self.llm_openai_api_key,
+            "runpod": self.runpod_api_key,
+        }.get(self.provider_key, "")
+        return (specific or self.llm_api_key or "").strip()
+
+    @property
+    def active_llm_allowed_hosts(self) -> str:
+        """Resolve allowlist: auto → provider default; empty → no filter; else explicit."""
+        raw = (self.llm_allowed_hosts or "").strip()
+        if not raw:
+            return ""
+        if raw.lower() == "auto":
+            return _PROVIDER_ALLOWED_HOSTS.get(
+                self.provider_key, "127.0.0.1,localhost"
+            )
+        return raw
 
     @property
     def database_url(self) -> str:

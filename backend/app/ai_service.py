@@ -327,12 +327,12 @@ def _brief_letters_for_prompt(letters: list[dict[str, Any]], limit: int = 5) -> 
 
 def ai_status() -> dict[str, Any]:
     settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
-    provider = settings.llm_provider.strip().lower()
+    provider = settings.provider_key
     payload: dict[str, Any] = {
         "enabled": llm_is_configured(),
         "provider": settings.llm_provider,
-        "model": settings.llm_model,
-        "baseUrl": settings.llm_base_url,
+        "model": settings.active_llm_model,
+        "baseUrl": settings.active_llm_base_url,
     }
     if provider == "runpod":
         payload["endpointId"] = settings.runpod_endpoint_id

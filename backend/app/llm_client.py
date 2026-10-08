@@ -37,20 +37,20 @@ def llm_is_configured() -> bool:
     settings = get_settings()
     if not settings.llm_enabled:
         return False
-    provider = settings.llm_provider.strip().lower()
+    provider = settings.provider_key
     if provider == _RUNPOD_PROVIDER:
         from app.runpod_client import runpod_is_configured
 
         return runpod_is_configured(settings)
     if provider in _LOCAL_PROVIDERS:
-        return bool(settings.llm_base_url.strip())
-    return bool(settings.llm_api_key.strip())
+        return bool(settings.active_llm_base_url)
+    return bool(settings.active_llm_api_key)
 
 
 def allowed_llm_hosts(settings: Settings | None = None) -> set[str]:
-    """Parse LLM_ALLOWED_HOSTS; empty string means no host restriction."""
+    """Parse active allowlist; empty string means no host restriction."""
     cfg = settings or get_settings()
-    raw = (cfg.llm_allowed_hosts or "").strip()
+    raw = (cfg.active_llm_allowed_hosts or "").strip()
     if not raw:
         return set()
     return {part.strip().lower() for part in raw.split(",") if part.strip()}
@@ -59,14 +59,14 @@ def allowed_llm_hosts(settings: Settings | None = None) -> set[str]:
 def assert_llm_host_allowed(settings: Settings | None = None) -> None:
     """Block LLM HTTP calls to hosts outside the configured allowlist (spec 11)."""
     cfg = settings or get_settings()
-    provider = cfg.llm_provider.strip().lower()
+    provider = cfg.provider_key
     # Runpod client hardcodes api.runpod.ai — no user-controlled base URL to allowlist.
     if provider == _RUNPOD_PROVIDER:
         return
     allowed = allowed_llm_hosts(cfg)
     if not allowed:
         return
-    base = (cfg.llm_base_url or "").strip()
+    base = cfg.active_llm_base_url
     if not base:
         return
     host = (urlparse(base).hostname or "").strip().lower()
@@ -83,8 +83,8 @@ def _auth_header_value() -> str | None:
     expects an Authorization header; empty key still sends a local default.
     """
     settings = get_settings()
-    key = settings.llm_api_key.strip()
-    provider = settings.llm_provider.strip().lower()
+    key = settings.active_llm_api_key
+    provider = settings.provider_key
     if key:
         return key
     if provider in _LOCAL_PROVIDERS:
@@ -158,7 +158,7 @@ async def chat_completion(
     except LlmHostNotAllowedError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    if settings.llm_provider.strip().lower() == _RUNPOD_PROVIDER:
+    if settings.provider_key == _RUNPOD_PROVIDER:
         from app.runpod_client import chat_completion_runpod
 
         _log_prompt_preview(system, user)
@@ -169,9 +169,9 @@ async def chat_completion(
             max_tokens=max_tokens,
         )
 
-    url = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
+    url = f"{settings.active_llm_base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
-        "model": settings.llm_model,
+        "model": settings.active_llm_model,
         "temperature": temperature,
         "messages": [
             {"role": "system", "content": system},
@@ -230,7 +230,7 @@ async def chat_completion(
             usage = data.get("usage") if isinstance(data, dict) else None
             logger.info(
                 "LLM completion model=%s provider=%s latencyMs=%d usage=%s",
-                settings.llm_model,
+                settings.active_llm_model,
                 settings.llm_provider,
                 latency_ms,
                 usage,
@@ -282,8 +282,8 @@ async def probe_llm_health() -> dict[str, Any]:
     Runpod: ``GET /v2/{endpoint}/health``.
     """
     settings = get_settings()
-    provider = settings.llm_provider.strip().lower()
-    model = settings.llm_model
+    provider = settings.provider_key
+    model = settings.active_llm_model
     if not llm_is_configured():
         return {
             "status": "error",
@@ -310,7 +310,7 @@ async def probe_llm_health() -> dict[str, Any]:
 
         return await probe_runpod_health()
 
-    base = settings.llm_base_url.rstrip("/")
+    base = settings.active_llm_base_url.rstrip("/")
     timeout = httpx.Timeout(min(settings.llm_timeout_seconds, 30.0))
     started = time.perf_counter()
 

@@ -212,7 +212,7 @@ class LlmEgressSecurityTest(unittest.IsolatedAsyncioTestCase):
         settings = Settings(
             llm_enabled=True,
             llm_provider="ollama",
-            llm_base_url="https://evil.example.com/v1",
+            llm_ollama_base_url="https://evil.example.com/v1",
             llm_allowed_hosts="127.0.0.1,localhost",
         )
         with self.assertRaises(LlmHostNotAllowedError):
@@ -220,7 +220,8 @@ class LlmEgressSecurityTest(unittest.IsolatedAsyncioTestCase):
 
     def test_loopback_host_allowed(self) -> None:
         settings = Settings(
-            llm_base_url="http://127.0.0.1:11434/v1",
+            llm_provider="ollama",
+            llm_ollama_base_url="http://127.0.0.1:11434/v1",
             llm_allowed_hosts="127.0.0.1,localhost",
         )
         assert_llm_host_allowed(settings)
@@ -229,8 +230,8 @@ class LlmEgressSecurityTest(unittest.IsolatedAsyncioTestCase):
         settings = Settings(
             llm_enabled=True,
             llm_provider="ollama",
-            llm_api_key="ollama",
-            llm_base_url="https://evil.example.com/v1",
+            llm_ollama_api_key="ollama",
+            llm_ollama_base_url="https://evil.example.com/v1",
             llm_allowed_hosts="127.0.0.1,localhost",
         )
         with patch("app.llm_client.get_settings", return_value=settings):
@@ -242,8 +243,8 @@ class LlmEgressSecurityTest(unittest.IsolatedAsyncioTestCase):
         settings = Settings(
             llm_enabled=True,
             llm_provider="ollama",
-            llm_api_key="ollama",
-            llm_base_url="https://evil.example.com/v1",
+            llm_ollama_api_key="ollama",
+            llm_ollama_base_url="https://evil.example.com/v1",
             llm_allowed_hosts="127.0.0.1,localhost",
         )
         with patch("app.llm_client.get_settings", return_value=settings):
