@@ -14,7 +14,7 @@ import { useAppData } from '@/components/app-provider'
 import { useCmsSearch } from '@/components/cms/search-context'
 import { LetterDeleteDialog } from '@/components/cms/letter-delete-dialog'
 import { LetterTable } from '@/components/cms/letter-table'
-import { Kpi, MiniDashboard, PageTitle } from '@/components/cms/ui'
+import { Kpi, MiniDashboard } from '@/components/cms/ui'
 import {
   AnimatedProgressStepper,
   personInitials,
@@ -363,7 +363,8 @@ function buildPeoplePipeline(
   return { steps, currentStep }
 }
 
-export function MonitoringPage() {
+/** Operational workbench for open / aging correspondence (used by Analytics → Needs action). */
+export function NeedsActionWorkbench() {
   const go = useGo()
   const { letters, me, users, departments, refresh } = useAppData()
   const { query } = useCmsSearch()
@@ -472,13 +473,8 @@ export function MonitoringPage() {
 
   return (
     <>
-      <PageTitle
-        title="Monitoring"
-        description="Watch overdue, aging, and open correspondence that still needs action."
-      />
-
       <MiniDashboard
-        title="Monitoring snapshot"
+        title="Needs action snapshot"
         description="Open workload KPIs — minimize to a compact strip"
         className="fade-merge-down mb-0 rounded-b-none border-b-0 shadow-none"
         gridClassName="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7"
@@ -555,7 +551,7 @@ export function MonitoringPage() {
           )
         ) : (
           <p className="py-6 text-center text-xs text-slate-400">
-            No open correspondence to monitor right now.
+            No open correspondence needing action right now.
           </p>
         )}
       </div>
@@ -598,4 +594,9 @@ export function MonitoringPage() {
       )}
     </>
   )
+}
+
+/** @deprecated Use Analytics → Needs action; kept for redirects. */
+export function MonitoringPage() {
+  return <NeedsActionWorkbench />
 }

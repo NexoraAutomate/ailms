@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { AiDecision, AiStatus, InsightSeverity, ManagementInsight } from '@/services/ai'
@@ -146,11 +146,15 @@ export function AIConfirmationDialog({
   )
 }
 
-export function SectionCard({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+export function SectionCard({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-        <h2 className="text-sm font-bold text-slate-700">{title}</h2>
+        {typeof title === 'string' ? (
+          <h2 className="text-sm font-bold text-slate-700">{title}</h2>
+        ) : (
+          title
+        )}
         {action}
       </div>
       <div className="p-4">{children}</div>

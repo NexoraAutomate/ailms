@@ -151,69 +151,117 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
 
 export function AIInsightsPage({ go }: { go: (page: string) => void }) {
   const { letters, departmentPerformance } = useAppData()
-  const [status, setStatus] = useState<'idle' | 'analyzing' | 'error'>('analyzing')
+  const [status, setStatus] = useState<'idle' | 'analyzing' | 'error'>('idle')
   const [insights, setInsights] = useState<ManagementInsight[]>([])
-  useEffect(() => {
-    let cancelled = false
+  const run = () => {
+    setStatus('analyzing')
     generateManagementInsights(letters, departmentPerformance)
       .then((rows) => {
-        if (cancelled) return
         setInsights(rows)
         setStatus('idle')
       })
       .catch(() => {
-        if (!cancelled) setStatus('error')
+        setStatus('error')
       })
-    return () => {
-      cancelled = true
-    }
-  }, [letters, departmentPerformance])
+  }
   const groups = ['Operational', 'Risk', 'Management'] as const
   return (
     <div className="space-y-6">
-      <AIAdvisoryNote />
-      <AIStatusIndicator status={status === 'analyzing' ? 'analyzing' : status === 'error' ? 'error' : 'idle'} />
-      {groups.map((group) => (
-        <div key={group}>
-          <h2 className="mb-3 text-sm font-bold text-slate-700">{group} insights</h2>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {insights.filter((item) => item.group === group).map((insight) => (
-              <AIInsightCard key={insight.id} insight={insight} onView={(ids) => go(ids[0] ? ids[0] : 'All Letters')} />
-            ))}
-          </div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <AIAdvisoryNote />
+        <div className="flex gap-2">
+          {status !== 'analyzing' && insights.length === 0 && (
+            <Button size="sm" onClick={() => void run()}>
+              <Sparkles data-icon="inline-start" />
+              Generate Insights
+            </Button>
+          )}
+          {insights.length > 0 && (
+            <Button size="sm" variant="outline" disabled={status === 'analyzing'} onClick={() => void run()}>
+              Regenerate Insights
+            </Button>
+          )}
         </div>
-      ))}
+      </div>
+      <AIStatusIndicator
+        status={status === 'analyzing' ? 'analyzing' : status === 'error' ? 'error' : 'idle'}
+        label={status === 'analyzing' ? 'AI is generating management insights...' : undefined}
+      />
+      {status === 'idle' && insights.length === 0 && (
+        <p className="rounded-md bg-slate-50 p-4 text-xs text-slate-500">
+          Insights are not generated automatically. Click Generate Insights when you want an advisory summary of the register.
+        </p>
+      )}
+      {groups.map((group) => {
+        const rows = insights.filter((item) => item.group === group)
+        if (rows.length === 0) return null
+        return (
+          <div key={group}>
+            <h2 className="mb-3 text-sm font-bold text-slate-700">{group} insights</h2>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {rows.map((insight) => (
+                <AIInsightCard key={insight.id} insight={insight} onView={(ids) => go(ids[0] ? ids[0] : 'All Letters')} />
+              ))}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
 export function AIManagementInsights({ go }: { go: (page: string) => void }) {
   const { letters, departmentPerformance } = useAppData()
+  const [status, setStatus] = useState<'idle' | 'analyzing' | 'error'>('idle')
   const [insights, setInsights] = useState<ManagementInsight[]>([])
-  useEffect(() => {
-    let cancelled = false
+  const run = () => {
+    setStatus('analyzing')
     generateManagementInsights(letters, departmentPerformance)
       .then((rows) => {
-        if (!cancelled) setInsights(rows.slice(0, 5))
+        setInsights(rows.slice(0, 5))
+        setStatus('idle')
       })
       .catch(() => {
-        /* dashboard widget: soft-fail while OCR/LLM is busy elsewhere */
+        setStatus('error')
       })
-    return () => {
-      cancelled = true
-    }
-  }, [letters, departmentPerformance])
+  }
   return (
-    <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700"><Sparkles className="size-4 text-[#1769aa]" /> AI Management Insights</h2>
           <p className="text-xs text-slate-400">Advisory observations from the current register</p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => go('AI Insights')}>Open AI Insights</Button>
+        <div className="flex flex-wrap gap-2">
+          {status !== 'analyzing' && insights.length === 0 && (
+            <Button size="sm" onClick={() => void run()}>
+              <Sparkles data-icon="inline-start" />
+              Generate Insights
+            </Button>
+          )}
+          {insights.length > 0 && (
+            <Button size="sm" variant="outline" disabled={status === 'analyzing'} onClick={() => void run()}>
+              Regenerate
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => go('AI Insights')}>Open AI Insights</Button>
+        </div>
       </div>
-      <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-        {insights.map((insight) => <AIInsightCard key={insight.id} insight={insight} onView={(ids) => go(ids[0] || 'Monitoring')} />)}
+      <AIStatusIndicator
+        status={status === 'analyzing' ? 'analyzing' : status === 'error' ? 'error' : 'idle'}
+        label={status === 'analyzing' ? 'AI is generating management insights...' : undefined}
+      />
+      {status === 'idle' && insights.length === 0 && (
+        <p className="text-xs text-slate-500">Click Generate Insights to run an advisory analysis of the register.</p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {insights.map((insight) => (
+          <AIInsightCard
+            key={insight.id}
+            insight={insight}
+            onView={(ids) => go(ids[0] || '/analytics?view=needs-action')}
+          />
+        ))}
       </div>
     </section>
   )

@@ -20,6 +20,7 @@ import {
   Users,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { UserAvatar } from '@/components/ui/user-avatar'
 import { DataTable, TableActions, type DataTableColumn } from '@/components/cms/data-table'
@@ -523,22 +524,23 @@ export function SettingsHub({
         </Button>
       </div>
 
-      <div className="mb-6 flex flex-wrap gap-1 border-b border-slate-200 pb-1">
+      <AppTabList className="mb-6 flex-wrap">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
             onClick={() => selectTab(id)}
-            className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs font-semibold ${tab === id ? 'bg-slate-100 text-[#0d3763]' : 'text-slate-600 hover:bg-slate-50'}`}
+            className={appTabClass(tab === id)}
           >
             <Icon className="size-3.5" />
             {label}
           </button>
         ))}
-      </div>
+      </AppTabList>
 
       {msg && <p className="mb-4 text-xs text-emerald-700">{msg}</p>}
 
+      <AppTabPanel tabKey={tab}>
       {tab === 'users' && (
         <>
           <MiniDashboard
@@ -795,6 +797,7 @@ export function SettingsHub({
           </div>
         </div>
       )}
+      </AppTabPanel>
 
       {editUser ? (
         <Modal

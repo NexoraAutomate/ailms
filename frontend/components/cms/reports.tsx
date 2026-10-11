@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { Download, Printer } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { Badge, Card, Filters, PageTitle } from '@/components/cms/ui'
 import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import { priorityTone, statusTone, type Letter } from '@/services/letters'
@@ -61,13 +62,13 @@ export function Reports() {
       <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
         <Card className="p-4">
           <h2 className="mb-3 text-sm font-bold text-slate-700">Predefined reports</h2>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-2">
             {['Incoming Letters Report', 'Outgoing Letters Report', 'Pending Letters Report', 'Overdue Letters Report', 'Closed Letters Report', 'Department Workload Report', 'Response Performance Report'].map((r) => (
-              <button key={r} onClick={() => setReport(r)} className={`rounded-md px-3 py-2 text-left text-xs ${report === r ? 'bg-blue-50 font-semibold text-[#1769aa]' : 'text-slate-600 hover:bg-slate-50'}`}>{r}</button>
+              <button key={r} type="button" onClick={() => setReport(r)} className={appTabClass(report === r, 'w-full justify-start')}>{r}</button>
             ))}
           </div>
         </Card>
-        <div>
+        <AppTabPanel tabKey={report}>
           <Filters />
           <DataTable
             columns={columns}
@@ -84,7 +85,7 @@ export function Reports() {
               </div>
             }
           />
-        </div>
+        </AppTabPanel>
       </div>
     </>
   )

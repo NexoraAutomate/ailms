@@ -1,7 +1,6 @@
-'use client'
+import { redirect } from 'next/navigation'
 
-import { MonitoringPage } from '@/components/cms/monitoring-page'
-
-export default function Page() {
-  return <MonitoringPage />
+/** Monitoring merged into Analytics → Needs action (Option B). */
+export default function MonitoringRedirect() {
+  redirect('/analytics?view=needs-action')
 }

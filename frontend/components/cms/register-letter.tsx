@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { Card, PageTitle } from '@/components/cms/ui'
 import { RegistrationUpload } from '@/components/ai/registration-upload'
 import { createRelation, listRelationTypes } from '@/services/correspondence'
@@ -137,24 +138,25 @@ export function Register({ go }: { go: (p: string) => void }) {
     <>
       <PageTitle title="Register letter" description="Capture correspondence details and assign the next action." action={<Button variant="outline" onClick={() => go('All Letters')}>Cancel</Button>} />
       <Card className="max-w-4xl">
-        <div className="mb-0 flex gap-2 border-b border-slate-200 px-5 pt-4">
+        <div className="mb-0 flex gap-2 px-5 pt-4 pb-3">
           <button
             type="button"
             onClick={() => setMode('manual')}
-            className={`border-b-2 px-3 pb-2 text-xs font-semibold ${mode === 'manual' ? 'border-[#102a43] text-[#102a43]' : 'border-transparent text-slate-400'}`}
+            className={appTabClass(mode === 'manual')}
           >
             Manual
           </button>
           <button
             type="button"
             onClick={() => setMode('upload')}
-            className={`border-b-2 px-3 pb-2 text-xs font-semibold ${mode === 'upload' ? 'border-[#102a43] text-[#102a43]' : 'border-transparent text-slate-400'}`}
+            className={appTabClass(mode === 'upload')}
           >
             Upload &amp; analyze
           </button>
         </div>
+        <AppTabPanel tabKey={mode}>
         {mode === 'upload' ? (
-          <div className="p-5">
+          <div className="p-5 pt-0">
             <h2 className="text-sm font-bold text-slate-700">Upload &amp; analyze</h2>
             <div className="mt-4">
               <RegistrationUpload onNeedsReview={(job) => go(`/letters/register/review/${job.jobId}`)} />
@@ -252,6 +254,7 @@ export function Register({ go }: { go: (p: string) => void }) {
             </div>
           </>
         )}
+        </AppTabPanel>
       </Card>
       {saved && <div className="fixed bottom-5 right-5 rounded-lg bg-[#102a43] px-4 py-3 text-xs font-semibold text-white">Letter saved successfully.</div>}
     </>

@@ -27,7 +27,6 @@ import {
   KeyRound,
   LayoutDashboard,
   Lightbulb,
-  LineChart,
   LogOut,
   Maximize2,
   Menu,
@@ -36,7 +35,6 @@ import {
   Send,
   Settings2,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Sun,
   Table2,
@@ -60,7 +58,6 @@ import { looksLikeNaturalQuery } from '@/services/ai'
 const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Dashboard: LayoutDashboard,
   'My Actions': CalendarClock,
-  Monitoring: SlidersHorizontal,
   Onboarding: GraduationCap,
   Inbox: Inbox,
   Sent: Send,
@@ -77,7 +74,6 @@ const NAV_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Closed: CheckCircle2,
   Archived: BriefcaseBusiness,
   'AI Assistant': Sparkles,
-  'Letter Analysis': LineChart,
   'AI Insights': Lightbulb,
   Meetings: Calendar,
   'Import Center': Upload,
@@ -516,7 +512,7 @@ export function CmsShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Header setMobile={setMobile} />
         <LettersSubnav />
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           <main className="mx-auto w-full max-w-[1600px] p-4 sm:p-7">{content}</main>
         </div>
       </div>

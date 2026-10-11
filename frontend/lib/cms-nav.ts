@@ -1,12 +1,12 @@
 /** Map legacy in-app page labels / tokens to App Router paths. */
 
 export const NAV_GROUPS = [
-  { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Monitoring', 'Onboarding'] as const },
+  { label: 'Workspace', items: ['Dashboard', 'My Actions', 'Onboarding'] as const },
   {
     label: 'Letters',
     items: ['Inbox', 'Sent', 'Create', 'Track', 'Catalog'] as const,
   },
-  { label: 'AI Intelligence', items: ['AI Assistant', 'Letter Analysis', 'AI Insights'] as const },
+  { label: 'AI Intelligence', items: ['AI Assistant', 'AI Insights'] as const },
   { label: 'Operations', items: ['Meetings', 'Import Center', 'Export Center'] as const },
   { label: 'Management', items: ['Analytics', 'Reports'] as const },
   {
@@ -32,7 +32,7 @@ export type LettersTrackView = (typeof LETTERS_TRACK_VIEWS)[number]
 const LABEL_TO_HREF: Record<string, string> = {
   Dashboard: '/',
   'My Actions': '/letters/my-actions',
-  Monitoring: '/letters/monitoring',
+  Monitoring: '/analytics?view=needs-action',
   Onboarding: '/onboarding',
   Inbox: '/letters/inbox',
   Sent: '/letters/sent',
@@ -69,7 +69,7 @@ const PATH_TO_LABEL: Record<string, string> = Object.fromEntries(
   Object.entries(LABEL_TO_HREF).map(([label, href]) => [href, label]),
 )
 
-const WORKSPACE_LETTER_PATHS = new Set(['/letters/my-actions', '/letters/monitoring'])
+const WORKSPACE_LETTER_PATHS = new Set(['/letters/my-actions'])
 
 /** Resolve legacy go() targets (labels, detail:id, meeting:id, Settings:tab, bare ids) to hrefs. */
 export function resolveNavHref(target: string): string {
@@ -117,7 +117,6 @@ export function lettersTrackViewFromPathname(pathname: string): LettersTrackView
 export function labelFromPathname(pathname: string): string {
   if (pathname === '/' || pathname === '') return 'Dashboard'
   if (pathname === '/letters/my-actions') return 'My Actions'
-  if (pathname === '/letters/monitoring') return 'Monitoring'
   if (pathname === '/onboarding') return 'Onboarding'
   if (pathname === '/letters/inbox') return 'Inbox'
   if (pathname === '/letters/sent') return 'Sent'

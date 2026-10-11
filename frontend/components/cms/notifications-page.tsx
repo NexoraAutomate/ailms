@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Bell, Check } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 
 export function Notifications({ go }: { go: (p: string) => void }) {
@@ -56,14 +57,15 @@ export function Notifications({ go }: { go: (p: string) => void }) {
         description={`Stay informed about assignments, deadlines and correspondence updates.${summary.unread ? ` ${summary.unread} unread.` : ''}`}
         action={<Button variant="outline" onClick={async () => { await readAllNotifications(); await refresh(); await load() }}><Check data-icon="inline-start" />Mark all as read</Button>}
       />
-      <div className="mb-4 flex flex-wrap gap-2">
-        <Button size="sm" variant={view === 'all' ? 'default' : 'outline'} onClick={() => setView('all')}>All notifications</Button>
-        <Button size="sm" variant={view === 'unread' ? 'default' : 'outline'} onClick={() => setView('unread')}>Unread only</Button>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => setView('all')} className={appTabClass(view === 'all')}>All notifications</button>
+        <button type="button" onClick={() => setView('unread')} className={appTabClass(view === 'unread')}>Unread only</button>
         <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-xs">
           <option>All</option>
           {types.map((t) => <option key={t}>{t}</option>)}
         </select>
       </div>
+      <AppTabPanel tabKey={`${view}-${typeFilter}`}>
       <Card>
         {loading && <div className="p-8 text-center text-sm text-slate-500">Loading notifications…</div>}
         {!loading && items.length === 0 ? <div className="p-8 text-center text-sm text-slate-500">You&apos;re all caught up.</div> : items.map((n) => (
@@ -90,6 +92,7 @@ export function Notifications({ go }: { go: (p: string) => void }) {
           </div>
         ))}
       </Card>
+      </AppTabPanel>
     </>
   )
 }

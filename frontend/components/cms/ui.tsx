@@ -89,17 +89,17 @@ export function Logo() {
 
 export function PageTitle({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <div className="mb-2 flex items-center gap-2 text-xs text-slate-400">
-          <span>Workspace</span>
-          <ChevronRight className="size-3" />
-          <span className="text-slate-600">{title}</span>
+    <div className="mb-6 flex items-start justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-slate-400">
+          <span className="shrink-0">Workspace</span>
+          <ChevronRight className="size-3 shrink-0" />
+          <span className="truncate text-slate-600">{title}</span>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-[#102a43]">{title}</h1>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
+        <h1 className="truncate text-2xl font-bold tracking-tight text-[#102a43]" title={title}>{title}</h1>
+        <p className="mt-1 truncate text-sm text-slate-500" title={description}>{description}</p>
       </div>
-      {action}
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   )
 }
@@ -191,19 +191,135 @@ export function Kpi({
   )
 }
 
-export function Filters() {
+export type AnalyticsFilterValues = {
+  dateFrom: string
+  dateTo: string
+  department: string
+  letterType: string
+  priority: string
+  status: string
+}
+
+export const EMPTY_ANALYTICS_FILTERS: AnalyticsFilterValues = {
+  dateFrom: '',
+  dateTo: '',
+  department: 'All',
+  letterType: 'All',
+  priority: 'All',
+  status: 'All',
+}
+
+export function Filters({
+  values: controlledValues,
+  options,
+  onChange,
+  onApply,
+  onClear,
+}: {
+  values?: AnalyticsFilterValues
+  options?: {
+    departments: string[]
+    letterTypes: string[]
+    priorities: string[]
+    statuses: string[]
+  }
+  onChange?: (next: AnalyticsFilterValues) => void
+  onApply?: () => void
+  onClear?: () => void
+} = {}) {
+  const [local, setLocal] = useState<AnalyticsFilterValues>(EMPTY_ANALYTICS_FILTERS)
+  const values = controlledValues ?? local
+  const setValues = onChange ?? setLocal
+  const depts = options?.departments ?? []
+  const types = options?.letterTypes ?? ['Incoming', 'Outgoing']
+  const priorities = options?.priorities ?? ['Urgent', 'Important', 'Routine']
+  const statuses = options?.statuses ?? []
+  const selectClass = 'h-9 min-w-28 rounded border border-slate-200 bg-white px-2 text-xs font-normal text-slate-600'
+  const inputClass = 'h-9 rounded border border-slate-200 px-2 text-xs font-normal text-slate-600'
   return (
     <div className="mb-5 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-4">
-      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">Date from<input type="date" className="h-9 rounded border border-slate-200 px-2 text-xs font-normal text-slate-600" /></label>
-      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">Date to<input type="date" className="h-9 rounded border border-slate-200 px-2 text-xs font-normal text-slate-600" /></label>
-      {['Department', 'Letter type', 'Priority', 'Status'].map((f) => (
-        <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400" key={f}>
-          {f}
-          <select className="h-9 min-w-28 rounded border border-slate-200 bg-white px-2 text-xs font-normal text-slate-600"><option>All</option></select>
-        </label>
-      ))}
-      <Button size="sm">Apply Filters</Button>
-      <Button size="sm" variant="ghost">Clear</Button>
+      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
+        Date from
+        <input
+          type="date"
+          className={inputClass}
+          value={values.dateFrom}
+          onChange={(e) => setValues({ ...values, dateFrom: e.target.value })}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
+        Date to
+        <input
+          type="date"
+          className={inputClass}
+          value={values.dateTo}
+          onChange={(e) => setValues({ ...values, dateTo: e.target.value })}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
+        Department
+        <select
+          className={selectClass}
+          value={values.department}
+          onChange={(e) => setValues({ ...values, department: e.target.value })}
+        >
+          <option>All</option>
+          {depts.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
+        Letter type
+        <select
+          className={selectClass}
+          value={values.letterType}
+          onChange={(e) => setValues({ ...values, letterType: e.target.value })}
+        >
+          <option>All</option>
+          {types.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
+        Priority
+        <select
+          className={selectClass}
+          value={values.priority}
+          onChange={(e) => setValues({ ...values, priority: e.target.value })}
+        >
+          <option>All</option>
+          {priorities.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
+        Status
+        <select
+          className={selectClass}
+          value={values.status}
+          onChange={(e) => setValues({ ...values, status: e.target.value })}
+        >
+          <option>All</option>
+          {statuses.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </label>
+      <Button size="sm" type="button" onClick={() => onApply?.()}>Apply Filters</Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        type="button"
+        onClick={() => {
+          if (onClear) onClear()
+          else setValues(EMPTY_ANALYTICS_FILTERS)
+        }}
+      >
+        Clear
+      </Button>
     </div>
   )
 }

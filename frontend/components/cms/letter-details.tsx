@@ -1,12 +1,22 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Lock, MessageSquare, Sparkles } from 'lucide-react'
+import {
+  FileText,
+  GitBranch,
+  Link2,
+  Lock,
+  MessageSquare,
+  Paperclip,
+  Sparkles,
+} from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { AIAnalyzeDocument, AIIntelligencePanel } from '@/components/ai/letter-tools'
 import { Button } from '@/components/ui/button'
+import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { ReplyDialog } from '@/components/cms/reply-dialog'
+import { CollapsibleCardMotionProvider } from '@/components/ui/collapsible-card'
 import { getLetter, priorityTone, statusTone, type Letter } from '@/services/letters'
 import { letterRowActions } from '@/services/letter-actions'
 import {
@@ -18,14 +28,33 @@ import {
   WorkflowPanel,
 } from '@/components/cms/letter-panels'
 
+type LetterTabId = 'details' | 'documents' | 'workflow' | 'references' | 'ai'
+
+const LETTER_TABS: {
+  id: LetterTabId
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+}[] = [
+  { id: 'details', label: 'Correspondence Details', icon: FileText },
+  { id: 'documents', label: 'Documents & Attachments', icon: Paperclip },
+  { id: 'workflow', label: 'Workflow', icon: GitBranch },
+  { id: 'references', label: 'Reference & Linked Letters', icon: Link2 },
+  { id: 'ai', label: 'AI Intelligence Panel', icon: Sparkles },
+]
+
 export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   const { letters, users, me, refresh, addAction, applyLetterField, acceptAiAction } = useAppData()
   const [action, setAction] = useState('')
   const [replyOpen, setReplyOpen] = useState(false)
+  const [tab, setTab] = useState<LetterTabId>('details')
   const cached = letters.find((item) => item.id === id) ?? null
   const [letter, setLetter] = useState<Letter | null>(cached)
   const [loading, setLoading] = useState(!cached)
   const [denied, setDenied] = useState(false)
+
+  useEffect(() => {
+    setTab('details')
+  }, [id])
 
   useEffect(() => {
     const fromCache = letters.find((item) => item.id === id) ?? null
@@ -81,53 +110,92 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
         title={letter.subject}
         description={`${letter.number} · ${letter.type} correspondence`}
         action={
-          <div className="flex gap-2">
-            {canReply && (
-              <Button onClick={() => setReplyOpen(true)}>
-                <MessageSquare data-icon="inline-start" />
-                Reply
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => go('AI Assistant')}><Sparkles data-icon="inline-start" />AI Assistant</Button>
-            <Button variant="outline" onClick={() => go(`analysis:${letter.id}`)}>Letter Analysis</Button>
-          </div>
+          canReply ? (
+            <Button onClick={() => setReplyOpen(true)}>
+              <MessageSquare data-icon="inline-start" />
+              Reply
+            </Button>
+          ) : undefined
         }
       />
-      <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-        <Card className="p-5">
-          <h2 className="mb-4 text-sm font-bold text-slate-700">Correspondence details</h2>
-          <div className="grid grid-cols-2 gap-5">
-            {[['Letter number', letter.number], ['Letter date', letter.letterDate], ['Received date', letter.receivedDate], ['Type', letter.type], ['From', letter.from], ['To', letter.to], ['Department', letter.department], ['Assigned to', letter.assignedTo], ['Due date', letter.dueDate], ['Last action', letter.lastAction]].map(([a, b]) => (
-              <div key={a}>
-                <p className="text-[11px] text-slate-400">{a}</p>
-                <p className="mt-1 text-xs font-semibold text-slate-700">{b}</p>
+
+      <AppTabList>
+        {LETTER_TABS.map(({ id: tabId, label, icon: Icon }) => (
+          <button
+            key={tabId}
+            type="button"
+            onClick={() => setTab(tabId)}
+            className={appTabClass(tab === tabId)}
+          >
+            <Icon className="size-3.5" />
+            {label}
+          </button>
+        ))}
+      </AppTabList>
+
+      <CollapsibleCardMotionProvider animated={false}>
+        <AppTabPanel tabKey={tab}>
+          {tab === 'details' && (
+            <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <Card className="p-5">
+                <h2 className="mb-4 text-sm font-bold text-slate-700">Correspondence details</h2>
+                <div className="grid grid-cols-2 gap-5">
+                  {[['Letter number', letter.number], ['Letter date', letter.letterDate], ['Received date', letter.receivedDate], ['Type', letter.type], ['From', letter.from], ['To', letter.to], ['Department', letter.department], ['Assigned to', letter.assignedTo], ['Due date', letter.dueDate], ['Last action', letter.lastAction]].map(([a, b]) => (
+                    <div key={a}>
+                      <p className="text-[11px] text-slate-400">{a}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-700">{b}</p>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+              <Card className="p-5">
+                <h2 className="mb-4 text-sm font-bold text-slate-700">Tracking status</h2>
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={letter.type === 'Incoming' ? 'blue' : 'violet'}>{letter.type}</Badge>
+                  <Badge tone={priorityTone(letter.priority)}>{letter.priority}</Badge>
+                  <Badge tone={statusTone(letter.status)}>{letter.status}</Badge>
+                </div>
+                <div className="mt-6 flex flex-col gap-3">
+                  <input value={action} onChange={(e) => setAction(e.target.value)} placeholder="Describe the next action" className="h-10 rounded-md border border-slate-200 px-3 text-xs" />
+                  <Button onClick={async () => { if (!action.trim()) return; await addAction(letter.id, action.trim()); setAction('') }}>Add action</Button>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {tab === 'documents' && (
+            <div>
+              <DocumentsPanel letter={letter} />
+              <div className="mt-5">
+                <AIAnalyzeDocument letter={letter} />
               </div>
-            ))}
-          </div>
-        </Card>
-        <Card className="p-5">
-          <h2 className="mb-4 text-sm font-bold text-slate-700">Tracking status</h2>
-          <div className="flex flex-wrap gap-2">
-            <Badge tone={letter.type === 'Incoming' ? 'blue' : 'violet'}>{letter.type}</Badge>
-            <Badge tone={priorityTone(letter.priority)}>{letter.priority}</Badge>
-            <Badge tone={statusTone(letter.status)}>{letter.status}</Badge>
-          </div>
-          <div className="mt-6 flex flex-col gap-3">
-            <input value={action} onChange={(e) => setAction(e.target.value)} placeholder="Describe the next action" className="h-10 rounded-md border border-slate-200 px-3 text-xs" />
-            <Button onClick={async () => { if (!action.trim()) return; await addAction(letter.id, action.trim()); setAction('') }}>Add action</Button>
-          </div>
-        </Card>
-      </div>
-      <WorkflowPanel letter={letter} users={users} onDone={refresh} />
-      <EnterpriseLifecyclePanel letter={letter} />
-      <ApprovalEscalationPanel letter={letter} onDone={refresh} />
-      <DocumentsPanel letter={letter} />
-      <RelatedMeetingsPanel letter={letter} go={go} />
-      <CorrespondenceThreadPanel letter={letter} go={go} />
-      <div className="mt-5">
-        <AIIntelligencePanel letter={letter} letters={letters} onApplyField={(field, value, decision) => applyLetterField(letter.id, field, value, decision)} onAcceptAction={(next, decision) => acceptAiAction(letter.id, next, decision)} />
-        <div className="mt-5"><AIAnalyzeDocument letter={letter} /></div>
-      </div>
+            </div>
+          )}
+
+          {tab === 'workflow' && (
+            <div>
+              <WorkflowPanel letter={letter} users={users} onDone={refresh} />
+              <EnterpriseLifecyclePanel letter={letter} />
+              <ApprovalEscalationPanel letter={letter} onDone={refresh} />
+              <RelatedMeetingsPanel letter={letter} go={go} />
+            </div>
+          )}
+
+          {tab === 'references' && (
+            <CorrespondenceThreadPanel letter={letter} go={go} />
+          )}
+
+          {tab === 'ai' && (
+            <AIIntelligencePanel
+              letter={letter}
+              letters={letters}
+              onApplyField={(field, value, decision) => applyLetterField(letter.id, field, value, decision)}
+              onAcceptAction={(next, decision) => acceptAiAction(letter.id, next, decision)}
+            />
+          )}
+        </AppTabPanel>
+      </CollapsibleCardMotionProvider>
+
       {replyOpen && (
         <ReplyDialog
           letter={letter}

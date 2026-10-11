@@ -46,7 +46,7 @@ export const ONBOARDING_CHAPTERS: OnboardingChapter[] = [
   { id: 'routing', title: 'Routing', subtitle: 'Validate, classify, and hand off', minutes: 3 },
   { id: 'action-items', title: 'Action items', subtitle: 'Accept, start, block, and complete work', minutes: 3 },
   { id: 'response', title: 'Response & close', subtitle: 'Draft, approve, dispatch, archive', minutes: 3 },
-  { id: 'workspace', title: 'Workspace', subtitle: 'Inbox, My Actions, Monitoring', minutes: 2 },
+  { id: 'workspace', title: 'Workspace', subtitle: 'Inbox, My Actions, Analytics', minutes: 2 },
   { id: 'ai', title: 'AI helpers', subtitle: 'OCR, analysis, and search assistants', minutes: 2 },
   { id: 'practice', title: 'Practice', subtitle: 'Walk a sample letter end to end', minutes: 4 },
 ]
@@ -299,7 +299,7 @@ export const PRACTICE_STEPS: PracticeStep[] = [
         label: 'Block action',
         roles: ['Actionist'],
         nextStatus: 'In Progress',
-        note: 'Blocked with a reason (waiting on external data). Managers see this in Monitoring.',
+        note: 'Blocked with a reason (waiting on external data). Managers see this in Analytics → Needs action.',
       },
     ],
   },

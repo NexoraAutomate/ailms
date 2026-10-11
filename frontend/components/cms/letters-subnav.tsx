@@ -16,6 +16,7 @@ import {
   LETTERS_TRACK_VIEWS,
   lettersTrackViewFromPathname,
 } from '@/lib/cms-nav'
+import { appTabClass } from '@/components/ui/app-tabs'
 
 const TRACK_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   'All Letters': Table2,
@@ -37,7 +38,7 @@ export function LettersSubnav() {
     <div className="shrink-0 border-b border-slate-200 bg-white">
       <nav
         aria-label="Letter views"
-        className="mx-auto flex w-full max-w-[1600px] gap-1 overflow-x-auto px-4 py-2 sm:px-7"
+        className="mx-auto flex w-full max-w-[1600px] gap-2 overflow-x-auto px-4 py-2 sm:px-7"
       >
         {LETTERS_TRACK_VIEWS.map((label) => {
           const Icon = TRACK_ICONS[label] ?? Table2
@@ -47,11 +48,7 @@ export function LettersSubnav() {
             <Link
               key={label}
               href={href}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition-colors ${
-                active
-                  ? 'bg-blue-50 font-semibold text-[#0d3763]'
-                  : 'font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700'
-              }`}
+              className={appTabClass(active)}
             >
               <Icon className="size-3.5" />
               {label}

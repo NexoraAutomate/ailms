@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { DataTable, TableActions, type DataTableColumn } from '@/components/cms/data-table'
@@ -229,14 +230,14 @@ export function MasterData({ embedded = false }: { embedded?: boolean }) {
       )}
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
       <Card>
-        <div className="flex gap-1 overflow-x-auto border-b border-slate-200 p-3">
+        <div className="flex gap-2 overflow-x-auto border-b border-slate-200 p-3">
           {MASTER_CATEGORIES.map((t) => {
             const Icon = CATEGORY_ICONS[t] ?? Tag
             return (
               <button
                 type="button"
                 onClick={() => setTab(t)}
-                className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-2 text-xs ${tab === t ? 'bg-blue-50 font-semibold text-[#1769aa]' : 'text-slate-500 hover:bg-slate-50'}`}
+                className={appTabClass(tab === t)}
                 key={t}
               >
                 <Icon className="size-3.5" />
@@ -245,6 +246,7 @@ export function MasterData({ embedded = false }: { embedded?: boolean }) {
             )
           })}
         </div>
+        <AppTabPanel tabKey={tab}>
         <DataTable
           bordered={false}
           columns={columns}
@@ -257,6 +259,7 @@ export function MasterData({ embedded = false }: { embedded?: boolean }) {
           description={`${current.length} values`}
           emptyMessage={`No values yet. Add one for ${tab}.`}
         />
+        </AppTabPanel>
       </Card>
       {open && (
         <FormDialog

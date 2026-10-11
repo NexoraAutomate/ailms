@@ -476,7 +476,7 @@ function ActionItemsChapter({ go }: { go: (target: string) => void }) {
     },
     {
       label: 'Start',
-      detail: 'Work begins; Monitoring tracks days pending.',
+      detail: 'Work begins; Analytics → Needs action tracks days pending.',
       roles: ['Actionist'],
     },
     {
@@ -587,9 +587,9 @@ function WorkspaceChapter({ go }: { go: (target: string) => void }) {
       roles: ['Actionist'],
     },
     {
-      title: 'Monitoring',
-      href: 'Monitoring',
-      detail: 'Overdue, blocked, and aging correspondence.',
+      title: 'Analytics',
+      href: 'Analytics',
+      detail: 'Filter the register, or clear items that still need action.',
       roles: ['Manager', 'Management', 'Admin'],
     },
     {
@@ -921,22 +921,28 @@ export function OnboardingPage() {
                   key={item.id}
                   type="button"
                   onClick={() => setProgress((prev) => ({ ...prev, current: item.id }))}
-                  className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition ${
-                    active ? 'bg-blue-50 text-[#0d3763]' : 'text-slate-600 hover:bg-slate-50'
+                  className={`flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors ${
+                    active
+                      ? 'border-slate-500 bg-slate-500 text-white'
+                      : 'border-transparent text-slate-600 hover:border-slate-300 hover:bg-slate-100'
                   }`}
                 >
                   <span
                     className={`flex size-6 shrink-0 items-center justify-center rounded-md ${
-                      done ? 'bg-emerald-100 text-emerald-700' : active ? 'bg-[#0d3763] text-white' : 'bg-slate-100 text-slate-500'
+                      done
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : active
+                          ? 'bg-white/20 text-white'
+                          : 'bg-slate-100 text-slate-500'
                     }`}
                   >
                     {done ? <CheckCircle2 className="size-3.5" /> : <ItemIcon className="size-3.5" />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className={`block truncate text-xs ${active ? 'font-bold' : 'font-medium'}`}>
+                    <span className={`block truncate text-xs ${active ? 'font-bold text-white' : 'font-medium'}`}>
                       {index + 1}. {item.title}
                     </span>
-                    <span className="block truncate text-[10px] text-slate-400">{item.minutes} min</span>
+                    <span className={`block truncate text-[10px] ${active ? 'text-white/70' : 'text-slate-400'}`}>{item.minutes} min</span>
                   </span>
                 </button>
               )
@@ -963,10 +969,10 @@ export function OnboardingPage() {
             <AnimatePresence mode="wait">
               <motion.div
                 key={chapter.id}
-                initial={{ opacity: 0, x: 12 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.22 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
               >
                 <ChapterBody id={chapter.id} progress={progress} setProgress={setProgress} go={go} />
               </motion.div>

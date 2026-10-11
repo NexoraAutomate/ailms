@@ -1,8 +1,26 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Copy, Sparkles } from 'lucide-react'
+import {
+  AlertTriangle,
+  CalendarDays,
+  ChevronDown,
+  ClipboardList,
+  Copy,
+  FileText,
+  Gauge,
+  GitBranch,
+  List,
+  ListChecks,
+  MessageCircleQuestion,
+  PenLine,
+  Sparkles,
+  Target,
+  Undo2,
+  Users,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import {
@@ -156,29 +174,49 @@ export function AISummary({ letter, canRegenerate = false, stored = null, onStor
       {data && status === 'success' && (
         <div className="space-y-3">
           <button className="flex w-full items-center justify-between text-left" onClick={() => setOpen((v) => !v)}>
-            <p className="text-xs font-semibold text-slate-700">Executive Summary</p>
+            <p className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+              <FileText className="size-3.5 shrink-0 text-slate-500" />
+              Executive Summary
+            </p>
             <ChevronDown className={`size-4 text-slate-400 ${open ? 'rotate-180' : ''}`} />
           </button>
           {open && <p className="text-xs leading-5 text-slate-600">{data.executiveSummary}</p>}
-          {[
-            ['Purpose', data.purpose],
-            ['Required Actions', data.requiredActions],
-            ['Current Status', data.currentStatus],
-            ['Potential Risk', data.potentialRisk],
-            ['Recommended Follow-up', data.recommendedFollowUp],
-          ].map(([label, value]) => (
+          {([
+            { label: 'Purpose', value: data.purpose, icon: Target },
+            { label: 'Required Actions', value: data.requiredActions, icon: ClipboardList },
+            { label: 'Potential Risk', value: data.potentialRisk, icon: AlertTriangle },
+            { label: 'Recommended Follow-up', value: data.recommendedFollowUp, icon: Undo2 },
+          ] as const).map(({ label, value, icon: Icon }) => (
             <details key={label} className="rounded-md bg-slate-50 p-3" open>
-              <summary className="cursor-pointer text-xs font-semibold text-slate-700">{label}</summary>
+              <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-slate-700 [&::-webkit-details-marker]:hidden">
+                <Icon className="size-3.5 shrink-0 text-slate-500" />
+                {label}
+              </summary>
               <p className="mt-2 text-xs text-slate-600">{value}</p>
             </details>
           ))}
           <details className="rounded-md bg-slate-50 p-3" open>
-            <summary className="cursor-pointer text-xs font-semibold text-slate-700">Key Points</summary>
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-slate-700 [&::-webkit-details-marker]:hidden">
+              <List className="size-3.5 shrink-0 text-slate-500" />
+              Key Points
+            </summary>
             <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-slate-600">{data.keyPoints.map((item) => <li key={item}>{item}</li>)}</ul>
           </details>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div><p className="text-[11px] text-slate-400">Important Dates</p><p className="mt-1 text-xs text-slate-600">{data.importantDates.join(' · ') || '—'}</p></div>
-            <div><p className="text-[11px] text-slate-400">Organizations / Persons</p><p className="mt-1 text-xs text-slate-600">{data.organizations.join(' · ') || '—'}</p></div>
+            <div>
+              <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <CalendarDays className="size-3.5 shrink-0" />
+                Important Dates
+              </p>
+              <p className="mt-1 text-xs text-slate-600">{data.importantDates.join(' · ') || '—'}</p>
+            </div>
+            <div>
+              <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <Users className="size-3.5 shrink-0" />
+                Organizations / Persons
+              </p>
+              <p className="mt-1 text-xs text-slate-600">{data.organizations.join(' · ') || '—'}</p>
+            </div>
           </div>
         </div>
       )}
@@ -520,9 +558,14 @@ export function AIUrgencyAssessment({
 
   return (
     <SectionCard
-      title="AI Urgency Assessment"
+      title={
+        <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700">
+          <Gauge className="size-4 shrink-0 text-slate-500" />
+          AI Urgency Assessment
+        </h2>
+      }
       action={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {status !== 'analyzing' && !data && (
             <Button size="sm" onClick={() => runUrgency(true)}>
               <Sparkles data-icon="inline-start" />
@@ -1086,7 +1129,13 @@ export function AIIntelligencePanel({
 }) {
   const [tab, setTab] = useState('Summarize')
   const [bundle, setBundle] = useState<LetterAiAnalysisBundle | null>(null)
-  const tabs = ['Summarize', 'Extract Information', 'Classify', 'Recommend Actions', 'Assess Urgency', 'Draft Response', 'Analyze Correspondence', 'Q&A']
+  const tabs: { id: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: 'Summarize', label: 'Summarize', icon: FileText },
+    { id: 'Recommended Actions', label: 'Recommended Actions', icon: ListChecks },
+    { id: 'Draft Response', label: 'Draft Response', icon: PenLine },
+    { id: 'Analyze Correspondence', label: 'Analyze Correspondence', icon: GitBranch },
+    { id: 'Q&A', label: 'Q&A', icon: MessageCircleQuestion },
+  ]
 
   useEffect(() => {
     let cancelled = false
@@ -1134,27 +1183,49 @@ export function AIIntelligencePanel({
       }
       contentClassName="p-0 sm:p-0"
     >
-      <div className="flex gap-1 overflow-x-auto px-3 pt-0 pb-3 sm:px-4">
-        {tabs.map((item) => (
-          <button key={item} onClick={() => setTab(item)} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs ${tab === item ? 'bg-blue-50 font-semibold text-[#1769aa]' : 'text-slate-500 hover:bg-slate-50'}`}>{item}</button>
+      <div className="flex gap-2 overflow-x-auto px-3 pt-0 pb-3 sm:px-4">
+        {tabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={appTabClass(tab === id)}
+          >
+            <Icon className="size-3.5" />
+            {label}
+          </button>
         ))}
       </div>
       <div className="border-t border-slate-100 p-3">
-        {tab === 'Q&A' ? (
-          <AILetterQA letter={letter} />
-        ) : !bundle ? (
-          <p className="text-[11px] text-slate-400">Loading stored AI analysis…</p>
-        ) : (
-          <>
-            {tab === 'Summarize' && <AISummary letter={letter} {...shared('summarize')} />}
-            {tab === 'Extract Information' && <AIExtractionPanel letter={letter} onApply={onApplyField} {...shared('extract')} />}
-            {tab === 'Classify' && <AIClassification letter={letter} onApply={onApplyField} {...shared('classify')} />}
-            {tab === 'Recommend Actions' && <AIActionRecommendations letter={letter} onAcceptAction={onAcceptAction} {...shared('recommend_actions')} />}
-            {tab === 'Assess Urgency' && <AIUrgencyAssessment letter={letter} onApply={(priority, decision) => onApplyField('priority', priority, decision)} {...shared('urgency')} />}
-            {tab === 'Draft Response' && <AIDraftResponse letter={letter} {...shared('draft_response')} />}
-            {tab === 'Analyze Correspondence' && <AIAnalysisPanel letter={letter} letters={letters} {...shared('analyze_correspondence')} />}
-          </>
-        )}
+        <AppTabPanel tabKey={tab}>
+          {tab === 'Q&A' ? (
+            <AILetterQA letter={letter} />
+          ) : !bundle ? (
+            <p className="text-[11px] text-slate-400">Loading stored AI analysis…</p>
+          ) : (
+            <>
+              {tab === 'Summarize' && (
+                <div className="grid gap-4 lg:grid-cols-3 lg:items-start">
+                  <div className="lg:col-span-2">
+                    <AISummary letter={letter} {...shared('summarize')} />
+                  </div>
+                  <div className="lg:col-span-1">
+                    <AIUrgencyAssessment
+                      letter={letter}
+                      onApply={(priority, decision) => onApplyField('priority', priority, decision)}
+                      {...shared('urgency')}
+                    />
+                  </div>
+                </div>
+              )}
+              {tab === 'Recommended Actions' && (
+                <AIActionRecommendations letter={letter} onAcceptAction={onAcceptAction} {...shared('recommend_actions')} />
+              )}
+              {tab === 'Draft Response' && <AIDraftResponse letter={letter} {...shared('draft_response')} />}
+              {tab === 'Analyze Correspondence' && <AIAnalysisPanel letter={letter} letters={letters} {...shared('analyze_correspondence')} />}
+            </>
+          )}
+        </AppTabPanel>
       </div>
     </CollapsibleCard>
   )
