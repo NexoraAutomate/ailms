@@ -13,11 +13,15 @@ from app.database import SessionLocal, engine
 from app.db_upgrade import upgrade_simple_marking_schema
 from app.marking_reminders import process_marking_reminders
 from app.marking_workflow_service import (
+    add_attachments_to_marking,
     add_note,
+    attachment_is_editable,
     available_marking_actions,
     batch_tracker,
     close_letter,
     create_mark_batch,
+    list_attachments,
+    list_notes,
     list_tracked,
     marking_tree,
     note_is_editable,
@@ -25,7 +29,14 @@ from app.marking_workflow_service import (
     update_note,
     user_holds_letter,
 )
-from app.models import CorrespondenceNote, Letter, Marking, MarkingReminderLog, User
+from app.models import (
+    CorrespondenceAttachment,
+    CorrespondenceNote,
+    Letter,
+    Marking,
+    MarkingReminderLog,
+    User,
+)
 
 
 def _num() -> str:
@@ -95,6 +106,12 @@ class MarkingWorkflowTest(unittest.TestCase):
             if self.letter.id:
                 self.db.query(MarkingReminderLog).filter(
                     MarkingReminderLog.letter_id == self.letter.id
+                ).delete()
+                self.db.query(CorrespondenceAttachment).filter(
+                    CorrespondenceAttachment.letter_id == self.letter.id
+                ).delete()
+                self.db.query(CorrespondenceNote).filter(
+                    CorrespondenceNote.letter_id == self.letter.id
                 ).delete()
                 self.db.query(Marking).filter(Marking.letter_id == self.letter.id).delete()
                 self.db.query(Letter).filter(Letter.id == self.letter.id).delete()
@@ -365,6 +382,72 @@ class MarkingWorkflowTest(unittest.TestCase):
             self.db.commit()
         self.assertEqual(first["sent"], 1)
         self.assertEqual(second["sent"], 0)
+
+    def test_attachments_scoped_to_marking_not_notes(self) -> None:
+        batch = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        marking = self.db.query(Marking).filter(Marking.batch_id == batch.id).one()
+
+        note_a = add_note(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            body_text="First note",
+            marking_id=marking.id,
+        )
+        note_b = add_note(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            body_text="Second note",
+            marking_id=marking.id,
+        )
+        created = add_attachments_to_marking(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            marking_id=marking.id,
+            attachments=[
+                {"attachmentKind": "Supporting Doc", "originalFilename": "a.pdf"},
+                {"attachmentKind": "Other", "originalFilename": "b.pdf"},
+            ],
+            client_ip="10.1.1.1",
+        )
+        self.db.flush()
+        self.assertEqual(len(created), 2)
+        for row in created:
+            self.assertEqual(row.marking_id, marking.id)
+            self.assertIsNone(row.note_id)
+            self.assertEqual(row.letter_id, self.letter.id)
+            self.assertEqual(row.created_by, self.user_a.name)
+            self.assertTrue(attachment_is_editable(self.db, row, self.user_a.name))
+
+        notes = list_notes(self.db, self.letter.id, actor_name=self.user_a.name)
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(all("attachments" not in n for n in notes))
+        self.assertEqual({n["id"] for n in notes}, {note_a.id, note_b.id})
+
+        atts = list_attachments(self.db, self.letter.id, actor_name=self.user_a.name)
+        self.assertEqual(len(atts), 2)
+        self.assertTrue(all(a["markingId"] == marking.id for a in atts))
+        self.assertTrue(all(a["editable"] for a in atts))
+
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=marking.id,
+            recipients=[{"toUser": self.user_b.name, "action": "forward"}],
+        )
+        self.db.flush()
+        for row in created:
+            self.db.refresh(row)
+            self.assertFalse(attachment_is_editable(self.db, row, self.user_a.name))
 
 
 if __name__ == "__main__":

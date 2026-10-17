@@ -62,6 +62,9 @@ export type MarkBatchInput = {
 
 export type CorrespondenceAttachment = {
   id: number
+  letterId: string
+  markingId: number | null
+  createdBy: string
   documentId: number | null
   versionId: number | null
   previewable: boolean
@@ -71,6 +74,7 @@ export type CorrespondenceAttachment = {
   originalFilename: string
   clientIp: string
   createdAt: string
+  editable: boolean
 }
 
 export type CorrespondenceNote = {
@@ -83,7 +87,6 @@ export type CorrespondenceNote = {
   clientIp: string
   createdAt: string
   editable: boolean
-  attachments: CorrespondenceAttachment[]
 }
 
 export function markingActionLabel(action: string) {
@@ -100,6 +103,10 @@ export async function fetchMarkingTree(letterId: string) {
 
 export async function fetchMarkingNotes(letterId: string) {
   return api.get<CorrespondenceNote[]>(`/api/markings/letters/${letterId}/notes`)
+}
+
+export async function fetchMarkingAttachments(letterId: string) {
+  return api.get<CorrespondenceAttachment[]>(`/api/markings/letters/${letterId}/attachments`)
 }
 
 export async function markLetter(letterId: string, input: MarkBatchInput) {
@@ -121,7 +128,6 @@ export async function addMarkingNote(
     bodyText: string
     markingId?: number
     isResponse?: boolean
-    attachments?: { attachmentKind: string; documentId?: number; originalFilename?: string }[]
   },
 ) {
   return api.post<{ note: CorrespondenceNote; letter: Letter }>(
@@ -130,10 +136,7 @@ export async function addMarkingNote(
   )
 }
 
-export async function respondToMarking(
-  markingId: number,
-  input: { bodyText: string; attachments?: { attachmentKind: string; documentId?: number }[] },
-) {
+export async function respondToMarking(markingId: number, input: { bodyText: string }) {
   return api.post<{ note: CorrespondenceNote; marking: MarkingNode; letter: Letter }>(
     `/api/markings/${markingId}/respond`,
     input,
@@ -167,13 +170,14 @@ export async function deleteMarkingNote(noteId: number) {
   return api.delete<{ ok: boolean; letter: Letter }>(`/api/markings/notes/${noteId}`)
 }
 
-export async function addAttachmentsToNote(
-  noteId: number,
+export async function addAttachmentsToMarking(
+  letterId: string,
   attachments: { attachmentKind: string; documentId?: number; originalFilename?: string }[],
+  markingId?: number | null,
 ) {
-  return api.post<{ note: CorrespondenceNote; letter: Letter }>(
-    `/api/markings/notes/${noteId}/attachments`,
-    { attachments },
+  return api.post<{ attachments: CorrespondenceAttachment[]; letter: Letter }>(
+    `/api/markings/letters/${letterId}/attachments`,
+    { attachments, markingId: markingId ?? undefined },
   )
 }
 

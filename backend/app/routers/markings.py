@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.letter_access import assert_letter_access
 from app.marking_workflow_service import (
-    add_attachments_to_note,
+    add_attachments_to_marking,
     add_note,
     available_marking_actions,
     batch_tracker,
@@ -21,6 +21,7 @@ from app.marking_workflow_service import (
     create_mark_batch,
     delete_attachment,
     delete_note,
+    list_attachments,
     list_notes,
     list_tracked,
     marking_tree,
@@ -77,12 +78,10 @@ class NoteIn(BaseModel):
     bodyText: str
     markingId: int | None = None
     isResponse: bool = False
-    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RespondIn(BaseModel):
     bodyText: str
-    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CloseIn(BaseModel):
@@ -100,6 +99,7 @@ class AttachmentUpdateIn(BaseModel):
 
 
 class AttachmentsAddIn(BaseModel):
+    markingId: int | None = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -212,13 +212,47 @@ def post_note(
         body_text=payload.bodyText,
         marking_id=payload.markingId,
         is_response=payload.isResponse,
-        attachments=payload.attachments,
         client_ip=client_ip_from_request(request),
     )
     db.commit()
     notes = list_notes(db, letter_id, actor_name=actor)
     created = next((n for n in notes if n["id"] == note.id), notes[-1] if notes else {})
     return {"note": created, "letter": serialize_letter(letter)}
+
+
+@router.get("/letters/{letter_id}/attachments")
+def get_attachments(letter_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    return list_attachments(db, letter_id, actor_name=actor)
+
+
+@router.post("/letters/{letter_id}/attachments")
+def post_letter_attachments(
+    letter_id: int,
+    payload: AttachmentsAddIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    created = add_attachments_to_marking(
+        db,
+        letter=letter,
+        actor_name=actor,
+        attachments=payload.attachments,
+        marking_id=payload.markingId,
+        client_ip=client_ip_from_request(request),
+    )
+    db.commit()
+    return {
+        "attachments": [serialize_attachment(db, row, editable=True) for row in created],
+        "letter": serialize_letter(letter),
+    }
 
 
 @router.patch("/notes/{note_id}")
@@ -271,31 +305,10 @@ def remove_note(
     return {"ok": True, "letter": serialize_letter(letter)}
 
 
-@router.post("/notes/{note_id}/attachments")
-def post_note_attachments(
-    note_id: int,
-    payload: AttachmentsAddIn,
-    request: Request,
-    db: Session = Depends(get_db),
-) -> dict:
-    _require_enabled()
-    note = db.get(CorrespondenceNote, note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    letter = _get_letter(db, note.letter_id)
-    actor = current_user_name(db)
-    assert_letter_access(db, letter, actor)
-    add_attachments_to_note(
-        db,
-        note=note,
-        actor_name=actor,
-        attachments=payload.attachments,
-        client_ip=client_ip_from_request(request),
-    )
-    db.commit()
-    notes = list_notes(db, letter.id, actor_name=actor)
-    updated = next((n for n in notes if n["id"] == note_id), {})
-    return {"note": updated, "letter": serialize_letter(letter)}
+def _attachment_letter(db: Session, attachment: CorrespondenceAttachment) -> Letter:
+    if not attachment.letter_id:
+        raise HTTPException(status_code=404, detail="Attachment is not linked to a letter")
+    return _get_letter(db, attachment.letter_id)
 
 
 @router.patch("/attachments/{attachment_id}")
@@ -309,10 +322,7 @@ def patch_attachment(
     attachment = db.get(CorrespondenceAttachment, attachment_id)
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    note = db.get(CorrespondenceNote, attachment.note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    letter = _get_letter(db, note.letter_id)
+    letter = _attachment_letter(db, attachment)
     actor = current_user_name(db)
     assert_letter_access(db, letter, actor)
     update_attachment_meta(
@@ -325,7 +335,10 @@ def patch_attachment(
     )
     db.commit()
     db.refresh(attachment)
-    return {"attachment": serialize_attachment(db, attachment), "letter": serialize_letter(letter)}
+    return {
+        "attachment": serialize_attachment(db, attachment, editable=True),
+        "letter": serialize_letter(letter),
+    }
 
 
 @router.post("/attachments/{attachment_id}/replaced")
@@ -340,10 +353,7 @@ def attachment_replaced(
     attachment = db.get(CorrespondenceAttachment, attachment_id)
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    note = db.get(CorrespondenceNote, attachment.note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    letter = _get_letter(db, note.letter_id)
+    letter = _attachment_letter(db, attachment)
     actor = current_user_name(db)
     assert_letter_access(db, letter, actor)
     sync_attachment_after_replace(
@@ -355,7 +365,10 @@ def attachment_replaced(
     )
     db.commit()
     db.refresh(attachment)
-    return {"attachment": serialize_attachment(db, attachment), "letter": serialize_letter(letter)}
+    return {
+        "attachment": serialize_attachment(db, attachment, editable=True),
+        "letter": serialize_letter(letter),
+    }
 
 
 @router.delete("/attachments/{attachment_id}")
@@ -368,10 +381,7 @@ def remove_attachment(
     attachment = db.get(CorrespondenceAttachment, attachment_id)
     if not attachment:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    note = db.get(CorrespondenceNote, attachment.note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    letter = _get_letter(db, note.letter_id)
+    letter = _attachment_letter(db, attachment)
     actor = current_user_name(db)
     assert_letter_access(db, letter, actor)
     delete_attachment(
@@ -405,7 +415,6 @@ def respond(
         body_text=payload.bodyText,
         marking_id=marking_id,
         is_response=True,
-        attachments=payload.attachments,
         client_ip=client_ip_from_request(request),
     )
     db.commit()

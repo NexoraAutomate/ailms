@@ -89,9 +89,14 @@ Clarification for v1: marking onward does **not** auto-complete the parent's mar
 
 ### D.6 CorrespondenceAttachment
 
+Attachments belong to a **marking incident** (the holder’s current inbound marking, or initiator root when `marking_id` is null). They are **not** linked to individual notes.
+
 | Field | Notes |
 |-------|-------|
-| `note_id` | FK |
+| `letter_id` | Required |
+| `marking_id` | FK — marking incident; null = initiator hold |
+| `created_by` | Uploader |
+| `note_id` | Legacy nullable; new rows leave null |
 | `document_id` | FK `cms_documents` (or storage key) |
 | `attachment_kind` | Catalog below |
 | `created_at`, `client_ip` | Stamp |

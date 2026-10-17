@@ -40,12 +40,13 @@ import {
   type ResponseType,
 } from '@/services/marking-types'
 import {
-  addAttachmentsToNote,
+  addAttachmentsToMarking,
   addMarkingNote,
   closeMarkedLetter,
   deleteMarkingAttachment,
   deleteMarkingNote,
   fetchMarkingActions,
+  fetchMarkingAttachments,
   fetchMarkingNotes,
   fetchMarkingTree,
   markAttachmentReplaced,
@@ -55,6 +56,7 @@ import {
   revokeMarking,
   updateMarkingAttachment,
   updateMarkingNote,
+  type CorrespondenceAttachment,
   type CorrespondenceNote,
   type MarkRecipientInput,
   type MarkingNode,
@@ -96,6 +98,31 @@ function groupNotesByAuthor(notes: CorrespondenceNote[]): CorrespondenceNote[][]
   return groups
 }
 
+type MarkingIncidentKey = number | 'root'
+
+function markingKey(id: number | null | undefined): MarkingIncidentKey {
+  return id == null ? 'root' : id
+}
+
+/** Group notes + attachments by the marking incident they belong to. */
+function groupByMarkingIncident(
+  notes: CorrespondenceNote[],
+  attachments: CorrespondenceAttachment[],
+): { key: MarkingIncidentKey; notes: CorrespondenceNote[]; attachments: CorrespondenceAttachment[] }[] {
+  const order: MarkingIncidentKey[] = []
+  const map = new Map<MarkingIncidentKey, { notes: CorrespondenceNote[]; attachments: CorrespondenceAttachment[] }>()
+  const ensure = (key: MarkingIncidentKey) => {
+    if (!map.has(key)) {
+      map.set(key, { notes: [], attachments: [] })
+      order.push(key)
+    }
+    return map.get(key)!
+  }
+  for (const note of notes) ensure(markingKey(note.markingId)).notes.push(note)
+  for (const att of attachments) ensure(markingKey(att.markingId)).attachments.push(att)
+  return order.map((key) => ({ key, ...map.get(key)! }))
+}
+
 export function MarkingWorkflowPanel({
   letter,
   users,
@@ -108,6 +135,7 @@ export function MarkingWorkflowPanel({
   const [actions, setActions] = useState<string[]>([])
   const [tree, setTree] = useState<MarkingNode[]>([])
   const [notes, setNotes] = useState<CorrespondenceNote[]>([])
+  const [attachments, setAttachments] = useState<CorrespondenceAttachment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [dialog, setDialog] = useState<'mark' | 'note' | 'respond' | 'attach' | 'close' | null>(null)
@@ -117,7 +145,6 @@ export function MarkingWorkflowPanel({
   const [noteBody, setNoteBody] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([])
   const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
-  const [attachNoteId, setAttachNoteId] = useState<number | null>(null)
   const [forceClose, setForceClose] = useState(false)
   const [respondMarkingId, setRespondMarkingId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
@@ -129,13 +156,24 @@ export function MarkingWorkflowPanel({
     setRemarks('')
     setNoteBody('')
     setPendingFiles([])
-    setAttachNoteId(null)
     setForceClose(false)
     setRecipients([emptyRecipient()])
     setPathwayNotify(false)
   }
 
-  const editableNotes = useMemo(() => notes.filter((n) => n.editable), [notes])
+  const canAddAttachment = actions.includes('add_note')
+
+  const flatMarkings = useMemo(() => flattenMarkings(tree), [tree])
+  const markingById = useMemo(() => {
+    const map = new Map<number, MarkingNode>()
+    for (const m of flatMarkings) map.set(m.id, m)
+    return map
+  }, [flatMarkings])
+
+  const incidentGroups = useMemo(
+    () => groupByMarkingIncident(notes, attachments),
+    [notes, attachments],
+  )
 
   const uploadPendingAttachments = async () => {
     const uploaded: { attachmentKind: string; documentId: number; originalFilename: string }[] = []
@@ -154,14 +192,16 @@ export function MarkingWorkflowPanel({
     setLoading(true)
     setError('')
     try {
-      const [available, markingTree, noteRows] = await Promise.all([
+      const [available, markingTree, noteRows, attachmentRows] = await Promise.all([
         fetchMarkingActions(letter.id),
         fetchMarkingTree(letter.id),
         fetchMarkingNotes(letter.id),
+        fetchMarkingAttachments(letter.id),
       ])
       setActions(available.actions)
       setTree(markingTree)
       setNotes(noteRows)
+      setAttachments(attachmentRows)
       const rr = markingTree
         .flatMap(function walk(n: MarkingNode): MarkingNode[] {
           return [n, ...n.children.flatMap(walk)]
@@ -292,13 +332,11 @@ export function MarkingWorkflowPanel({
               <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add note
             </Button>
           )}
-          {actions.includes('add_note') && (
+          {canAddAttachment && (
             <Button
               size="sm"
               variant="outline"
               onClick={() => {
-                const latest = editableNotes[editableNotes.length - 1]
-                setAttachNoteId(latest?.id ?? null)
                 setPendingFiles([])
                 setDialog('attach')
               }}
@@ -328,109 +366,132 @@ export function MarkingWorkflowPanel({
 
       <div>
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Notes & attachments</h3>
-        {notes.length === 0 && <p className="text-xs text-slate-500">No notes yet.</p>}
-        <ul className="space-y-3">
-          {groupNotesByAuthor(notes).map((group) => {
-            const author = group[0]?.authorUser ?? ''
-            const hasResponse = group.some((n) => n.isResponse)
-            const groupEditable = group.some((n) => n.editable)
-            const attachments = group.flatMap((n) =>
-              n.attachments.map((a) => ({ ...a, noteId: n.id, noteEditable: n.editable })),
-            )
+        {incidentGroups.length === 0 && (
+          <p className="text-xs text-slate-500">No notes or attachments yet.</p>
+        )}
+        <ul className="space-y-4">
+          {incidentGroups.map((incident) => {
+            const marking = incident.key === 'root' ? null : markingById.get(incident.key) ?? null
+            const title = marking
+              ? `${marking.fromUser} → ${marking.toUser}`
+              : 'Initiator hold'
+            const subtitle = marking ? markingActionLabel(marking.action) : 'Before first mark'
             return (
               <li
-                key={`note-group-${group[0]?.id ?? author}`}
+                key={`incident-${incident.key}`}
                 className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
               >
-                <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5">
-                  <p className="text-sm font-semibold text-slate-800">{author}</p>
-                  {hasResponse && <Badge>Response</Badge>}
-                  {!groupEditable && (
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
-                      Locked
-                    </span>
-                  )}
+                <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2.5">
+                  <p className="text-sm font-semibold text-slate-800">{title}</p>
+                  <Badge>{subtitle}</Badge>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3">
                   <div className="divide-y divide-slate-100 px-4 py-1 md:col-span-2 md:border-r md:border-slate-100">
-                    {group.map((note) => (
-                      <div key={note.id} className="py-3">
-                        <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-                          <span>{note.createdAt ? formatDateTime(note.createdAt) : ''}</span>
-                          {note.clientIp ? <span>IP {note.clientIp}</span> : null}
-                          {note.isResponse ? <span className="font-medium text-slate-600">Response</span> : null}
-                          {note.editable && (
-                            <span className="ml-auto flex gap-2">
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 font-medium text-[#1769aa] hover:underline"
-                                onClick={() => {
-                                  setEditingNoteId(note.id)
-                                  setEditingNoteBody(note.bodyText)
-                                }}
-                              >
-                                <Pencil className="h-3 w-3" /> Edit
-                              </button>
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 font-medium text-rose-600 hover:underline"
-                                disabled={busy}
-                                onClick={() =>
-                                  void run(async () => {
-                                    await deleteMarkingNote(note.id)
-                                  })
-                                }
-                              >
-                                <Trash2 className="h-3 w-3" /> Delete
-                              </button>
-                            </span>
-                          )}
-                        </div>
-                        {editingNoteId === note.id ? (
-                          <div className="space-y-2">
-                            <textarea
-                              className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                              rows={3}
-                              value={editingNoteBody}
-                              onChange={(e) => setEditingNoteBody(e.target.value)}
-                            />
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                disabled={busy}
-                                onClick={() =>
-                                  void run(async () => {
-                                    await updateMarkingNote(note.id, editingNoteBody)
-                                    setEditingNoteId(null)
-                                  })
-                                }
-                              >
-                                Save
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setEditingNoteId(null)}
-                              >
-                                Cancel
-                              </Button>
+                    <p className="pt-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">Notes</p>
+                    {incident.notes.length === 0 ? (
+                      <p className="pb-3 text-xs text-slate-400">None</p>
+                    ) : (
+                      groupNotesByAuthor(incident.notes).map((group) => {
+                        const author = group[0]?.authorUser ?? ''
+                        const hasResponse = group.some((n) => n.isResponse)
+                        const groupEditable = group.some((n) => n.editable)
+                        return (
+                          <div key={`note-group-${group[0]?.id ?? author}`} className="py-2">
+                            <div className="mb-1 flex items-center gap-2">
+                              <p className="text-xs font-semibold text-slate-700">{author}</p>
+                              {hasResponse && <Badge>Response</Badge>}
+                              {!groupEditable && (
+                                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                                  Locked
+                                </span>
+                              )}
                             </div>
+                            {group.map((note) => (
+                              <div key={note.id} className="border-t border-slate-50 py-2.5 first:border-t-0">
+                                <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                  <span>{note.createdAt ? formatDateTime(note.createdAt) : ''}</span>
+                                  {note.clientIp ? <span>IP {note.clientIp}</span> : null}
+                                  {note.isResponse ? (
+                                    <span className="font-medium text-slate-600">Response</span>
+                                  ) : null}
+                                  {note.editable && (
+                                    <span className="ml-auto flex gap-2">
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-1 font-medium text-[#1769aa] hover:underline"
+                                        onClick={() => {
+                                          setEditingNoteId(note.id)
+                                          setEditingNoteBody(note.bodyText)
+                                        }}
+                                      >
+                                        <Pencil className="h-3 w-3" /> Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-1 font-medium text-rose-600 hover:underline"
+                                        disabled={busy}
+                                        onClick={() =>
+                                          void run(async () => {
+                                            await deleteMarkingNote(note.id)
+                                          })
+                                        }
+                                      >
+                                        <Trash2 className="h-3 w-3" /> Delete
+                                      </button>
+                                    </span>
+                                  )}
+                                </div>
+                                {editingNoteId === note.id ? (
+                                  <div className="space-y-2">
+                                    <textarea
+                                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                                      rows={3}
+                                      value={editingNoteBody}
+                                      onChange={(e) => setEditingNoteBody(e.target.value)}
+                                    />
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        disabled={busy}
+                                        onClick={() =>
+                                          void run(async () => {
+                                            await updateMarkingNote(note.id, editingNoteBody)
+                                            setEditingNoteId(null)
+                                          })
+                                        }
+                                      >
+                                        Save
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => setEditingNoteId(null)}
+                                      >
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                                    {note.bodyText}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
                           </div>
-                        ) : (
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-                            {note.bodyText}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                        )
+                      })
+                    )}
                   </div>
                   <div className="border-t border-slate-100 bg-slate-50/80 px-3 py-3 md:col-span-1 md:border-t-0">
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Attachments</p>
-                    {attachments.length === 0 ? (
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                      Attachments
+                    </p>
+                    {incident.attachments.length === 0 ? (
                       <p className="text-xs text-slate-400">None</p>
                     ) : (
                       <ul className="space-y-2">
-                        {attachments.map((a) => (
+                        {incident.attachments.map((a) => (
                           <li
                             key={a.id}
                             className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 shadow-sm"
@@ -443,7 +504,10 @@ export function MarkingWorkflowPanel({
                                     a.storageKey ||
                                     (a.documentId ? `Document #${a.documentId}` : 'File')}
                                 </p>
-                                {a.noteEditable ? (
+                                {a.createdBy ? (
+                                  <p className="mt-0.5 text-[10px] text-slate-500">{a.createdBy}</p>
+                                ) : null}
+                                {a.editable ? (
                                   <select
                                     className="mt-1 w-full rounded border border-slate-200 px-1 py-0.5 text-[10px]"
                                     value={a.attachmentKind}
@@ -490,7 +554,7 @@ export function MarkingWorkflowPanel({
                                       <ExternalLink className="h-3 w-3" /> Open
                                     </a>
                                   ) : null}
-                                  {a.noteEditable && a.documentId ? (
+                                  {a.editable && a.documentId ? (
                                     <label className="inline-flex cursor-pointer items-center gap-0.5 text-[#1769aa] hover:underline">
                                       Replace
                                       <input
@@ -512,7 +576,7 @@ export function MarkingWorkflowPanel({
                                       />
                                     </label>
                                   ) : null}
-                                  {a.noteEditable ? (
+                                  {a.editable ? (
                                     <button
                                       type="button"
                                       className="inline-flex items-center gap-0.5 text-rose-600 hover:underline"
@@ -762,33 +826,61 @@ export function MarkingWorkflowPanel({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
             <h2 className="text-sm font-bold">Add attachment</h2>
-            {editableNotes.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-600">
-                Add a note first, then attach files to it.
-              </p>
-            ) : (
-              <>
-                <label className="mt-3 block text-xs font-medium text-slate-600">Attach to note</label>
-                <select
-                  className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                  value={attachNoteId ?? ''}
-                  onChange={(e) => setAttachNoteId(Number(e.target.value))}
-                >
-                  {editableNotes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      #{n.id} · {(n.bodyText || '').slice(0, 48) || 'Note'}
-                      {n.createdAt ? ` · ${formatDateTime(n.createdAt)}` : ''}
-                    </option>
-                  ))}
-                </select>
-                <div className="mt-3 rounded-lg border border-slate-200 p-3">
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div className="min-w-[8rem] flex-1">
-                      <label className="block text-[11px] font-medium text-slate-500">Type</label>
+            <p className="mt-1 text-xs text-slate-500">
+              Files are linked to your current marking hold, not to individual notes.
+            </p>
+            <div className="mt-3 rounded-lg border border-slate-200 p-3">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-[8rem] flex-1">
+                  <label className="block text-[11px] font-medium text-slate-500">Type</label>
+                  <select
+                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                    value={defaultKind}
+                    onChange={(e) => setDefaultKind(e.target.value as AttachmentKind)}
+                  >
+                    {ATTACHMENT_KINDS.map((kind) => (
+                      <option key={kind} value={kind}>
+                        {kind}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                  <Paperclip className="h-3.5 w-3.5" />
+                  Choose files
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || [])
+                      if (!files.length) return
+                      setPendingFiles((prev) => [
+                        ...prev,
+                        ...files.map((file) => ({
+                          id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`,
+                          file,
+                          kind: defaultKind,
+                        })),
+                      ])
+                      e.target.value = ''
+                    }}
+                  />
+                </label>
+              </div>
+              {pendingFiles.length > 0 && (
+                <ul className="mt-2 space-y-1.5">
+                  {pendingFiles.map((item) => (
+                    <li key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
                       <select
-                        className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                        value={defaultKind}
-                        onChange={(e) => setDefaultKind(e.target.value as AttachmentKind)}
+                        className="rounded border border-slate-200 px-1.5 py-1"
+                        value={item.kind}
+                        onChange={(e) => {
+                          const kind = e.target.value as AttachmentKind
+                          setPendingFiles((prev) =>
+                            prev.map((row) => (row.id === item.id ? { ...row, kind } : row)),
+                          )
+                        }}
                       >
                         {ATTACHMENT_KINDS.map((kind) => (
                           <option key={kind} value={kind}>
@@ -796,87 +888,39 @@ export function MarkingWorkflowPanel({
                           </option>
                         ))}
                       </select>
-                    </div>
-                    <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                      <Paperclip className="h-3.5 w-3.5" />
-                      Choose files
-                      <input
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || [])
-                          if (!files.length) return
-                          setPendingFiles((prev) => [
-                            ...prev,
-                            ...files.map((file) => ({
-                              id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`,
-                              file,
-                              kind: defaultKind,
-                            })),
-                          ])
-                          e.target.value = ''
-                        }}
-                      />
-                    </label>
-                  </div>
-                  {pendingFiles.length > 0 && (
-                    <ul className="mt-2 space-y-1.5">
-                      {pendingFiles.map((item) => (
-                        <li key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
-                          <select
-                            className="rounded border border-slate-200 px-1.5 py-1"
-                            value={item.kind}
-                            onChange={(e) => {
-                              const kind = e.target.value as AttachmentKind
-                              setPendingFiles((prev) =>
-                                prev.map((row) => (row.id === item.id ? { ...row, kind } : row)),
-                              )
-                            }}
-                          >
-                            {ATTACHMENT_KINDS.map((kind) => (
-                              <option key={kind} value={kind}>
-                                {kind}
-                              </option>
-                            ))}
-                          </select>
-                          <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
-                          <button
-                            type="button"
-                            className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
-                            onClick={() =>
-                              setPendingFiles((prev) => prev.filter((row) => row.id !== item.id))
-                            }
-                            aria-label="Remove file"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </>
-            )}
+                      <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
+                      <button
+                        type="button"
+                        className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
+                        onClick={() =>
+                          setPendingFiles((prev) => prev.filter((row) => row.id !== item.id))
+                        }
+                        aria-label="Remove file"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <div className="mt-3 flex justify-end gap-2">
               <Button
                 variant="outline"
                 onClick={() => {
                   setDialog(null)
                   setPendingFiles([])
-                  setAttachNoteId(null)
                 }}
               >
                 Cancel
               </Button>
               <Button
-                disabled={busy || editableNotes.length === 0 || !attachNoteId || pendingFiles.length === 0}
+                disabled={busy || !canAddAttachment || pendingFiles.length === 0}
                 onClick={() =>
                   void run(async () => {
-                    if (!attachNoteId) throw new Error('Select a note to attach to')
                     if (!pendingFiles.length) throw new Error('Choose at least one file')
-                    const attachments = await uploadPendingAttachments()
-                    await addAttachmentsToNote(attachNoteId, attachments)
+                    const uploaded = await uploadPendingAttachments()
+                    await addAttachmentsToMarking(letter.id, uploaded)
                   })
                 }
               >

@@ -905,8 +905,13 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                     """
                     CREATE TABLE cms_correspondence_attachments (
                         id SERIAL PRIMARY KEY,
-                        note_id INTEGER NOT NULL
-                            REFERENCES cms_correspondence_notes(id) ON DELETE CASCADE,
+                        letter_id INTEGER NOT NULL
+                            REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        marking_id INTEGER
+                            REFERENCES cms_markings(id) ON DELETE SET NULL,
+                        note_id INTEGER
+                            REFERENCES cms_correspondence_notes(id) ON DELETE SET NULL,
+                        created_by VARCHAR(120) DEFAULT '',
                         document_id INTEGER REFERENCES cms_documents(id) ON DELETE SET NULL,
                         attachment_kind VARCHAR(60) DEFAULT 'Other',
                         storage_key VARCHAR(500) DEFAULT '',
@@ -919,8 +924,80 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
             )
             conn.execute(
                 text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_letter_id "
+                    "ON cms_correspondence_attachments (letter_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_marking_id "
+                    "ON cms_correspondence_attachments (marking_id)"
+                )
+            )
+            conn.execute(
+                text(
                     "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_note_id "
                     "ON cms_correspondence_attachments (note_id)"
+                )
+            )
+    else:
+        columns = {col["name"] for col in inspector.get_columns("cms_correspondence_attachments")}
+        with engine.begin() as conn:
+            if "letter_id" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN letter_id INTEGER REFERENCES cms_letters(id) ON DELETE CASCADE"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_letter_id "
+                        "ON cms_correspondence_attachments (letter_id)"
+                    )
+                )
+            if "marking_id" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN marking_id INTEGER REFERENCES cms_markings(id) ON DELETE SET NULL"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_marking_id "
+                        "ON cms_correspondence_attachments (marking_id)"
+                    )
+                )
+            if "created_by" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN created_by VARCHAR(120) DEFAULT ''"
+                    )
+                )
+            # Allow note_id to be null (attachments are marking-scoped).
+            conn.execute(
+                text(
+                    "ALTER TABLE cms_correspondence_attachments "
+                    "ALTER COLUMN note_id DROP NOT NULL"
+                )
+            )
+            # Backfill letter_id / marking_id / created_by from legacy note links.
+            conn.execute(
+                text(
+                    """
+                    UPDATE cms_correspondence_attachments AS a
+                    SET
+                        letter_id = COALESCE(a.letter_id, n.letter_id),
+                        marking_id = COALESCE(a.marking_id, n.marking_id),
+                        created_by = CASE
+                            WHEN COALESCE(a.created_by, '') = '' THEN COALESCE(n.author_user, '')
+                            ELSE a.created_by
+                        END
+                    FROM cms_correspondence_notes AS n
+                    WHERE a.note_id = n.id
+                    """
                 )
             )
 

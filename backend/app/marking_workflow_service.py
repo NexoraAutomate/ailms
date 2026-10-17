@@ -431,6 +431,39 @@ def revoke_marking(
     return marking
 
 
+def resolve_hold_marking_id(
+    db: Session,
+    letter: Letter,
+    actor_name: str,
+    marking_id: int | None = None,
+) -> int | None:
+    """Marking incident for the actor's current hold (None = initiator root)."""
+    if marking_id is not None:
+        marking = db.get(Marking, marking_id)
+        if not marking or marking.letter_id != letter.id:
+            raise HTTPException(status_code=400, detail="Invalid markingId")
+        if marking.to_user != actor_name and not _is_admin(db, actor_name):
+            raise HTTPException(status_code=403, detail="Marking is not addressed to you")
+        if marking.status != "active" and not _is_admin(db, actor_name):
+            raise HTTPException(status_code=400, detail="Marking is not active")
+        if marking_has_children(db, marking.id) and not _is_admin(db, actor_name):
+            raise HTTPException(status_code=400, detail="Marking was already remade onward")
+        return marking.id
+    leaves = leaf_inbound_markings(db, letter.id, actor_name)
+    if len(leaves) == 1:
+        return leaves[0].id
+    if len(leaves) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="markingId is required when you hold multiple active markings",
+        )
+    if is_initiator(letter, actor_name) and not has_active_markings(db, letter.id):
+        return None
+    if _is_admin(db, actor_name):
+        return None
+    raise HTTPException(status_code=403, detail="You do not currently hold this correspondence")
+
+
 def add_note(
     db: Session,
     *,
@@ -439,7 +472,6 @@ def add_note(
     body_text: str,
     marking_id: int | None = None,
     is_response: bool = False,
-    attachments: list[dict[str, Any]] | None = None,
     client_ip: str = "",
 ) -> CorrespondenceNote:
     assert_can_mutate(db, letter, actor_name)
@@ -447,11 +479,8 @@ def add_note(
     if not body:
         raise HTTPException(status_code=400, detail="bodyText is required")
 
-    marking: Marking | None = None
-    if marking_id is not None:
-        marking = db.get(Marking, marking_id)
-        if not marking or marking.letter_id != letter.id:
-            raise HTTPException(status_code=400, detail="Invalid markingId")
+    resolved_marking_id = resolve_hold_marking_id(db, letter, actor_name, marking_id)
+    marking = db.get(Marking, resolved_marking_id) if resolved_marking_id else None
 
     if is_response:
         if not marking:
@@ -463,7 +492,7 @@ def add_note(
 
     note = CorrespondenceNote(
         letter_id=letter.id,
-        marking_id=marking.id if marking else None,
+        marking_id=resolved_marking_id,
         author_user=actor_name,
         body_text=body,
         is_response=bool(is_response),
@@ -471,21 +500,6 @@ def add_note(
     )
     db.add(note)
     db.flush()
-
-    for att in attachments or []:
-        kind = str(att.get("attachmentKind") or att.get("attachment_kind") or "Other")
-        if kind not in ATTACHMENT_KINDS:
-            raise HTTPException(status_code=400, detail=f"Invalid attachmentKind '{kind}'")
-        db.add(
-            CorrespondenceAttachment(
-                note_id=note.id,
-                document_id=att.get("documentId") or att.get("document_id"),
-                attachment_kind=kind,
-                storage_key=str(att.get("storageKey") or att.get("storage_key") or ""),
-                original_filename=str(att.get("originalFilename") or att.get("original_filename") or ""),
-                client_ip=client_ip or "",
-            )
-        )
 
     if is_response and marking:
         marking.status = "responded"
@@ -524,7 +538,7 @@ def add_note(
     return note
 
 
-def serialize_attachment(db: Session, row: CorrespondenceAttachment) -> dict:
+def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable: bool = False) -> dict:
     version_id: int | None = None
     previewable = False
     mime_type = ""
@@ -553,6 +567,9 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment) -> dict:
             filename = filename or current.original_filename or ""
     return {
         "id": row.id,
+        "letterId": str(row.letter_id) if row.letter_id else "",
+        "markingId": row.marking_id,
+        "createdBy": row.created_by,
         "documentId": row.document_id,
         "versionId": version_id,
         "previewable": previewable,
@@ -562,6 +579,7 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment) -> dict:
         "originalFilename": filename,
         "clientIp": row.client_ip,
         "createdAt": row.created_at.isoformat() if row.created_at else "",
+        "editable": editable,
     }
 
 
@@ -579,6 +597,21 @@ def note_is_editable(db: Session, note: CorrespondenceNote, actor_name: str) -> 
     return user_holds_letter(db, letter, actor_name)
 
 
+def attachment_is_editable(
+    db: Session, attachment: CorrespondenceAttachment, actor_name: str
+) -> bool:
+    if _is_viewer(db, actor_name):
+        return False
+    letter = db.get(Letter, attachment.letter_id)
+    if not letter or letter.status in {CLOSED_LETTER, ARCHIVED_LETTER} or letter.is_archived:
+        return False
+    if _is_admin(db, actor_name):
+        return True
+    if (attachment.created_by or "").strip() != actor_name:
+        return False
+    return user_holds_letter(db, letter, actor_name)
+
+
 def assert_note_editable(db: Session, note: CorrespondenceNote, actor_name: str) -> Letter:
     letter = db.get(Letter, note.letter_id)
     if not letter:
@@ -586,7 +619,21 @@ def assert_note_editable(db: Session, note: CorrespondenceNote, actor_name: str)
     if not note_is_editable(db, note, actor_name):
         raise HTTPException(
             status_code=403,
-            detail="Notes and attachments are locked after you mark the correspondence onward",
+            detail="Notes are locked after you mark the correspondence onward",
+        )
+    return letter
+
+
+def assert_attachment_editable(
+    db: Session, attachment: CorrespondenceAttachment, actor_name: str
+) -> Letter:
+    letter = db.get(Letter, attachment.letter_id)
+    if not letter:
+        raise HTTPException(status_code=404, detail="Letter not found")
+    if not attachment_is_editable(db, attachment, actor_name):
+        raise HTTPException(
+            status_code=403,
+            detail="Attachments are locked after you mark the correspondence onward",
         )
     return letter
 
@@ -600,11 +647,6 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
     )
     out: list[dict] = []
     for note in notes:
-        atts = (
-            db.query(CorrespondenceAttachment)
-            .filter(CorrespondenceAttachment.note_id == note.id)
-            .all()
-        )
         editable = note_is_editable(db, note, actor_name) if actor_name else False
         out.append(
             {
@@ -617,10 +659,26 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
                 "clientIp": note.client_ip,
                 "createdAt": note.created_at.isoformat() if note.created_at else "",
                 "editable": editable,
-                "attachments": [serialize_attachment(db, a) for a in atts],
             }
         )
     return out
+
+
+def list_attachments(db: Session, letter_id: int, actor_name: str | None = None) -> list[dict]:
+    rows = (
+        db.query(CorrespondenceAttachment)
+        .filter(CorrespondenceAttachment.letter_id == letter_id)
+        .order_by(CorrespondenceAttachment.id.asc())
+        .all()
+    )
+    return [
+        serialize_attachment(
+            db,
+            row,
+            editable=attachment_is_editable(db, row, actor_name) if actor_name else False,
+        )
+        for row in rows
+    ]
 
 
 def update_note(
@@ -657,7 +715,6 @@ def delete_note(
     client_ip: str = "",
 ) -> None:
     letter = assert_note_editable(db, note, actor_name)
-    # Clear RR fulfillment link if this note fulfilled a marking
     linked = (
         db.query(Marking)
         .filter(Marking.response_note_id == note.id)
@@ -668,7 +725,7 @@ def delete_note(
         if marking.status == "responded":
             marking.status = "active"
             marking.responded_at = None
-    db.query(CorrespondenceAttachment).filter(CorrespondenceAttachment.note_id == note.id).delete()
+    note_id = note.id
     db.delete(note)
     add_audit(
         db,
@@ -676,7 +733,7 @@ def delete_note(
         module="Marking",
         action="Delete note",
         record=letter.number,
-        description=f"Deleted note #{note.id}",
+        description=f"Deleted note #{note_id}",
         source=f"Web · {client_ip or 'unknown'}",
     )
     db.flush()
@@ -689,10 +746,7 @@ def delete_attachment(
     actor_name: str,
     client_ip: str = "",
 ) -> None:
-    note = db.get(CorrespondenceNote, attachment.note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    letter = assert_note_editable(db, note, actor_name)
+    letter = assert_attachment_editable(db, attachment, actor_name)
     db.delete(attachment)
     add_audit(
         db,
@@ -715,10 +769,7 @@ def update_attachment_meta(
     original_filename: str | None = None,
     client_ip: str = "",
 ) -> CorrespondenceAttachment:
-    note = db.get(CorrespondenceNote, attachment.note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    letter = assert_note_editable(db, note, actor_name)
+    letter = assert_attachment_editable(db, attachment, actor_name)
     if attachment_kind is not None:
         kind = attachment_kind.strip()
         if kind not in ATTACHMENT_KINDS:
@@ -739,42 +790,48 @@ def update_attachment_meta(
     return attachment
 
 
-def add_attachments_to_note(
+def add_attachments_to_marking(
     db: Session,
     *,
-    note: CorrespondenceNote,
+    letter: Letter,
     actor_name: str,
     attachments: list[dict],
+    marking_id: int | None = None,
     client_ip: str = "",
-) -> CorrespondenceNote:
-    letter = assert_note_editable(db, note, actor_name)
+) -> list[CorrespondenceAttachment]:
+    assert_can_mutate(db, letter, actor_name)
+    resolved = resolve_hold_marking_id(db, letter, actor_name, marking_id)
+    created: list[CorrespondenceAttachment] = []
     for att in attachments:
         kind = str(att.get("attachmentKind") or att.get("attachment_kind") or "Other")
         if kind not in ATTACHMENT_KINDS:
             raise HTTPException(status_code=400, detail=f"Invalid attachmentKind '{kind}'")
-        db.add(
-            CorrespondenceAttachment(
-                note_id=note.id,
-                document_id=att.get("documentId") or att.get("document_id"),
-                attachment_kind=kind,
-                storage_key=str(att.get("storageKey") or att.get("storage_key") or ""),
-                original_filename=str(
-                    att.get("originalFilename") or att.get("original_filename") or ""
-                ),
-                client_ip=client_ip or "",
-            )
+        row = CorrespondenceAttachment(
+            letter_id=letter.id,
+            marking_id=resolved,
+            note_id=None,
+            created_by=actor_name,
+            document_id=att.get("documentId") or att.get("document_id"),
+            attachment_kind=kind,
+            storage_key=str(att.get("storageKey") or att.get("storage_key") or ""),
+            original_filename=str(
+                att.get("originalFilename") or att.get("original_filename") or ""
+            ),
+            client_ip=client_ip or "",
         )
+        db.add(row)
+        created.append(row)
+    db.flush()
     add_audit(
         db,
         user=actor_name,
         module="Marking",
         action="Add attachments",
         record=letter.number,
-        description=f"Added {len(attachments)} file(s) to note #{note.id}",
+        description=f"Added {len(created)} file(s) to marking incident",
         source=f"Web · {client_ip or 'unknown'}",
     )
-    db.flush()
-    return note
+    return created
 
 
 def sync_attachment_after_replace(
@@ -786,10 +843,7 @@ def sync_attachment_after_replace(
     client_ip: str = "",
 ) -> CorrespondenceAttachment:
     """Call after uploading a new document version for the same document_id."""
-    note = db.get(CorrespondenceNote, attachment.note_id)
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    letter = assert_note_editable(db, note, actor_name)
+    letter = assert_attachment_editable(db, attachment, actor_name)
     attachment.original_filename = original_filename
     attachment.client_ip = client_ip or attachment.client_ip
     add_audit(

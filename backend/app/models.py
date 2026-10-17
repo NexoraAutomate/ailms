@@ -311,14 +311,24 @@ class CorrespondenceNote(Base):
 
 
 class CorrespondenceAttachment(Base):
-    """Typed file attached to a correspondence note."""
+    """Typed file attached to a marking incident (not to individual notes)."""
 
     __tablename__ = "cms_correspondence_attachments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    note_id: Mapped[int] = mapped_column(
-        ForeignKey("cms_correspondence_notes.id", ondelete="CASCADE"), index=True
+    letter_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True, default=0
     )
+    marking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_markings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Legacy; new rows leave this null. Kept nullable for older data.
+    note_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_correspondence_notes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_by: Mapped[str] = mapped_column(String(120), default="", index=True)
     document_id: Mapped[int | None] = mapped_column(
         ForeignKey("cms_documents.id", ondelete="SET NULL"), nullable=True
     )
