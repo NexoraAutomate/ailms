@@ -135,49 +135,34 @@ export function getRoleColor(roleName: string): OnboardingRoleColor {
 
 export const WORKFLOW_PIPELINE = [
   {
-    status: 'Registered',
-    meaning: 'Letter captured with metadata (and optionally OCR).',
-    roles: ['Coordinator', 'Admin'],
+    status: 'Register',
+    meaning: 'Initiator captures the letter (manual entry or OCR-assisted).',
+    roles: ['Any user', 'Admin'],
   },
   {
-    status: 'Validated',
-    meaning: 'Coordinator confirms fields and attachments are correct.',
-    roles: ['Coordinator'],
+    status: 'Mark',
+    meaning: 'Mark to any user(s) as Forward, For Info, or Response Required.',
+    roles: ['Current holder'],
   },
   {
-    status: 'Classified',
-    meaning: 'Marked Information (FYI) or Actionable.',
-    roles: ['Coordinator', 'Manager'],
+    status: 'Notes & attachments',
+    meaning: 'Holders add dated inputs and typed files on the correspondence.',
+    roles: ['Current holder'],
   },
   {
-    status: 'Routed / Assigned',
-    meaning: 'Sent to a department or action owner.',
-    roles: ['Management', 'Manager', 'Coordinator'],
+    status: 'Track & remind',
+    meaning: 'Marker tracks pending responses; optional pathway and due reminders.',
+    roles: ['Marker'],
   },
   {
-    status: 'In Progress',
-    meaning: 'Actionist accepted and is working the item.',
-    roles: ['Actionist'],
+    status: 'Revoke',
+    meaning: 'Marker may revoke if the recipient has not marked onward.',
+    roles: ['Marker'],
   },
   {
-    status: 'Response Drafted',
-    meaning: 'Reply prepared for review.',
-    roles: ['Actionist'],
-  },
-  {
-    status: 'Under Approval',
-    meaning: 'Manager / Management reviews the draft.',
-    roles: ['Manager', 'Management'],
-  },
-  {
-    status: 'Dispatched',
-    meaning: 'Final response sent internally or externally.',
-    roles: ['Management', 'Admin'],
-  },
-  {
-    status: 'Closed / Archived',
-    meaning: 'Work finished; letter retained in Catalog.',
-    roles: ['Manager', 'Management', 'Admin'],
+    status: 'Close',
+    meaning: 'When the initiator holds again, they can close the correspondence.',
+    roles: ['Initiator'],
   },
 ] as const
 

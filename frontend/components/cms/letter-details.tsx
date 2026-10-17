@@ -23,10 +23,9 @@ import {
   ApprovalEscalationPanel,
   CorrespondenceThreadPanel,
   DocumentsPanel,
-  EnterpriseLifecyclePanel,
   RelatedMeetingsPanel,
-  WorkflowPanel,
 } from '@/components/cms/letter-panels'
+import { MarkingWorkflowPanel } from '@/components/cms/marking-workflow-panel'
 
 type LetterTabId = 'details' | 'documents' | 'workflow' | 'references' | 'ai'
 
@@ -174,8 +173,7 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
 
           {tab === 'workflow' && (
             <div>
-              <WorkflowPanel letter={letter} users={users} onDone={refresh} />
-              <EnterpriseLifecyclePanel letter={letter} />
+              <MarkingWorkflowPanel letter={letter} users={users} onDone={refresh} />
               <ApprovalEscalationPanel letter={letter} onDone={refresh} />
               <RelatedMeetingsPanel letter={letter} go={go} />
             </div>

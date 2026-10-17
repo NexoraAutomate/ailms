@@ -1,0 +1,479 @@
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import { CheckCircle2, CornerUpLeft, MessageSquare, Send, XCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { CollapsibleCard } from '@/components/ui/collapsible-card'
+import { Badge } from '@/components/cms/ui'
+import { formatDateTime } from '@/lib/datetime'
+import type { Letter } from '@/services/letters'
+import {
+  ACTION_LABELS,
+  ATTACHMENT_KINDS,
+  MARKING_ACTIONS,
+  RESPONSE_TYPES,
+  RESPONSE_TYPE_LABELS,
+  type MarkingAction,
+  type ResponseType,
+} from '@/services/marking-types'
+import {
+  addMarkingNote,
+  closeMarkedLetter,
+  fetchMarkingActions,
+  fetchMarkingNotes,
+  fetchMarkingTree,
+  markLetter,
+  markingActionLabel,
+  respondToMarking,
+  revokeMarking,
+  type CorrespondenceNote,
+  type MarkRecipientInput,
+  type MarkingNode,
+} from '@/services/markings'
+
+function MarkingTreeNodes({
+  nodes,
+  depth = 0,
+  onRevoke,
+  canRevoke,
+}: {
+  nodes: MarkingNode[]
+  depth?: number
+  onRevoke: (id: number) => void
+  canRevoke: boolean
+}) {
+  if (!nodes.length) return null
+  return (
+    <ul className={depth ? 'ml-4 border-l border-slate-200 pl-3' : 'space-y-2'}>
+      {nodes.map((node) => (
+        <li key={node.id} className="py-2">
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-slate-800">
+                {node.fromUser} → {node.toUser}
+              </span>
+              <Badge>{markingActionLabel(node.action)}</Badge>
+              <Badge>{node.status}</Badge>
+              {node.track && <Badge>Tracked</Badge>}
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              {node.createdAt ? formatDateTime(node.createdAt) : ''}
+              {node.clientIp ? ` · IP ${node.clientIp}` : ''}
+              {node.dueAt ? ` · Due ${node.dueAt}` : ''}
+              {node.responseType ? ` · ${RESPONSE_TYPE_LABELS[node.responseType as ResponseType] ?? node.responseType}` : ''}
+            </p>
+            {node.instructions ? <p className="mt-1 text-xs text-slate-600">{node.instructions}</p> : null}
+            {canRevoke && node.status === 'active' && (
+              <button
+                type="button"
+                className="mt-2 text-xs font-medium text-rose-600 hover:underline"
+                onClick={() => onRevoke(node.id)}
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+          <MarkingTreeNodes nodes={node.children} depth={depth + 1} onRevoke={onRevoke} canRevoke={canRevoke} />
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function emptyRecipient(): MarkRecipientInput {
+  return { toUser: '', action: 'forward', track: true, remindersEnabled: true }
+}
+
+export function MarkingWorkflowPanel({
+  letter,
+  users,
+  onDone,
+}: {
+  letter: Letter
+  users: { name: string }[]
+  onDone: () => Promise<void>
+}) {
+  const [actions, setActions] = useState<string[]>([])
+  const [tree, setTree] = useState<MarkingNode[]>([])
+  const [notes, setNotes] = useState<CorrespondenceNote[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [dialog, setDialog] = useState<'mark' | 'note' | 'respond' | 'close' | null>(null)
+  const [remarks, setRemarks] = useState('')
+  const [pathwayNotify, setPathwayNotify] = useState(false)
+  const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
+  const [noteBody, setNoteBody] = useState('')
+  const [forceClose, setForceClose] = useState(false)
+  const [respondMarkingId, setRespondMarkingId] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const [available, markingTree, noteRows] = await Promise.all([
+        fetchMarkingActions(letter.id),
+        fetchMarkingTree(letter.id),
+        fetchMarkingNotes(letter.id),
+      ])
+      setActions(available.actions)
+      setTree(markingTree)
+      setNotes(noteRows)
+      const rr = markingTree
+        .flatMap(function walk(n: MarkingNode): MarkingNode[] {
+          return [n, ...n.children.flatMap(walk)]
+        })
+        .find((n) => n.status === 'active' && n.action === 'response_required')
+      setRespondMarkingId(rr?.id ?? null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load marking workflow')
+    } finally {
+      setLoading(false)
+    }
+  }, [letter.id])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true)
+    setError('')
+    try {
+      await fn()
+      setDialog(null)
+      setRemarks('')
+      setNoteBody('')
+      setForceClose(false)
+      setRecipients([emptyRecipient()])
+      await onDone()
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Action failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const findActiveRrForMe = (nodes: MarkingNode[], meHint: string): number | null => {
+    for (const n of nodes) {
+      if (n.status === 'active' && n.action === 'response_required') return n.id
+      const child = findActiveRrForMe(n.children, meHint)
+      if (child) return child
+    }
+    return null
+  }
+
+  return (
+    <CollapsibleCard title="Marking workflow" defaultOpen>
+      {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
+      {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
+
+      {!loading && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {actions.includes('mark') && (
+            <Button size="sm" onClick={() => setDialog('mark')}>
+              <Send className="mr-1 h-3.5 w-3.5" /> Mark
+            </Button>
+          )}
+          {actions.includes('add_note') && (
+            <Button size="sm" variant="outline" onClick={() => setDialog('note')}>
+              <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add note
+            </Button>
+          )}
+          {actions.includes('respond') && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setRespondMarkingId(findActiveRrForMe(tree, '') ?? respondMarkingId)
+                setDialog('respond')
+              }}
+            >
+              <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Respond
+            </Button>
+          )}
+          {actions.includes('close') && (
+            <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
+              <XCircle className="mr-1 h-3.5 w-3.5" /> Close
+            </Button>
+          )}
+        </div>
+      )}
+
+      <div className="mb-6">
+        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Marking history</h3>
+        {!loading && tree.length === 0 && (
+          <p className="text-xs text-slate-500">No markings yet. The initiator holds this correspondence.</p>
+        )}
+        <MarkingTreeNodes
+          nodes={tree}
+          canRevoke={actions.includes('revoke')}
+          onRevoke={(id) =>
+            void run(async () => {
+              await revokeMarking(id)
+            })
+          }
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Notes & attachments</h3>
+        {notes.length === 0 && <p className="text-xs text-slate-500">No notes yet.</p>}
+        <ul className="space-y-2">
+          {notes.map((note) => (
+            <li key={note.id} className="rounded-lg border border-slate-100 px-3 py-2 text-sm">
+              <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                <span className="font-semibold text-slate-700">{note.authorUser}</span>
+                <span>{note.createdAt ? formatDateTime(note.createdAt) : ''}</span>
+                {note.clientIp ? <span>IP {note.clientIp}</span> : null}
+                {note.isResponse && <Badge>Response</Badge>}
+              </div>
+              <p className="mt-1 whitespace-pre-wrap text-slate-700">{note.bodyText}</p>
+              {note.attachments.length > 0 && (
+                <ul className="mt-1 text-xs text-slate-600">
+                  {note.attachments.map((a) => (
+                    <li key={a.id}>
+                      {a.attachmentKind}: {a.originalFilename || a.storageKey || `doc #${a.documentId}`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {dialog === 'mark' && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold text-slate-800">Mark correspondence</h2>
+            <p className="mt-1 text-xs text-slate-500">Assign each recipient an action. Track is on by default.</p>
+            <div className="mt-3 space-y-3">
+              {recipients.map((row, idx) => (
+                <div key={idx} className="rounded-lg border border-slate-200 p-3">
+                  <label className="block text-xs font-medium text-slate-600">User</label>
+                  <select
+                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                    value={row.toUser}
+                    onChange={(e) => {
+                      const next = [...recipients]
+                      next[idx] = { ...row, toUser: e.target.value }
+                      setRecipients(next)
+                    }}
+                  >
+                    <option value="">Select user…</option>
+                    {users.map((u) => (
+                      <option key={u.name} value={u.name}>
+                        {u.name}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="mt-2 block text-xs font-medium text-slate-600">Action</label>
+                  <select
+                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                    value={row.action}
+                    onChange={(e) => {
+                      const next = [...recipients]
+                      next[idx] = { ...row, action: e.target.value as MarkingAction }
+                      setRecipients(next)
+                    }}
+                  >
+                    {MARKING_ACTIONS.map((a) => (
+                      <option key={a} value={a}>
+                        {ACTION_LABELS[a]}
+                      </option>
+                    ))}
+                  </select>
+                  {row.action === 'response_required' && (
+                    <>
+                      <label className="mt-2 block text-xs font-medium text-slate-600">Response type</label>
+                      <select
+                        className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                        value={row.responseType || 'draft_letter'}
+                        onChange={(e) => {
+                          const next = [...recipients]
+                          next[idx] = { ...row, responseType: e.target.value as ResponseType }
+                          setRecipients(next)
+                        }}
+                      >
+                        {RESPONSE_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {RESPONSE_TYPE_LABELS[t]}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="mt-2 block text-xs font-medium text-slate-600">Due date</label>
+                      <input
+                        type="date"
+                        className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                        value={row.dueAt || ''}
+                        onChange={(e) => {
+                          const next = [...recipients]
+                          next[idx] = { ...row, dueAt: e.target.value }
+                          setRecipients(next)
+                        }}
+                      />
+                    </>
+                  )}
+                  <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={row.track !== false}
+                      onChange={(e) => {
+                        const next = [...recipients]
+                        next[idx] = { ...row, track: e.target.checked }
+                        setRecipients(next)
+                      }}
+                    />
+                    Track this marking
+                  </label>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="mt-2 text-xs font-medium text-sky-700"
+              onClick={() => setRecipients([...recipients, emptyRecipient()])}
+            >
+              + Add recipient
+            </button>
+            <label className="mt-3 block text-xs font-medium text-slate-600">Remarks</label>
+            <textarea
+              className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+              rows={2}
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+            />
+            <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+              <input type="checkbox" checked={pathwayNotify} onChange={(e) => setPathwayNotify(e.target.checked)} />
+              Notify me of the pathway (further marks / responses)
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" disabled={busy} onClick={() => setDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    const cleaned = recipients.filter((r) => r.toUser.trim())
+                    if (!cleaned.length) throw new Error('Select at least one recipient')
+                    await markLetter(letter.id, {
+                      recipients: cleaned.map((r) => ({
+                        ...r,
+                        responseType: r.action === 'response_required' ? r.responseType || 'draft_letter' : undefined,
+                        remindersEnabled: r.action === 'response_required' ? r.track !== false : false,
+                      })),
+                      remarks,
+                      pathwayNotify,
+                    })
+                  })
+                }
+              >
+                Mark
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog === 'note' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold">Add note</h2>
+            <textarea
+              className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+              rows={4}
+              value={noteBody}
+              onChange={(e) => setNoteBody(e.target.value)}
+              placeholder="Your input…"
+            />
+            <p className="mt-1 text-[11px] text-slate-400">
+              Attachment kinds available later via documents: {ATTACHMENT_KINDS.join(', ')}
+            </p>
+            <div className="mt-3 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    await addMarkingNote(letter.id, { bodyText: noteBody })
+                  })
+                }
+              >
+                Save note
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog === 'respond' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold">Submit response</h2>
+            <textarea
+              className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+              rows={4}
+              value={noteBody}
+              onChange={(e) => setNoteBody(e.target.value)}
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={busy || !respondMarkingId}
+                onClick={() =>
+                  void run(async () => {
+                    if (!respondMarkingId) throw new Error('No open Response Required marking')
+                    await respondToMarking(respondMarkingId, { bodyText: noteBody })
+                  })
+                }
+              >
+                <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Submit
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog === 'close' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold">Close correspondence</h2>
+            <textarea
+              className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+              rows={2}
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+              placeholder="Close remarks"
+            />
+            <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+              <input type="checkbox" checked={forceClose} onChange={(e) => setForceClose(e.target.checked)} />
+              Force close even if Response Required markings are still open
+            </label>
+            <div className="mt-3 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    await closeMarkedLetter(letter.id, { remarks, force: forceClose })
+                  })
+                }
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </CollapsibleCard>
+  )
+}
