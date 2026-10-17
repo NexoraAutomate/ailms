@@ -110,13 +110,14 @@ export function MarkingWorkflowPanel({
   const [notes, setNotes] = useState<CorrespondenceNote[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [dialog, setDialog] = useState<'mark' | 'note' | 'respond' | 'close' | null>(null)
+  const [dialog, setDialog] = useState<'mark' | 'note' | 'respond' | 'attach' | 'close' | null>(null)
   const [remarks, setRemarks] = useState('')
   const [pathwayNotify, setPathwayNotify] = useState(false)
   const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
   const [noteBody, setNoteBody] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([])
   const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
+  const [attachNoteId, setAttachNoteId] = useState<number | null>(null)
   const [forceClose, setForceClose] = useState(false)
   const [respondMarkingId, setRespondMarkingId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
@@ -128,10 +129,13 @@ export function MarkingWorkflowPanel({
     setRemarks('')
     setNoteBody('')
     setPendingFiles([])
+    setAttachNoteId(null)
     setForceClose(false)
     setRecipients([emptyRecipient()])
     setPathwayNotify(false)
   }
+
+  const editableNotes = useMemo(() => notes.filter((n) => n.editable), [notes])
 
   const uploadPendingAttachments = async () => {
     const uploaded: { attachmentKind: string; documentId: number; originalFilename: string }[] = []
@@ -288,6 +292,20 @@ export function MarkingWorkflowPanel({
               <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add note
             </Button>
           )}
+          {actions.includes('add_note') && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const latest = editableNotes[editableNotes.length - 1]
+                setAttachNoteId(latest?.id ?? null)
+                setPendingFiles([])
+                setDialog('attach')
+              }}
+            >
+              <Paperclip className="mr-1 h-3.5 w-3.5" /> Add attachment
+            </Button>
+          )}
           {actions.includes('respond') && (
             <Button
               size="sm"
@@ -402,42 +420,6 @@ export function MarkingWorkflowPanel({
                           <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
                             {note.bodyText}
                           </p>
-                        )}
-                        {note.editable && (
-                          <label className="mt-2 inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-[#1769aa] hover:underline">
-                            <Paperclip className="h-3 w-3" /> Add files
-                            <input
-                              type="file"
-                              multiple
-                              className="hidden"
-                              onChange={(e) => {
-                                const files = Array.from(e.target.files || [])
-                                e.target.value = ''
-                                if (!files.length) return
-                                void run(async () => {
-                                  const uploaded: {
-                                    attachmentKind: string
-                                    documentId: number
-                                    originalFilename: string
-                                  }[] = []
-                                  for (const file of files) {
-                                    const doc = await uploadLetterDocument(
-                                      letter.id,
-                                      file,
-                                      defaultKind,
-                                      `Workflow attachment (${defaultKind})`,
-                                    )
-                                    uploaded.push({
-                                      attachmentKind: defaultKind,
-                                      documentId: Number(doc.id),
-                                      originalFilename: file.name,
-                                    })
-                                  }
-                                  await addAttachmentsToNote(note.id, uploaded)
-                                })
-                              }}
-                            />
-                          </label>
                         )}
                       </div>
                     ))}
@@ -723,7 +705,7 @@ export function MarkingWorkflowPanel({
 
       {(dialog === 'note' || dialog === 'respond') && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+          <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
             <h2 className="text-sm font-bold">{dialog === 'note' ? 'Add note' : 'Submit response'}</h2>
             <textarea
               className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
@@ -732,88 +714,14 @@ export function MarkingWorkflowPanel({
               onChange={(e) => setNoteBody(e.target.value)}
               placeholder={dialog === 'note' ? 'Your input…' : 'Your response…'}
             />
-
-            <div className="mt-3 rounded-lg border border-slate-200 p-3">
-              <p className="text-xs font-semibold text-slate-700">Attachments</p>
-              <div className="mt-2 flex flex-wrap items-end gap-2">
-                <div className="min-w-[8rem] flex-1">
-                  <label className="block text-[11px] font-medium text-slate-500">Type</label>
-                  <select
-                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                    value={defaultKind}
-                    onChange={(e) => setDefaultKind(e.target.value as AttachmentKind)}
-                  >
-                    {ATTACHMENT_KINDS.map((kind) => (
-                      <option key={kind} value={kind}>
-                        {kind}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                  <Paperclip className="h-3.5 w-3.5" />
-                  Add files
-                  <input
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || [])
-                      if (!files.length) return
-                      setPendingFiles((prev) => [
-                        ...prev,
-                        ...files.map((file) => ({
-                          id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`,
-                          file,
-                          kind: defaultKind,
-                        })),
-                      ])
-                      e.target.value = ''
-                    }}
-                  />
-                </label>
-              </div>
-              {pendingFiles.length > 0 && (
-                <ul className="mt-2 space-y-1.5">
-                  {pendingFiles.map((item) => (
-                    <li key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
-                      <select
-                        className="rounded border border-slate-200 px-1.5 py-1"
-                        value={item.kind}
-                        onChange={(e) => {
-                          const kind = e.target.value as AttachmentKind
-                          setPendingFiles((prev) =>
-                            prev.map((row) => (row.id === item.id ? { ...row, kind } : row)),
-                          )
-                        }}
-                      >
-                        {ATTACHMENT_KINDS.map((kind) => (
-                          <option key={kind} value={kind}>
-                            {kind}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
-                      <button
-                        type="button"
-                        className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
-                        onClick={() => setPendingFiles((prev) => prev.filter((row) => row.id !== item.id))}
-                        aria-label="Remove file"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
+            <p className="mt-2 text-[11px] text-slate-400">
+              Use <span className="font-medium">Add attachment</span> to attach files separately.
+            </p>
             <div className="mt-3 flex justify-end gap-2">
               <Button
                 variant="outline"
                 onClick={() => {
                   setDialog(null)
-                  setPendingFiles([])
                   setNoteBody('')
                 }}
               >
@@ -825,8 +733,7 @@ export function MarkingWorkflowPanel({
                   onClick={() =>
                     void run(async () => {
                       if (!noteBody.trim()) throw new Error('Note text is required')
-                      const attachments = await uploadPendingAttachments()
-                      await addMarkingNote(letter.id, { bodyText: noteBody, attachments })
+                      await addMarkingNote(letter.id, { bodyText: noteBody })
                     })
                   }
                 >
@@ -839,14 +746,142 @@ export function MarkingWorkflowPanel({
                     void run(async () => {
                       if (!respondMarkingId) throw new Error('No open Response Required marking')
                       if (!noteBody.trim()) throw new Error('Response text is required')
-                      const attachments = await uploadPendingAttachments()
-                      await respondToMarking(respondMarkingId, { bodyText: noteBody, attachments })
+                      await respondToMarking(respondMarkingId, { bodyText: noteBody })
                     })
                   }
                 >
                   <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Submit
                 </Button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog === 'attach' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold">Add attachment</h2>
+            {editableNotes.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-600">
+                Add a note first, then attach files to it.
+              </p>
+            ) : (
+              <>
+                <label className="mt-3 block text-xs font-medium text-slate-600">Attach to note</label>
+                <select
+                  className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                  value={attachNoteId ?? ''}
+                  onChange={(e) => setAttachNoteId(Number(e.target.value))}
+                >
+                  {editableNotes.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      #{n.id} · {(n.bodyText || '').slice(0, 48) || 'Note'}
+                      {n.createdAt ? ` · ${formatDateTime(n.createdAt)}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-3 rounded-lg border border-slate-200 p-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-[8rem] flex-1">
+                      <label className="block text-[11px] font-medium text-slate-500">Type</label>
+                      <select
+                        className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                        value={defaultKind}
+                        onChange={(e) => setDefaultKind(e.target.value as AttachmentKind)}
+                      >
+                        {ATTACHMENT_KINDS.map((kind) => (
+                          <option key={kind} value={kind}>
+                            {kind}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                      <Paperclip className="h-3.5 w-3.5" />
+                      Choose files
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || [])
+                          if (!files.length) return
+                          setPendingFiles((prev) => [
+                            ...prev,
+                            ...files.map((file) => ({
+                              id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`,
+                              file,
+                              kind: defaultKind,
+                            })),
+                          ])
+                          e.target.value = ''
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {pendingFiles.length > 0 && (
+                    <ul className="mt-2 space-y-1.5">
+                      {pendingFiles.map((item) => (
+                        <li key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
+                          <select
+                            className="rounded border border-slate-200 px-1.5 py-1"
+                            value={item.kind}
+                            onChange={(e) => {
+                              const kind = e.target.value as AttachmentKind
+                              setPendingFiles((prev) =>
+                                prev.map((row) => (row.id === item.id ? { ...row, kind } : row)),
+                              )
+                            }}
+                          >
+                            {ATTACHMENT_KINDS.map((kind) => (
+                              <option key={kind} value={kind}>
+                                {kind}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
+                          <button
+                            type="button"
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
+                            onClick={() =>
+                              setPendingFiles((prev) => prev.filter((row) => row.id !== item.id))
+                            }
+                            aria-label="Remove file"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            )}
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDialog(null)
+                  setPendingFiles([])
+                  setAttachNoteId(null)
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={busy || editableNotes.length === 0 || !attachNoteId || pendingFiles.length === 0}
+                onClick={() =>
+                  void run(async () => {
+                    if (!attachNoteId) throw new Error('Select a note to attach to')
+                    if (!pendingFiles.length) throw new Error('Choose at least one file')
+                    const attachments = await uploadPendingAttachments()
+                    await addAttachmentsToNote(attachNoteId, attachments)
+                  })
+                }
+              >
+                Upload
+              </Button>
             </div>
           </div>
         </div>
