@@ -19,8 +19,11 @@ def run_reminder_cycle() -> dict:
     db = SessionLocal()
     try:
         stats = process_reminders(db)
+        from app.marking_reminders import process_marking_reminders
+
+        marking_stats = process_marking_reminders(db)
         db.commit()
-        return stats
+        return {**stats, "marking": marking_stats}
     except Exception:
         db.rollback()
         raise

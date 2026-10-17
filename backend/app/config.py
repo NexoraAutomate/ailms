@@ -34,6 +34,19 @@ class Settings(BaseSettings):
     document_storage_path: str = "storage"
     max_upload_bytes: int = 25 * 1024 * 1024
 
+    # Simple marking workflow (test branch default on).
+    marking_workflow_enabled: bool = True
+    trust_proxy: bool = False
+
+    # Email provision for marking notifications/reminders (spec 05). Disabled by default.
+    mail_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
+
     # Auth (JWT). Change JWT_SECRET in production.
     jwt_secret: str = "ailms-dev-change-me-in-production-32b"
     jwt_algorithm: str = "HS256"
