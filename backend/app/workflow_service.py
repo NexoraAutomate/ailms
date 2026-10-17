@@ -467,6 +467,7 @@ def execute_transition(
 
 
 def available_actions(db: Session, letter: Letter, actor_name: str) -> list[str]:
+    from app.config import get_settings
     from app.enterprise_workflow_service import available_enterprise_actions
 
     role = normalize_role(resolve_user_role(db, actor_name))
@@ -483,9 +484,10 @@ def available_actions(db: Session, letter: Letter, actor_name: str) -> list[str]
             continue
         actions.append(action)
 
-    for action in available_enterprise_actions(db, letter, actor_name):
-        if action not in actions:
-            actions.append(action)
+    if not get_settings().marking_workflow_enabled:
+        for action in available_enterprise_actions(db, letter, actor_name):
+            if action not in actions:
+                actions.append(action)
     return actions
 
 
