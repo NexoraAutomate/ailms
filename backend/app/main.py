@@ -141,6 +141,7 @@ def on_startup() -> None:
             backfill_letter_ownership,
             infer_department_tiers,
             migrate_enterprise_roles,
+            migrate_letters_to_simple_marking_statuses,
         )
 
         # Migrate legacy role names before seeding canonical roles to avoid unique collisions.
@@ -160,6 +161,7 @@ def on_startup() -> None:
         backfill_letter_ownership(db)
         infer_department_tiers(db)
         backfill_enterprise_route_actions(db)
+        migrate_letters_to_simple_marking_statuses(db)
         touch_session(db, username="admin", display="Administrator")
         db.commit()
         run_reminder_cycle()

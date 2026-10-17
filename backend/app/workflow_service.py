@@ -307,9 +307,18 @@ def execute_transition(
     document_id: int | None = None,
     department_id: int | None = None,
 ) -> WorkflowTransition:
+    from app.config import get_settings
     from app.enterprise_workflow_service import ENTERPRISE_ACTIONS, execute_enterprise_action
 
     if action in ENTERPRISE_ACTIONS:
+        if get_settings().marking_workflow_enabled:
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    f"Enterprise action '{action}' is retired. "
+                    "Use /api/markings for the simple marking workflow."
+                ),
+            )
         return execute_enterprise_action(
             db,
             letter=letter,
