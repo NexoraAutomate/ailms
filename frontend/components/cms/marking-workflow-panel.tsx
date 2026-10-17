@@ -1,9 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, CornerUpLeft, MessageSquare, Paperclip, Send, X, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
+import {
+  AnimatedProgressStepper,
+  type AnimatedProgressStep,
+} from '@/components/ui/animated-progress-stepper'
 import { Badge } from '@/components/cms/ui'
 import { formatDateTime } from '@/lib/datetime'
 import type { Letter } from '@/services/letters'
@@ -39,53 +43,16 @@ type PendingAttachment = {
   kind: AttachmentKind
 }
 
-function MarkingTreeNodes({
-  nodes,
-  depth = 0,
-  onRevoke,
-  canRevoke,
-}: {
-  nodes: MarkingNode[]
-  depth?: number
-  onRevoke: (id: number) => void
-  canRevoke: boolean
-}) {
-  if (!nodes.length) return null
-  return (
-    <ul className={depth ? 'ml-4 border-l border-slate-200 pl-3' : 'space-y-2'}>
-      {nodes.map((node) => (
-        <li key={node.id} className="py-2">
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-slate-800">
-                {node.fromUser} → {node.toUser}
-              </span>
-              <Badge>{markingActionLabel(node.action)}</Badge>
-              <Badge>{node.status}</Badge>
-              {node.track && <Badge>Tracked</Badge>}
-            </div>
-            <p className="mt-1 text-xs text-slate-500">
-              {node.createdAt ? formatDateTime(node.createdAt) : ''}
-              {node.clientIp ? ` · IP ${node.clientIp}` : ''}
-              {node.dueAt ? ` · Due ${node.dueAt}` : ''}
-              {node.responseType ? ` · ${RESPONSE_TYPE_LABELS[node.responseType as ResponseType] ?? node.responseType}` : ''}
-            </p>
-            {node.instructions ? <p className="mt-1 text-xs text-slate-600">{node.instructions}</p> : null}
-            {canRevoke && node.status === 'active' && (
-              <button
-                type="button"
-                className="mt-2 text-xs font-medium text-rose-600 hover:underline"
-                onClick={() => onRevoke(node.id)}
-              >
-                Revoke
-              </button>
-            )}
-          </div>
-          <MarkingTreeNodes nodes={node.children} depth={depth + 1} onRevoke={onRevoke} canRevoke={canRevoke} />
-        </li>
-      ))}
-    </ul>
-  )
+type WorkflowUser = { name: string; avatarUrl?: string; department?: string }
+
+function flattenMarkings(nodes: MarkingNode[]): MarkingNode[] {
+  const out: MarkingNode[] = []
+  const walk = (node: MarkingNode) => {
+    out.push(node)
+    node.children.forEach(walk)
+  }
+  nodes.forEach(walk)
+  return out.sort((a, b) => a.id - b.id)
 }
 
 function emptyRecipient(): MarkRecipientInput {
@@ -98,7 +65,7 @@ export function MarkingWorkflowPanel({
   onDone,
 }: {
   letter: Letter
-  users: { name: string }[]
+  users: WorkflowUser[]
   onDone: () => Promise<void>
 }) {
   const [actions, setActions] = useState<string[]>([])
@@ -184,19 +151,87 @@ export function MarkingWorkflowPanel({
     }
   }
 
-  const findActiveRrForMe = (nodes: MarkingNode[], meHint: string): number | null => {
+  const findActiveRrForMe = (nodes: MarkingNode[]): number | null => {
     for (const n of nodes) {
       if (n.status === 'active' && n.action === 'response_required') return n.id
-      const child = findActiveRrForMe(n.children, meHint)
+      const child = findActiveRrForMe(n.children)
       if (child) return child
     }
     return null
   }
 
+  const recentMarkings = useMemo(() => flattenMarkings(tree).slice(-3), [tree])
+
+  const { steps, currentStep } = useMemo(() => {
+    const byName = new Map(users.map((u) => [u.name, u]))
+    const built: AnimatedProgressStep[] = recentMarkings.map((marking) => {
+      const profile = byName.get(marking.toUser)
+      return {
+        id: String(marking.id),
+        title: marking.toUser,
+        department: profile?.department || markingActionLabel(marking.action),
+        task: markingActionLabel(marking.action),
+        taskDetail: {
+          action: marking.action,
+          actionLabel: markingActionLabel(marking.action),
+          fromStatus: marking.fromUser,
+          toStatus: marking.toUser,
+          remarks: marking.instructions,
+          performedBy: marking.fromUser,
+          assignedTo: marking.toUser,
+          createdAt: marking.createdAt,
+        },
+        avatarUrl: profile?.avatarUrl || '',
+        initials: marking.toUser
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0]?.toUpperCase() ?? '')
+          .join(''),
+      }
+    })
+    const activeIdx = recentMarkings.findIndex((m) => m.status === 'active')
+    const current =
+      activeIdx >= 0 ? activeIdx : built.length > 0 ? built.length - 1 : 0
+    return { steps: built, currentStep: current }
+  }, [recentMarkings, users])
+
+  const revokableRecent = actions.includes('revoke')
+    ? recentMarkings.filter((m) => m.status === 'active')
+    : []
+
   return (
     <CollapsibleCard title="Marking workflow" defaultOpen>
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
+
+      {!loading && (
+        <div className="mb-5">
+          <AnimatedProgressStepper
+            steps={steps}
+            currentStep={currentStep}
+            footerLabel={steps.length ? 'Current' : undefined}
+          />
+          {revokableRecent.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {revokableRecent.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className="text-xs font-medium text-rose-600 hover:underline"
+                  onClick={() =>
+                    void run(async () => {
+                      await revokeMarking(m.id)
+                    })
+                  }
+                >
+                  Revoke mark to {m.toUser}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {!loading && (
         <div className="mb-4 flex flex-wrap gap-2">
@@ -215,7 +250,7 @@ export function MarkingWorkflowPanel({
               size="sm"
               variant="outline"
               onClick={() => {
-                setRespondMarkingId(findActiveRrForMe(tree, '') ?? respondMarkingId)
+                setRespondMarkingId(findActiveRrForMe(tree) ?? respondMarkingId)
                 setDialog('respond')
               }}
             >
@@ -229,22 +264,6 @@ export function MarkingWorkflowPanel({
           )}
         </div>
       )}
-
-      <div className="mb-6">
-        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Marking history</h3>
-        {!loading && tree.length === 0 && (
-          <p className="text-xs text-slate-500">No markings yet. The initiator holds this correspondence.</p>
-        )}
-        <MarkingTreeNodes
-          nodes={tree}
-          canRevoke={actions.includes('revoke')}
-          onRevoke={(id) =>
-            void run(async () => {
-              await revokeMarking(id)
-            })
-          }
-        />
-      </div>
 
       <div>
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Notes & attachments</h3>
