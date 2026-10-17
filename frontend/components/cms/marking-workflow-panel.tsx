@@ -9,17 +9,21 @@ import {
   MessageSquare,
   Paperclip,
   Pencil,
+  Replace,
   Send,
   Trash2,
   X,
   XCircle,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { AppSelect } from '@/components/ui/app-select'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import {
   AnimatedProgressStepper,
   type AnimatedProgressStep,
 } from '@/components/ui/animated-progress-stepper'
+import { useAppData } from '@/components/app-provider'
 import { Badge } from '@/components/cms/ui'
 import { formatDateTime } from '@/lib/datetime'
 import type { Letter } from '@/services/letters'
@@ -132,6 +136,7 @@ export function MarkingWorkflowPanel({
   users: WorkflowUser[]
   onDone: () => Promise<void>
 }) {
+  const { me } = useAppData()
   const [actions, setActions] = useState<string[]>([])
   const [tree, setTree] = useState<MarkingNode[]>([])
   const [notes, setNotes] = useState<CorrespondenceNote[]>([])
@@ -282,12 +287,21 @@ export function MarkingWorkflowPanel({
     return { steps: built, currentStep: current }
   }, [recentMarkings, users])
 
-  const revokableRecent = actions.includes('revoke')
-    ? recentMarkings.filter((m) => m.status === 'active')
-    : []
+  // Only the last marker can revoke: their own active outbound with no children.
+  const revokableMarkings = useMemo(() => {
+    if (!actions.includes('revoke')) return []
+    const meName = (me.name || '').trim()
+    if (!meName) return []
+    return allMarkings.filter(
+      (m) =>
+        m.status === 'active' &&
+        m.fromUser === meName &&
+        m.children.length === 0,
+    )
+  }, [actions, allMarkings, me.name])
 
   return (
-    <CollapsibleCard title="Marking workflow" defaultOpen>
+    <CollapsibleCard title="Marking workflow" defaultExpanded>
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
 
@@ -299,24 +313,6 @@ export function MarkingWorkflowPanel({
             priorCount={priorCount}
             footerLabel={steps.length ? 'Current' : undefined}
           />
-          {revokableRecent.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {revokableRecent.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className="text-xs font-medium text-rose-600 hover:underline"
-                  onClick={() =>
-                    void run(async () => {
-                      await revokeMarking(m.id)
-                    })
-                  }
-                >
-                  Revoke mark to {m.toUser}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -332,6 +328,23 @@ export function MarkingWorkflowPanel({
               <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add note
             </Button>
           )}
+          {revokableMarkings.map((m) => (
+            <Button
+              key={m.id}
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await revokeMarking(m.id)
+                })
+              }
+            >
+              <CornerUpLeft className="mr-1 h-3.5 w-3.5" />
+              Revoke mark to {m.toUser}
+            </Button>
+          ))}
           {canAddAttachment && (
             <Button
               size="sm"
@@ -415,20 +428,22 @@ export function MarkingWorkflowPanel({
                                     <span className="font-medium text-slate-600">Response</span>
                                   ) : null}
                                   {note.editable && (
-                                    <span className="ml-auto flex gap-2">
-                                      <button
+                                    <span className="ml-auto flex flex-wrap gap-1.5">
+                                      <Button
                                         type="button"
-                                        className="inline-flex items-center gap-1 font-medium text-[#1769aa] hover:underline"
+                                        size="xs"
+                                        variant="outline"
                                         onClick={() => {
                                           setEditingNoteId(note.id)
                                           setEditingNoteBody(note.bodyText)
                                         }}
                                       >
-                                        <Pencil className="h-3 w-3" /> Edit
-                                      </button>
-                                      <button
+                                        <Pencil data-icon="inline-start" /> Edit
+                                      </Button>
+                                      <Button
                                         type="button"
-                                        className="inline-flex items-center gap-1 font-medium text-rose-600 hover:underline"
+                                        size="xs"
+                                        variant="destructive"
                                         disabled={busy}
                                         onClick={() =>
                                           void run(async () => {
@@ -436,8 +451,8 @@ export function MarkingWorkflowPanel({
                                           })
                                         }
                                       >
-                                        <Trash2 className="h-3 w-3" /> Delete
-                                      </button>
+                                        <Trash2 data-icon="inline-start" /> Delete
+                                      </Button>
                                     </span>
                                   )}
                                 </div>
@@ -508,24 +523,20 @@ export function MarkingWorkflowPanel({
                                   <p className="mt-0.5 text-[10px] text-slate-500">{a.createdBy}</p>
                                 ) : null}
                                 {a.editable ? (
-                                  <select
-                                    className="mt-1 w-full rounded border border-slate-200 px-1 py-0.5 text-[10px]"
+                                  <AppSelect
                                     value={a.attachmentKind}
                                     disabled={busy}
-                                    onChange={(e) =>
+                                    onValueChange={(v) =>
                                       void run(async () => {
                                         await updateMarkingAttachment(a.id, {
-                                          attachmentKind: e.target.value,
+                                          attachmentKind: v,
                                         })
                                       })
                                     }
-                                  >
-                                    {ATTACHMENT_KINDS.map((kind) => (
-                                      <option key={kind} value={kind}>
-                                        {kind}
-                                      </option>
-                                    ))}
-                                  </select>
+                                    options={ATTACHMENT_KINDS.map((kind) => kind)}
+                                    size="sm"
+                                    className="mt-1 w-full text-[10px]"
+                                  />
                                 ) : (
                                   <p className="mt-0.5 text-[10px] font-medium text-slate-500">
                                     {a.attachmentKind}
@@ -534,29 +545,35 @@ export function MarkingWorkflowPanel({
                                 {a.clientIp ? (
                                   <p className="mt-0.5 text-[10px] text-slate-400">IP {a.clientIp}</p>
                                 ) : null}
-                                <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1 text-[10px] font-medium">
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
                                   {a.versionId && a.previewable ? (
-                                    <button
+                                    <Button
                                       type="button"
-                                      className="inline-flex items-center gap-0.5 text-[#1769aa] hover:underline"
+                                      size="xs"
+                                      variant="outline"
                                       onClick={() => setPreviewVersionId(a.versionId)}
                                     >
-                                      <Eye className="h-3 w-3" /> Preview
-                                    </button>
+                                      <Eye data-icon="inline-start" /> Preview
+                                    </Button>
                                   ) : null}
                                   {a.versionId ? (
                                     <a
                                       href={documentDownloadUrl(a.versionId)}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="inline-flex items-center gap-0.5 text-[#1769aa] hover:underline"
+                                      className={cn(buttonVariants({ size: 'xs', variant: 'outline' }))}
                                     >
-                                      <ExternalLink className="h-3 w-3" /> Open
+                                      <ExternalLink data-icon="inline-start" className="size-3" /> Open
                                     </a>
                                   ) : null}
                                   {a.editable && a.documentId ? (
-                                    <label className="inline-flex cursor-pointer items-center gap-0.5 text-[#1769aa] hover:underline">
-                                      Replace
+                                    <label
+                                      className={cn(
+                                        buttonVariants({ size: 'xs', variant: 'outline' }),
+                                        'cursor-pointer',
+                                      )}
+                                    >
+                                      <Replace data-icon="inline-start" className="size-3" /> Replace
                                       <input
                                         type="file"
                                         className="hidden"
@@ -577,9 +594,10 @@ export function MarkingWorkflowPanel({
                                     </label>
                                   ) : null}
                                   {a.editable ? (
-                                    <button
+                                    <Button
                                       type="button"
-                                      className="inline-flex items-center gap-0.5 text-rose-600 hover:underline"
+                                      size="xs"
+                                      variant="destructive"
                                       disabled={busy}
                                       onClick={() =>
                                         void run(async () => {
@@ -587,8 +605,8 @@ export function MarkingWorkflowPanel({
                                         })
                                       }
                                     >
-                                      <Trash2 className="h-3 w-3" /> Delete
-                                    </button>
+                                      <Trash2 data-icon="inline-start" /> Delete
+                                    </Button>
                                   ) : null}
                                 </div>
                               </div>
@@ -615,9 +633,9 @@ export function MarkingWorkflowPanel({
                   href={documentDownloadUrl(previewVersionId)}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs font-medium text-[#1769aa] hover:underline"
+                  className={cn(buttonVariants({ size: 'sm', variant: 'outline' }))}
                 >
-                  Open / download
+                  <ExternalLink data-icon="inline-start" className="size-3.5" /> Open / download
                 </a>
                 <Button size="sm" variant="outline" onClick={() => setPreviewVersionId(null)}>
                   Close
@@ -642,56 +660,43 @@ export function MarkingWorkflowPanel({
               {recipients.map((row, idx) => (
                 <div key={idx} className="rounded-lg border border-slate-200 p-3">
                   <label className="block text-xs font-medium text-slate-600">User</label>
-                  <select
-                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                  <AppSelect
                     value={row.toUser}
-                    onChange={(e) => {
+                    onValueChange={(v) => {
                       const next = [...recipients]
-                      next[idx] = { ...row, toUser: e.target.value }
+                      next[idx] = { ...row, toUser: v }
                       setRecipients(next)
                     }}
-                  >
-                    <option value="">Select user…</option>
-                    {users.map((u) => (
-                      <option key={u.name} value={u.name}>
-                        {u.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: '', label: 'Select user…' },
+                      ...users.map((u) => ({ value: u.name, label: u.name })),
+                    ]}
+                    className="mt-1 w-full text-sm"
+                  />
                   <label className="mt-2 block text-xs font-medium text-slate-600">Action</label>
-                  <select
-                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                  <AppSelect
                     value={row.action}
-                    onChange={(e) => {
+                    onValueChange={(v) => {
                       const next = [...recipients]
-                      next[idx] = { ...row, action: e.target.value as MarkingAction }
+                      next[idx] = { ...row, action: v as MarkingAction }
                       setRecipients(next)
                     }}
-                  >
-                    {MARKING_ACTIONS.map((a) => (
-                      <option key={a} value={a}>
-                        {ACTION_LABELS[a]}
-                      </option>
-                    ))}
-                  </select>
+                    options={MARKING_ACTIONS.map((a) => ({ value: a, label: ACTION_LABELS[a] }))}
+                    className="mt-1 w-full text-sm"
+                  />
                   {row.action === 'response_required' && (
                     <>
                       <label className="mt-2 block text-xs font-medium text-slate-600">Response type</label>
-                      <select
-                        className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                      <AppSelect
                         value={row.responseType || 'draft_letter'}
-                        onChange={(e) => {
+                        onValueChange={(v) => {
                           const next = [...recipients]
-                          next[idx] = { ...row, responseType: e.target.value as ResponseType }
+                          next[idx] = { ...row, responseType: v as ResponseType }
                           setRecipients(next)
                         }}
-                      >
-                        {RESPONSE_TYPES.map((t) => (
-                          <option key={t} value={t}>
-                            {RESPONSE_TYPE_LABELS[t]}
-                          </option>
-                        ))}
-                      </select>
+                        options={RESPONSE_TYPES.map((t) => ({ value: t, label: RESPONSE_TYPE_LABELS[t] }))}
+                        className="mt-1 w-full text-sm"
+                      />
                       <label className="mt-2 block text-xs font-medium text-slate-600">Due date</label>
                       <input
                         type="date"
@@ -720,13 +725,15 @@ export function MarkingWorkflowPanel({
                 </div>
               ))}
             </div>
-            <button
+            <Button
               type="button"
-              className="mt-2 text-xs font-medium text-sky-700"
+              size="xs"
+              variant="outline"
+              className="mt-2"
               onClick={() => setRecipients([...recipients, emptyRecipient()])}
             >
               + Add recipient
-            </button>
+            </Button>
             <label className="mt-3 block text-xs font-medium text-slate-600">Remarks</label>
             <textarea
               className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
@@ -833,17 +840,12 @@ export function MarkingWorkflowPanel({
               <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-[8rem] flex-1">
                   <label className="block text-[11px] font-medium text-slate-500">Type</label>
-                  <select
-                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                  <AppSelect
                     value={defaultKind}
-                    onChange={(e) => setDefaultKind(e.target.value as AttachmentKind)}
-                  >
-                    {ATTACHMENT_KINDS.map((kind) => (
-                      <option key={kind} value={kind}>
-                        {kind}
-                      </option>
-                    ))}
-                  </select>
+                    onValueChange={(v) => setDefaultKind(v as AttachmentKind)}
+                    options={ATTACHMENT_KINDS.map((kind) => kind)}
+                    className="mt-1 w-full text-sm"
+                  />
                 </div>
                 <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
                   <Paperclip className="h-3.5 w-3.5" />
@@ -872,33 +874,30 @@ export function MarkingWorkflowPanel({
                 <ul className="mt-2 space-y-1.5">
                   {pendingFiles.map((item) => (
                     <li key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
-                      <select
-                        className="rounded border border-slate-200 px-1.5 py-1"
+                      <AppSelect
                         value={item.kind}
-                        onChange={(e) => {
-                          const kind = e.target.value as AttachmentKind
+                        onValueChange={(v) => {
+                          const kind = v as AttachmentKind
                           setPendingFiles((prev) =>
                             prev.map((row) => (row.id === item.id ? { ...row, kind } : row)),
                           )
                         }}
-                      >
-                        {ATTACHMENT_KINDS.map((kind) => (
-                          <option key={kind} value={kind}>
-                            {kind}
-                          </option>
-                        ))}
-                      </select>
+                        options={ATTACHMENT_KINDS.map((kind) => kind)}
+                        size="sm"
+                        className="min-w-24"
+                      />
                       <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
-                      <button
+                      <Button
                         type="button"
-                        className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
+                        size="icon-xs"
+                        variant="ghost"
                         onClick={() =>
                           setPendingFiles((prev) => prev.filter((row) => row.id !== item.id))
                         }
                         aria-label="Remove file"
                       >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                        <X />
+                      </Button>
                     </li>
                   ))}
                 </ul>

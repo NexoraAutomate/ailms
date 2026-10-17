@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppData } from '@/components/app-provider'
 import { AIAdvisoryNote } from '@/components/ai/common'
+import { AppSelect } from '@/components/ui/app-select'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
@@ -359,69 +360,71 @@ export function RegistrationReview({
 
   const renderFieldControl = (key: EditableField) => {
     const value = form[key]
-    const common = 'h-10 rounded-md border border-slate-200 bg-white px-3 text-xs disabled:bg-slate-50'
+    const common = 'h-10 text-xs'
     if (key === 'type') {
       return (
-        <select value={value} disabled={!editable || busy} onChange={(e) => setField(key, e.target.value)} className={common}>
-          <option value="">Select…</option>
-          {letterTypes.map((item) => (
-            <option key={item}>{item}</option>
-          ))}
-        </select>
+        <AppSelect
+          value={value}
+          disabled={!editable || busy}
+          onValueChange={(v) => setField(key, v)}
+          options={[{ value: '', label: 'Select…' }, ...letterTypes]}
+          className={common}
+        />
       )
     }
     if (key === 'priority') {
       return (
-        <select value={value} disabled={!editable || busy} onChange={(e) => setField(key, e.target.value)} className={common}>
-          <option value="">Select…</option>
-          {priorities.map((item) => (
-            <option key={item}>{item}</option>
-          ))}
-        </select>
+        <AppSelect
+          value={value}
+          disabled={!editable || busy}
+          onValueChange={(v) => setField(key, v)}
+          options={[{ value: '', label: 'Select…' }, ...priorities]}
+          className={common}
+        />
       )
     }
     if (key === 'confidentiality') {
       return (
-        <select value={value} disabled={!editable || busy} onChange={(e) => setField(key, e.target.value)} className={common}>
-          <option value="">Select…</option>
-          {confidentiality.map((item) => (
-            <option key={item}>{item}</option>
-          ))}
-        </select>
+        <AppSelect
+          value={value}
+          disabled={!editable || busy}
+          onValueChange={(v) => setField(key, v)}
+          options={[{ value: '', label: 'Select…' }, ...confidentiality]}
+          className={common}
+        />
       )
     }
     if (key === 'department') {
       return (
-        <select value={value} disabled={!editable || busy} onChange={(e) => setField(key, e.target.value)} className={common}>
-          <option value="">Select…</option>
-          {departments.map((d) => (
-            <option key={d.code} value={d.name}>
-              {d.name}
-            </option>
-          ))}
-        </select>
+        <AppSelect
+          value={value}
+          disabled={!editable || busy}
+          onValueChange={(v) => setField(key, v)}
+          options={[{ value: '', label: 'Select…' }, ...departments.map((d) => ({ value: d.name, label: d.name }))]}
+          className={common}
+        />
       )
     }
     if (key === 'assignedTo') {
       return (
-        <select value={value} disabled={!editable || busy} onChange={(e) => setField(key, e.target.value)} className={common}>
-          <option value="">Select…</option>
-          {users.map((u) => (
-            <option key={u.username} value={u.name}>
-              {u.name}
-            </option>
-          ))}
-        </select>
+        <AppSelect
+          value={value}
+          disabled={!editable || busy}
+          onValueChange={(v) => setField(key, v)}
+          options={[{ value: '', label: 'Select…' }, ...users.map((u) => ({ value: u.name, label: u.name }))]}
+          className={common}
+        />
       )
     }
     if (key === 'documentCategory') {
       return (
-        <select value={value} disabled={!editable || busy} onChange={(e) => setField(key, e.target.value)} className={common}>
-          <option value="">Select…</option>
-          {documentTypes.map((item) => (
-            <option key={item}>{item}</option>
-          ))}
-        </select>
+        <AppSelect
+          value={value}
+          disabled={!editable || busy}
+          onValueChange={(v) => setField(key, v)}
+          options={[{ value: '', label: 'Select…' }, ...documentTypes]}
+          className={common}
+        />
       )
     }
     if (DATE_FIELDS.has(key)) {
@@ -574,15 +577,16 @@ export function RegistrationReview({
                     ))}
                     {evidence.length > 0 && (
                       <div className="text-[11px] text-slate-500">
-                        <button
+                        <Button
                           type="button"
-                          className="font-semibold text-[#1769aa]"
+                          size="xs"
+                          variant="outline"
                           onClick={() =>
                             setExpandedEvidence((current) => ({ ...current, [key]: !current[key] }))
                           }
                         >
                           {expandedEvidence[key] ? 'Hide source' : 'Show source'} ({evidence.length})
-                        </button>
+                        </Button>
                         {expandedEvidence[key] && (
                           <ul className="mt-1 space-y-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5">
                             {evidence.map((item, index) => (

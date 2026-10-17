@@ -2,6 +2,7 @@
 
 import { useMemo, type CSSProperties } from 'react'
 import { Lock } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/cms/ui'
 import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import { LetterRowActions } from '@/components/cms/letter-row-actions'
@@ -99,16 +100,18 @@ export function LetterTable({
                   <span className="text-xs font-bold text-slate-400">{l.number}</span>
                 </div>
               ) : (
-                <button
+                <Button
                   type="button"
+                  size="xs"
+                  variant="outline"
+                  className="h-auto px-2 py-0.5 font-bold"
                   onClick={(e) => {
                     e.stopPropagation()
                     onOpen(l.id)
                   }}
-                  className="text-left text-xs font-bold text-[#1769aa] hover:underline"
                 >
                   {l.number}
-                </button>
+                </Button>
               )}
               <p className="mt-1 text-[11px] text-slate-400">{l.letterDate}</p>
             </>

@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { AISearchBanner } from '@/components/ai/pages'
 import { Button } from '@/components/ui/button'
+import { AppSelect } from '@/components/ui/app-select'
 import { Card, PageTitle } from '@/components/cms/ui'
 import { LetterDeleteDialog } from '@/components/cms/letter-delete-dialog'
 import { LetterTable } from '@/components/cms/letter-table'
@@ -154,45 +155,78 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
       />
       {!isCatalog && <AISearchBanner result={aiSearch} onClear={onClearAi} go={go} />}
       <div className="mb-4 flex flex-wrap gap-2">
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-          <option>All</option><option>Routine</option><option>Important</option><option>Urgent</option>
-        </select>
+        <AppSelect
+          value={filter}
+          onValueChange={setFilter}
+          options={['All', 'Routine', 'Important', 'Urgent']}
+          className="min-w-32"
+        />
         <Button variant="ghost" size="sm" onClick={() => setFilter('All')}>Clear</Button>
       </div>
       {selectable && selectedIds.length > 0 && (
         <Card className="mb-4 flex flex-wrap items-center gap-2 p-3">
           <span className="text-xs font-semibold text-slate-600">{selectedIds.length} selected</span>
-          <select value={bulkOp} onChange={(e) => { setBulkOp(e.target.value); setBulkValue('') }} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
-            <option value="assign">Assign</option>
-            <option value="reassign">Reassign</option>
-            <option value="change_department">Change department</option>
-            <option value="change_priority">Change priority</option>
-            <option value="change_status">Change status</option>
-            <option value="archive">{isSoftArchive ? 'Restore from archive' : 'Archive'}</option>
-          </select>
+          <AppSelect
+            value={bulkOp}
+            onValueChange={(v) => { setBulkOp(v); setBulkValue('') }}
+            options={[
+              { value: 'assign', label: 'Assign' },
+              { value: 'reassign', label: 'Reassign' },
+              { value: 'change_department', label: 'Change department' },
+              { value: 'change_priority', label: 'Change priority' },
+              { value: 'change_status', label: 'Change status' },
+              { value: 'archive', label: isSoftArchive ? 'Restore from archive' : 'Archive' },
+            ]}
+            size="sm"
+            className="min-w-36"
+          />
           {['assign', 'reassign'].includes(bulkOp) && (
-            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
-              <option value="">User…</option>
-              {users.map((u) => <option key={u.username} value={u.name}>{u.name}</option>)}
-            </select>
+            <AppSelect
+              value={bulkValue}
+              onValueChange={setBulkValue}
+              options={[
+                { value: '', label: 'User…' },
+                ...users.map((u) => ({ value: u.name, label: u.name })),
+              ]}
+              size="sm"
+              className="min-w-32"
+            />
           )}
           {bulkOp === 'change_department' && (
-            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
-              <option value="">Department…</option>
-              {departments.map((d) => <option key={d.code} value={d.name}>{d.name}</option>)}
-            </select>
+            <AppSelect
+              value={bulkValue}
+              onValueChange={setBulkValue}
+              options={[
+                { value: '', label: 'Department…' },
+                ...departments.map((d) => ({ value: d.name, label: d.name })),
+              ]}
+              size="sm"
+              className="min-w-32"
+            />
           )}
           {bulkOp === 'change_priority' && (
-            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
-              <option value="">Priority…</option>
-              {(masterData.Priorities ?? ['Routine', 'Important', 'Urgent']).map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <AppSelect
+              value={bulkValue}
+              onValueChange={setBulkValue}
+              options={[
+                { value: '', label: 'Priority…' },
+                ...(masterData.Priorities ?? ['Routine', 'Important', 'Urgent']).map((p) => ({ value: p, label: p })),
+              ]}
+              size="sm"
+              className="min-w-32"
+            />
           )}
           {bulkOp === 'change_status' && (
-            <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs">
-              <option value="">Status…</option>
-              {(masterData.Statuses ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <AppSelect
+              value={bulkValue}
+              onValueChange={setBulkValue}
+              options={[
+                { value: '', label: 'Status…' },
+                ...(masterData.Statuses ?? []).map((s) => ({ value: s, label: s })),
+              ]}
+              size="sm"
+              className="min-w-32"
+            />
           )}
           <Button size="sm" onClick={runBulk}>Apply</Button>
           {isAdmin && (

@@ -18,6 +18,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react'
+import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Card } from '@/components/cms/ui'
@@ -198,22 +199,29 @@ export function LetterRowActions({
                 <span className="text-xs font-semibold text-slate-600">
                   {pending === 'escalate' ? 'Escalate to' : pending === 'submit_for_approval' ? 'Reviewer' : pending === 'forward' ? 'Forward to' : 'Assign to'}
                 </span>
-                <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                  <option value="">{pending === 'forward' ? 'Keep current assignee' : 'Select…'}</option>
-                  {users.map((user) => (
-                    <option key={user.name} value={user.name}>
-                      {user.name}{user.department ? ` · ${user.department}` : ''}
-                    </option>
-                  ))}
-                </select>
+                <AppSelect
+                  value={assignedTo}
+                  onValueChange={setAssignedTo}
+                  options={[
+                    { value: '', label: pending === 'forward' ? 'Keep current assignee' : 'Select…' },
+                    ...users.map((user) => ({
+                      value: user.name,
+                      label: user.name + (user.department ? ` · ${user.department}` : ''),
+                    })),
+                  ]}
+                  className="h-10 text-xs"
+                />
               </label>
             )}
             {pending === 'escalate' && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">Escalation level</span>
-                <select value={level} onChange={(e) => setLevel(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                  {['Level 1', 'Level 2', 'Level 3'].map((item) => <option key={item}>{item}</option>)}
-                </select>
+                <AppSelect
+                  value={level}
+                  onValueChange={setLevel}
+                  options={['Level 1', 'Level 2', 'Level 3']}
+                  className="h-10 text-xs"
+                />
               </label>
             )}
             <label className="flex flex-col gap-1">
@@ -298,24 +306,24 @@ function EditLetterDialog({
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">From</span><input value={from} onChange={(e) => setFrom(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">To</span><input value={to} onChange={(e) => setTo(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Department</span>
-            <select value={department} onChange={(e) => setDepartment(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-              {deptNames.map((name) => <option key={name}>{name}</option>)}
-            </select>
+            <AppSelect value={department} onValueChange={setDepartment} options={deptNames} className="h-10 text-xs" />
           </label>
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Priority</span>
-            <select value={priority} onChange={(e) => setPriority(e.target.value as Priority)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-              {['Routine', 'Important', 'Urgent'].map((item) => <option key={item}>{item}</option>)}
-            </select>
+            <AppSelect value={priority} onValueChange={(v) => setPriority(v as Priority)} options={['Routine', 'Important', 'Urgent']} className="h-10 text-xs" />
           </label>
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Assigned to</span>
-            <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-              <option value="">Unassigned</option>
-              {users.map((user) => (
-                <option key={user.name} value={user.name}>
-                  {user.name}{user.department ? ` · ${user.department}` : ''}
-                </option>
-              ))}
-            </select>
+            <AppSelect
+              value={assignedTo}
+              onValueChange={setAssignedTo}
+              options={[
+                { value: '', label: 'Unassigned' },
+                ...users.map((user) => ({
+                  value: user.name,
+                  label: user.name + (user.department ? ` · ${user.department}` : ''),
+                })),
+              ]}
+              className="h-10 text-xs"
+            />
           </label>
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Due date</span><input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
           <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Action required</span><input value={actionRequired} onChange={(e) => setActionRequired(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>

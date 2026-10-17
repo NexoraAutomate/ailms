@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { AppSelect } from '@/components/ui/app-select'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import { FormDialog } from '@/components/cms/management-table'
@@ -35,9 +36,9 @@ export function MeetingsPage({ go }: { go: (p: string) => void }) {
         header: 'Title',
         sortValue: (m) => m.title,
         cell: (m) => (
-          <button type="button" className="font-semibold text-[#1769aa]" onClick={() => go(`meeting:${m.id}`)}>
+          <Button type="button" variant="outline" size="xs" className="h-auto max-w-full truncate px-2 py-0.5 font-semibold" onClick={() => go(`meeting:${m.id}`)}>
             {m.title}
-          </button>
+          </Button>
         ),
       },
       { id: 'date', header: 'Date', sortValue: (m) => m.date, cell: (m) => m.date },
@@ -126,7 +127,7 @@ export function MeetingDetailPage({ id, go, letters }: { id: string; go: (p: str
 
   return (
     <>
-      <button type="button" onClick={() => go('Meetings')} className="mb-4 text-xs font-semibold text-[#1769aa]">← Back to meetings</button>
+      <Button variant="outline" size="xs" className="mb-4" onClick={() => go('Meetings')}>← Back to meetings</Button>
       <PageTitle title={meeting.title} description={`${meeting.date} · ${meeting.startTime}–${meeting.endTime} · ${meeting.location || 'No location'}`} />
       <div className="grid gap-5 lg:grid-cols-2">
         <Card className="p-5 text-xs">
@@ -140,16 +141,22 @@ export function MeetingDetailPage({ id, go, letters }: { id: string; go: (p: str
           {meeting.letterIds.map((lid) => {
             const letter = letters.find((l) => l.id === lid)
             return (
-              <button key={lid} type="button" className="mb-1 block text-[#1769aa]" onClick={() => go(lid)}>
+              <Button key={lid} variant="outline" size="xs" className="mb-1 h-auto max-w-full justify-start truncate px-2 py-1 text-left" onClick={() => go(lid)}>
                 {letter?.number ?? lid} · {letter?.subject ?? ''}
-              </button>
+              </Button>
             )
           })}
           <div className="mt-3 flex gap-2">
-            <select value={linkLetterId} onChange={(e) => setLinkLetterId(e.target.value)} className="h-9 flex-1 rounded-md border border-slate-200 px-2">
-              <option value="">Link letter…</option>
-              {letters.map((l) => <option key={l.id} value={l.id}>{l.number}</option>)}
-            </select>
+            <AppSelect
+              value={linkLetterId}
+              onValueChange={setLinkLetterId}
+              options={[
+                { value: '', label: 'Link letter…' },
+                ...letters.map((l) => ({ value: l.id, label: l.number })),
+              ]}
+              size="sm"
+              className="flex-1"
+            />
             <Button size="sm" onClick={async () => { if (!linkLetterId) return; await linkMeetingLetter(id, linkLetterId); setLinkLetterId(''); await load() }}>Link</Button>
           </div>
         </Card>

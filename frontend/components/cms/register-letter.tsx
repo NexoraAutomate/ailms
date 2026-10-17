@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { Card, PageTitle } from '@/components/cms/ui'
 import { RegistrationUpload } from '@/components/ai/registration-upload'
+import { AppSelect } from '@/components/ui/app-select'
 import { createRelation, listRelationTypes } from '@/services/correspondence'
 import { uploadLetterDocument } from '@/services/documents'
 import type { Letter, LetterStatus } from '@/services/letters'
@@ -172,14 +173,14 @@ export function Register({ go }: { go: (p: string) => void }) {
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Letter number *</span><input value={form.number} onChange={(e) => set('number', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Letter date *</span><input type="date" value={form.letterDate} onChange={(e) => set('letterDate', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Received date *</span><input type="date" value={form.receivedDate} onChange={(e) => set('receivedDate', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Letter type *</span><select value={form.type} onChange={(e) => set('type', e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">{(masterData['Letter Types'] ?? ['Incoming', 'Outgoing']).map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Letter type *</span><AppSelect value={form.type} onValueChange={(v) => set('type', v)} options={(masterData['Letter Types'] ?? ['Incoming', 'Outgoing'])} className="h-10 text-xs" /></label>
               <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Subject *</span><input value={form.subject} onChange={(e) => set('subject', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Priority</span><select value={form.priority} onChange={(e) => set('priority', e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">{(masterData.Priorities ?? ['Routine', 'Important', 'Urgent']).map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Confidentiality</span><select value={form.confidentiality} onChange={(e) => set('confidentiality', e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">{(masterData['Confidentiality Levels'] ?? ['Normal']).map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Priority</span><AppSelect value={form.priority} onValueChange={(v) => set('priority', v)} options={(masterData.Priorities ?? ['Routine', 'Important', 'Urgent'])} className="h-10 text-xs" /></label>
+              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Confidentiality</span><AppSelect value={form.confidentiality} onValueChange={(v) => set('confidentiality', v)} options={(masterData['Confidentiality Levels'] ?? ['Normal'])} className="h-10 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">From organization</span><input list="orgs" value={form.from} onChange={(e) => set('from', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">To organization</span><input list="orgs" value={form.to} onChange={(e) => set('to', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Department</span><select value={form.department} onChange={(e) => set('department', e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs"><option value="">Select...</option>{departments.map((d) => <option key={d.code}>{d.name}</option>)}</select></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Assigned to</span><select value={form.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs"><option value="">Select...</option>{users.map((u) => <option key={u.username}>{u.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Department</span><AppSelect value={form.department} onValueChange={(v) => set('department', v)} options={[{ value: '', label: 'Select...' }, ...departments.map((d) => ({ value: d.name, label: d.name }))]} className="h-10 text-xs" /></label>
+              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Assigned to</span><AppSelect value={form.assignedTo} onValueChange={(v) => set('assignedTo', v)} options={[{ value: '', label: 'Select...' }, ...users.map((u) => ({ value: u.name, label: u.name }))]} className="h-10 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Due date</span><input type="date" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
               <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Action required</span><input value={form.actionRequired} onChange={(e) => set('actionRequired', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
               <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Initial remarks</span><textarea rows={3} value={form.remarks} onChange={(e) => set('remarks', e.target.value)} className="rounded-md border border-slate-200 px-3 py-2 text-xs" /></label>
@@ -190,9 +191,12 @@ export function Register({ go }: { go: (p: string) => void }) {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <label className="flex flex-col gap-1.5">
                   <span className="text-xs font-semibold text-slate-600">Document type</span>
-                  <select value={letterCopyType} onChange={(e) => setLetterCopyType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                    {documentTypes.map((item) => <option key={item}>{item}</option>)}
-                  </select>
+                  <AppSelect
+                    value={letterCopyType}
+                    onValueChange={setLetterCopyType}
+                    options={documentTypes}
+                    className="h-10 text-xs"
+                  />
                 </label>
                 <label className="flex flex-col gap-1.5 sm:col-span-2">
                   <span className="text-xs font-semibold text-slate-600">Upload letter copy</span>
@@ -206,16 +210,24 @@ export function Register({ go }: { go: (p: string) => void }) {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <label className="flex flex-col gap-1.5 sm:col-span-2">
                   <span className="text-xs font-semibold text-slate-600">Reference letter</span>
-                  <select value={refLetterId} onChange={(e) => setRefLetterId(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                    <option value="">Select letter…</option>
-                    {letters.map((l) => <option key={l.id} value={l.id}>{l.number} · {l.subject}</option>)}
-                  </select>
+                  <AppSelect
+                    value={refLetterId}
+                    onValueChange={setRefLetterId}
+                    options={[
+                      { value: '', label: 'Select letter…' },
+                      ...letters.map((l) => ({ value: l.id, label: `${l.number} · ${l.subject}` })),
+                    ]}
+                    className="h-10 text-xs"
+                  />
                 </label>
                 <label className="flex flex-col gap-1.5">
                   <span className="text-xs font-semibold text-slate-600">Relationship</span>
-                  <select value={refRelationshipType} onChange={(e) => setRefRelationshipType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                    {relationTypes.map((t) => <option key={t}>{t}</option>)}
-                  </select>
+                  <AppSelect
+                    value={refRelationshipType}
+                    onValueChange={setRefRelationshipType}
+                    options={relationTypes}
+                    className="h-10 text-xs"
+                  />
                 </label>
                 <label className="flex flex-col gap-1.5">
                   <span className="text-xs font-semibold text-slate-600">Reference copy (optional)</span>

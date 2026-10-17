@@ -5,6 +5,7 @@ import { Paperclip, X } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
+import { AppSelect } from '@/components/ui/app-select'
 import { Card } from '@/components/cms/ui'
 import { replyWorkflowAction, workflowStatus } from '@/services/letter-actions'
 import { uploadLetterDocument, formatFileSize } from '@/services/documents'
@@ -194,16 +195,13 @@ export function ReplyDialog({
           </p>
           <label className="mb-3 flex flex-col gap-1">
             <span className="text-xs font-semibold text-slate-600">Attachment type</span>
-            <select
+            <AppSelect
               value={documentType}
-              onChange={(e) => setDocumentType(e.target.value)}
-              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs"
+              onValueChange={setDocumentType}
+              options={docTypes}
               disabled={busy}
-            >
-              {docTypes.map((type) => (
-                <option key={type}>{type}</option>
-              ))}
-            </select>
+              className="h-10 text-xs"
+            />
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-slate-600">Add files</span>
@@ -230,15 +228,17 @@ export function ReplyDialog({
                     {file.name}
                     <span className="text-slate-400"> · {formatFileSize(file.size)}</span>
                   </span>
-                  <button
+                  <Button
                     type="button"
-                    className="shrink-0 text-slate-400 hover:text-red-600"
+                    size="icon-xs"
+                    variant="ghost"
+                    className="shrink-0"
                     onClick={() => removeFile(index)}
                     disabled={busy}
                     aria-label={`Remove ${file.name}`}
                   >
-                    <X className="size-3.5" />
-                  </button>
+                    <X />
+                  </Button>
                 </li>
               ))}
             </ul>

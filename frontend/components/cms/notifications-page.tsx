@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Bell, Check } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { AppSelect } from '@/components/ui/app-select'
 import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 
@@ -60,10 +61,13 @@ export function Notifications({ go }: { go: (p: string) => void }) {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => setView('all')} className={appTabClass(view === 'all')}>All notifications</button>
         <button type="button" onClick={() => setView('unread')} className={appTabClass(view === 'unread')}>Unread only</button>
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-xs">
-          <option>All</option>
-          {types.map((t) => <option key={t}>{t}</option>)}
-        </select>
+        <AppSelect
+          value={typeFilter}
+          onValueChange={setTypeFilter}
+          options={['All', ...types]}
+          size="sm"
+          className="min-w-32"
+        />
       </div>
       <AppTabPanel tabKey={`${view}-${typeFilter}`}>
       <Card>

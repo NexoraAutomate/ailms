@@ -238,6 +238,20 @@ class MarkingWorkflowTest(unittest.TestCase):
             revoke_marking(self.db, marking=parent, actor_name=self.initiator.name)
         self.assertEqual(ctx.exception.status_code, 409)
 
+        # Only the last marker (user A → user B) may revoke; initiator no longer can.
+        self.assertNotIn(
+            "revoke",
+            available_marking_actions(self.db, self.letter, self.initiator.name),
+        )
+        self.assertIn(
+            "revoke",
+            available_marking_actions(self.db, self.letter, self.user_a.name),
+        )
+        self.assertNotIn(
+            "revoke",
+            available_marking_actions(self.db, self.letter, self.user_b.name),
+        )
+
         child = self.db.query(Marking).filter(Marking.parent_marking_id == parent.id).one()
         revoke_marking(self.db, marking=child, actor_name=self.user_a.name, client_ip="10.0.0.1")
         self.db.commit()

@@ -19,6 +19,7 @@ import {
   UserX,
   Users,
 } from 'lucide-react'
+import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
 import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { IconActionButton } from '@/components/ui/icon-action-button'
@@ -122,7 +123,7 @@ function Modal({ title, subtitle, onClose, children }: { title: string; subtitle
             <h3 className="text-sm font-bold text-slate-800">{title}</h3>
             {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
           </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close">✕</Button>
         </div>
         <div className="p-5">{children}</div>
       </div>
@@ -555,11 +556,12 @@ export function SettingsHub({
           </MiniDashboard>
           <div className="mb-4 flex flex-wrap gap-2">
             <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search users…" className="h-10 min-w-[200px] flex-1 rounded-md border border-slate-200 px-3 text-xs" />
-            <select value={userStatus} onChange={(e) => setUserStatus(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-              <option>All statuses</option>
-              <option>Active</option>
-              <option>Inactive</option>
-            </select>
+            <AppSelect
+              value={userStatus}
+              onValueChange={setUserStatus}
+              options={['All statuses', 'Active', 'Inactive']}
+              className="min-w-32"
+            />
             <Button onClick={openAddUser}>+ Add User</Button>
           </div>
           <DataTable
@@ -599,9 +601,12 @@ export function SettingsHub({
             <div className="flex flex-wrap items-end gap-3">
               <label className="flex flex-col gap-1 text-xs">
                 <span className="font-semibold text-slate-600">Role</span>
-                <select value={selectedRoleId ?? ''} onChange={(e) => setSelectedRoleId(Number(e.target.value))} className="h-10 min-w-[200px] rounded-md border border-slate-200 px-3">
-                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
+                <AppSelect
+                  value={selectedRoleId ? String(selectedRoleId) : ''}
+                  onValueChange={(v) => setSelectedRoleId(Number(v))}
+                  options={roles.map((r) => ({ value: String(r.id), label: r.name }))}
+                  className="min-w-[200px]"
+                />
               </label>
               <label className="flex min-w-[280px] flex-1 flex-col gap-1 text-xs">
                 <span className="font-semibold text-slate-600">Description</span>
@@ -626,9 +631,12 @@ export function SettingsHub({
       {tab === 'status' && (
         <>
           <div className="mb-4 flex flex-wrap gap-2">
-            <select value={statusCategory} onChange={(e) => setStatusCategory(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-              {statusCategories.map((c) => <option key={c}>{c}</option>)}
-            </select>
+            <AppSelect
+              value={statusCategory}
+              onValueChange={setStatusCategory}
+              options={statusCategories}
+              className="min-w-36"
+            />
             <Button onClick={() => go('Import Center')}>Import CSV</Button>
             <Button onClick={async () => {
               const name = prompt('Status name'); if (!name) return
@@ -826,9 +834,12 @@ export function SettingsHub({
               <label className="block"><span className="font-semibold">Password <span className="text-red-500">*</span></span><input type="password" placeholder="Enter password" value={editUser.password || ''} onChange={(e) => setEditUser({ ...editUser, password: e.target.value })} className="mt-1 h-10 w-full rounded-md border px-3" required /></label>
             )}
             <label className="block"><span className="font-semibold">Role</span>
-              <select value={editUser.role} onChange={(e) => setEditUser({ ...editUser, role: e.target.value })} className="mt-1 h-10 w-full rounded-md border px-3">
-                {roles.map((r) => <option key={r.id}>{r.name}</option>)}
-              </select>
+              <AppSelect
+                value={editUser.role}
+                onValueChange={(v) => setEditUser({ ...editUser, role: v })}
+                options={roles.map((r) => r.name)}
+                className="mt-1 w-full"
+              />
             </label>
             <div className="flex items-center justify-between rounded-md border border-slate-100 p-3">
               <div><p className="font-semibold">Account active</p><p className="text-slate-500">Inactive users cannot sign in until reactivated</p></div>

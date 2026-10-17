@@ -45,6 +45,14 @@ import {
 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { UserAvatar } from '@/components/ui/user-avatar'
 import { Logo } from '@/components/cms/ui'
 import { useCmsSearch } from '@/components/cms/search-context'
@@ -146,20 +154,22 @@ function Sidebar({
           </div>
         )}
         {mobile ? (
-          <button type="button" className="ml-auto rounded-md p-1.5 text-slate-500 hover:bg-slate-50" onClick={() => setMobile(false)} aria-label="Close menu">
+          <Button type="button" variant="ghost" size="icon-sm" className="ml-auto" onClick={() => setMobile(false)} aria-label="Close menu">
             <X className="size-5" />
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             type="button"
-            className={`rounded-md p-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 ${folded ? '' : 'ml-auto'}`}
+            variant="ghost"
+            size="icon-sm"
+            className={folded ? '' : 'ml-auto'}
             onClick={onToggleExpanded}
             aria-label={expanded ? 'Fold sidebar' : 'Expand sidebar'}
             aria-pressed={expanded}
             title={expanded ? 'Fold sidebar' : 'Expand sidebar'}
           >
             {expanded ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />}
-          </button>
+          </Button>
         )}
       </div>
       <nav className={`flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden ${folded ? 'p-2' : 'p-4'}`}>
@@ -307,9 +317,9 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
 
   return (
     <header className="sticky top-0 z-10 flex shrink-0 min-h-[72px] items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-7">
-      <button className="lg:hidden" onClick={() => setMobile(true)}>
+      <Button type="button" variant="ghost" size="icon-sm" className="lg:hidden" onClick={() => setMobile(true)} aria-label="Open menu">
         <Menu className="size-5 text-slate-600" />
-      </button>
+      </Button>
       <div className="hidden min-w-0 flex-1 md:block">
         <p className="text-xs text-slate-400" suppressHydrationWarning>
           {today}
@@ -331,91 +341,80 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
           className="h-10 w-full rounded-md border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs outline-none ring-blue-500 focus:ring-2"
         />
       </div>
-      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-100" onClick={toggleFullscreen} title="Full screen">
+      <Button type="button" variant="ghost" size="icon-sm" onClick={toggleFullscreen} title="Full screen" aria-label="Full screen">
         <Maximize2 className="size-5" />
-      </button>
-      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-100" onClick={toggleTheme} title="Toggle theme">
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
         {dark ? <Sun className="size-5" /> : <Moon className="size-5" />}
-      </button>
-      <button type="button" className="rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={() => go('AI Assistant')} title="AI Assistant">
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" onClick={() => go('AI Assistant')} title="AI Assistant" aria-label="AI Assistant">
         <Sparkles className="size-5" />
-      </button>
-      <button type="button" className="relative rounded-md p-2 text-slate-500 hover:bg-slate-50" onClick={() => go('Notifications')}>
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" className="relative" onClick={() => go('Notifications')} aria-label="Notifications">
         <Bell className="size-5" />
         {unreadCount > 0 && (
           <span className="absolute right-0.5 top-0.5 min-w-[16px] rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
-      </button>
-      <div className="relative border-l border-slate-200 pl-3">
-        <button type="button" className="flex items-center gap-2 rounded-md p-1 hover:bg-slate-50" onClick={() => setMenuOpen((v) => !v)}>
-          <UserAvatar name={me.name} avatarUrl={me.avatarUrl} size="sm" />
-          <span className="hidden text-left sm:block">
-            <span className="block text-xs font-semibold text-slate-700">{me.name}</span>
-            <span className="block text-[10px] font-medium text-[#2563eb]">{me.role}</span>
-          </span>
-        </button>
-        {menuOpen && (
-          <>
-            <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
-            <div className="absolute right-0 top-full z-30 mt-2 w-56 rounded-lg border border-slate-200 bg-white py-2 shadow-lg">
-              <div className="border-b border-slate-100 px-4 pb-2">
-                <p className="text-xs font-bold text-slate-800">{me.name}</p>
-                <p className="text-[11px] text-slate-400">{me.username || settings.currentUser || me.name}</p>
-              </div>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                disabled={avatarBusy || !me.id}
-                onClick={() => avatarInputRef.current?.click()}
-              >
-                <Camera className="size-4" /> {avatarBusy ? 'Uploading…' : me.avatarUrl ? 'Update profile picture' : 'Upload profile picture'}
-              </button>
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] ?? null
-                  e.target.value = ''
-                  void handleAvatarPick(file)
-                }}
-              />
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
-                onClick={() => {
-                  setMenuOpen(false)
-                  go('Settings:users')
-                }}
-              >
-                <Users className="size-4" /> View profile
-              </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
-                onClick={() => {
-                  setMenuOpen(false)
-                  setPwdError(null)
-                  setCurrentPassword('')
-                  setNewPassword('')
-                  setPwdOpen(true)
-                }}
-              >
-                <KeyRound className="size-4" /> Change password
-              </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-red-600 hover:bg-red-50"
-                onClick={() => void handleLogout()}
-              >
-                <LogOut className="size-4" /> Sign out
-              </button>
-            </div>
-          </>
-        )}
+      </Button>
+      <div className="border-l border-slate-200 pl-3">
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownMenuTrigger className="flex items-center gap-2 rounded-2xl p-1 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30">
+            <UserAvatar name={me.name} avatarUrl={me.avatarUrl} size="sm" />
+            <span className="hidden text-left sm:block">
+              <span className="block text-xs font-semibold text-slate-700">{me.name}</span>
+              <span className="block text-[10px] font-medium text-[#2563eb]">{me.role}</span>
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56 min-w-56">
+            <DropdownMenuLabel className="font-normal">
+              <p className="text-xs font-bold text-foreground">{me.name}</p>
+              <p className="text-[11px] text-muted-foreground">{me.username || settings.currentUser || me.name}</p>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={avatarBusy || !me.id}
+              onClick={() => avatarInputRef.current?.click()}
+            >
+              <Camera className="size-4" /> {avatarBusy ? 'Uploading…' : me.avatarUrl ? 'Update profile picture' : 'Upload profile picture'}
+            </DropdownMenuItem>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null
+                e.target.value = ''
+                void handleAvatarPick(file)
+              }}
+            />
+            <DropdownMenuItem
+              onClick={() => {
+                setMenuOpen(false)
+                go('Settings:users')
+              }}
+            >
+              <Users className="size-4" /> View profile
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                setMenuOpen(false)
+                setPwdError(null)
+                setCurrentPassword('')
+                setNewPassword('')
+                setPwdOpen(true)
+              }}
+            >
+              <KeyRound className="size-4" /> Change password
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => void handleLogout()}>
+              <LogOut className="size-4" /> Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {pwdOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">

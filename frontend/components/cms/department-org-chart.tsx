@@ -26,6 +26,7 @@ import { useAppData } from '@/components/app-provider'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
+import { AppSelect } from '@/components/ui/app-select'
 import type { Department, DepartmentInput } from '@/services/management'
 import { updateDepartment } from '@/services/management'
 
@@ -153,27 +154,24 @@ function DepartmentDialog({
           ))}
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-slate-600">Reports to (org hierarchy)</span>
-            <select
-              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs"
+            <AppSelect
               value={values.parentId}
-              onChange={(e) => setValues((current) => ({ ...current, parentId: e.target.value }))}
-            >
-              <option value="">None (top-level)</option>
-              {parents.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
+              onValueChange={(v) => setValues((current) => ({ ...current, parentId: v }))}
+              options={[
+                { value: '', label: 'None (top-level)' },
+                ...parents.map((d) => ({ value: String(d.id), label: d.name })),
+              ]}
+              className="h-10 text-xs"
+            />
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold text-slate-600">Status</span>
-            <select
-              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs"
+            <AppSelect
               value={values.status}
-              onChange={(e) => setValues((current) => ({ ...current, status: e.target.value }))}
-            >
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
+              onValueChange={(v) => setValues((current) => ({ ...current, status: v }))}
+              options={['Active', 'Inactive']}
+              className="h-10 text-xs"
+            />
           </label>
         </div>
         {error && <p className="mt-3 text-xs text-red-600">{error}</p>}

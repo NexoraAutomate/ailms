@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Sparkles } from 'lucide-react'
+import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
 import { useAppData } from '@/components/app-provider'
 import { AIAdvisoryNote, AIInsightCard, AIStatusIndicator, AiBadge, SectionCard } from '@/components/ai/common'
@@ -119,7 +120,7 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
                             header: 'Letter',
                             sortValue: (letter: Letter) => letter.number,
                             cell: (letter: Letter) => (
-                              <button type="button" className="font-semibold text-[#1769aa]" onClick={() => go(letter.id)}>{letter.number}</button>
+                              <Button type="button" variant="outline" size="xs" className="font-semibold" onClick={() => go(letter.id)}>{letter.number}</Button>
                             ),
                           },
                           { id: 'subject', header: 'Subject', sortValue: (letter: Letter) => letter.subject, className: 'text-slate-600', cell: (letter: Letter) => letter.subject },
@@ -274,12 +275,15 @@ export function LetterAnalysisPage({ selectedId, go }: { selectedId?: string; go
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
+        <div className="flex flex-col gap-1 text-[10px] font-bold uppercase text-slate-400">
           Select correspondence
-          <select value={letter?.id ?? ''} onChange={(e) => setId(e.target.value)} className="h-10 min-w-72 rounded-md border border-slate-200 bg-white px-3 text-xs font-normal text-slate-700">
-            {letters.map((item) => <option key={item.id} value={item.id}>{item.number} · {item.subject}</option>)}
-          </select>
-        </label>
+          <AppSelect
+            value={letter?.id ?? ''}
+            onValueChange={setId}
+            options={letters.map((item) => ({ value: item.id, label: `${item.number} · ${item.subject}` }))}
+            className="min-w-72 text-xs font-normal text-slate-700"
+          />
+        </div>
         {letter && <Button variant="outline" size="sm" onClick={() => go(letter.id)}>Open letter</Button>}
       </div>
       {letter ? <AIAnalysisPanel letter={letter} letters={letters} /> : <AIStatusIndicator status="empty" />}
@@ -297,7 +301,7 @@ export function AISearchBanner({ result, onClear, go }: { result: InterpretedQue
       </div>
       <p className="text-xs text-slate-600">{result.summary}</p>
       <div className="mt-2 flex flex-wrap gap-1">{Object.entries(result.filters).map(([key, value]) => <AiBadge key={key} tone="blue">{key} = {value}</AiBadge>)}</div>
-      {result.letters[0] && <button className="mt-2 text-[11px] font-semibold text-[#1769aa]" onClick={() => go(result.letters[0].id)}>Open first match</button>}
+      {result.letters[0] && <Button variant="outline" size="xs" className="mt-2" onClick={() => go(result.letters[0].id)}>Open first match</Button>}
     </div>
   )
 }

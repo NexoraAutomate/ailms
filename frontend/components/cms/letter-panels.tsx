@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
+import { AppSelect } from '@/components/ui/app-select'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Badge, Card } from '@/components/cms/ui'
@@ -231,19 +232,29 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
             {dialog.action === 'classify' && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">Letter type</span>
-                <select value={category} onChange={(e) => setCategory(e.target.value as 'Information' | 'Actionable')} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                  <option value="Actionable">Actionable</option>
-                  <option value="Information">Information / FYI</option>
-                </select>
+                <AppSelect
+                  value={category}
+                  onValueChange={(v) => setCategory(v as 'Information' | 'Actionable')}
+                  options={[
+                    { value: 'Actionable', label: 'Actionable' },
+                    { value: 'Information', label: 'Information / FYI' },
+                  ]}
+                  className="h-10 text-xs"
+                />
               </label>
             )}
             {dialog.action === 'route_info' && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">FYI recipient</span>
-                <select value={infoUser} onChange={(e) => setInfoUser(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                  <option value="">Select…</option>
-                  {users.map((user) => <option key={user.name} value={user.name}>{user.name}</option>)}
-                </select>
+                <AppSelect
+                  value={infoUser}
+                  onValueChange={setInfoUser}
+                  options={[
+                    { value: '', label: 'Select…' },
+                    ...users.map((user) => ({ value: user.name, label: user.name })),
+                  ]}
+                  className="h-10 text-xs"
+                />
               </label>
             )}
             {dialog.action === 'draft_response' && (
@@ -255,27 +266,40 @@ export function WorkflowPanel({ letter, users, onDone }: { letter: Letter; users
             {dialog.action === 'dispatch' && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">Channel</span>
-                <select value={dispatchChannel} onChange={(e) => setDispatchChannel(e.target.value as 'Internal' | 'External')} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                  <option value="Internal">Internal</option>
-                  <option value="External">External (Secretariat / Management)</option>
-                </select>
+                <AppSelect
+                  value={dispatchChannel}
+                  onValueChange={(v) => setDispatchChannel(v as 'Internal' | 'External')}
+                  options={[
+                    { value: 'Internal', label: 'Internal' },
+                    { value: 'External', label: 'External (Secretariat / Management)' },
+                  ]}
+                  className="h-10 text-xs"
+                />
               </label>
             )}
             {(needsAssign(dialog.action) || needsEscalation(dialog.action)) && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">{needsEscalation(dialog.action) ? 'Escalate to' : dialog.action === 'submit_for_approval' ? 'Reviewer' : 'Assign to'}</span>
-                <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                  <option value="">Select…</option>
-                  {users.map((user) => <option key={user.name} value={user.name}>{user.name}</option>)}
-                </select>
+                <AppSelect
+                  value={assignedTo}
+                  onValueChange={setAssignedTo}
+                  options={[
+                    { value: '', label: 'Select…' },
+                    ...users.map((user) => ({ value: user.name, label: user.name })),
+                  ]}
+                  className="h-10 text-xs"
+                />
               </label>
             )}
             {needsEscalation(dialog.action) && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">Escalation level</span>
-                <select value={escalationLevel} onChange={(e) => setEscalationLevel(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-                  {['Level 1', 'Level 2', 'Level 3'].map((level) => <option key={level}>{level}</option>)}
-                </select>
+                <AppSelect
+                  value={escalationLevel}
+                  onValueChange={setEscalationLevel}
+                  options={['Level 1', 'Level 2', 'Level 3']}
+                  className="h-10 text-xs"
+                />
               </label>
             )}
             {dialog.action !== 'draft_response' && (
@@ -669,17 +693,23 @@ export function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: 
         </div>
       )}
       <div className="mt-4 grid gap-2 border-t border-slate-100 pt-4 sm:grid-cols-3">
-        <select value={toLetterId} onChange={(e) => setToLetterId(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs sm:col-span-1">
-          <option value="">Link to letter…</option>
-          {letters
-            .filter((l) => l.id !== letter.id && !alreadyLinkedIds.has(l.id))
-            .map((l) => (
-              <option key={l.id} value={l.id}>{l.number}</option>
-            ))}
-        </select>
-        <select value={relationshipType} onChange={(e) => setRelationshipType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs">
-          {types.map((t) => <option key={t}>{t}</option>)}
-        </select>
+        <AppSelect
+          value={toLetterId}
+          onValueChange={setToLetterId}
+          options={[
+            { value: '', label: 'Link to letter…' },
+            ...letters
+              .filter((l) => l.id !== letter.id && !alreadyLinkedIds.has(l.id))
+              .map((l) => ({ value: l.id, label: l.number })),
+          ]}
+          className="h-10 text-xs sm:col-span-1"
+        />
+        <AppSelect
+          value={relationshipType}
+          onValueChange={setRelationshipType}
+          options={types}
+          className="h-10 text-xs"
+        />
         <Button size="sm" onClick={() => void addLink()}>Add relationship</Button>
         <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Remarks (optional)" className="h-10 rounded-md border border-slate-200 px-3 text-xs sm:col-span-3" />
       </div>
@@ -807,9 +837,12 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
       <div className="mb-5 grid gap-3 rounded-md border border-dashed border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-xs">
           <span className="font-semibold text-slate-600">Document type</span>
-          <select value={documentType} onChange={(e) => setDocumentType(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-3">
-            {types.map((t) => <option key={t}>{t}</option>)}
-          </select>
+          <AppSelect
+            value={documentType}
+            onValueChange={setDocumentType}
+            options={types}
+            className="h-10"
+          />
         </label>
         <label className="flex flex-col gap-1 text-xs sm:col-span-2">
           <span className="font-semibold text-slate-600">Change description</span>
@@ -858,9 +891,9 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
                   {versions.map((v) => (
                     <div key={v.id} className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded bg-slate-50 px-2 py-2">
                       <span>v{v.versionNumber} · {v.originalFilename} · {v.status}</span>
-                      <div className="flex gap-2">
-                        <button type="button" className="text-[#1769aa]" onClick={() => window.open(documentDownloadUrl(v.id), '_blank')}>Download</button>
-                        {v.previewable && <button type="button" className="text-[#1769aa]" onClick={() => setPreviewId(v.id)}>Preview</button>}
+                      <div className="flex gap-1.5">
+                        <Button size="xs" variant="outline" onClick={() => window.open(documentDownloadUrl(v.id), '_blank')}>Download</Button>
+                        {v.previewable && <Button size="xs" variant="outline" onClick={() => setPreviewId(v.id)}>Preview</Button>}
                       </div>
                     </div>
                   ))}
@@ -879,7 +912,7 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
           <Card className="flex h-[85vh] w-full max-w-4xl flex-col p-3">
             <div className="mb-2 flex items-center justify-between">
               <p className="text-sm font-bold text-slate-700">Document preview</p>
-              <button onClick={() => setPreviewId(null)}><X className="size-4 text-slate-400" /></button>
+              <Button type="button" variant="ghost" size="icon-sm" onClick={() => setPreviewId(null)} aria-label="Close preview"><X className="size-4" /></Button>
             </div>
             <iframe title="Document preview" src={documentPreviewUrl(previewId)} className="min-h-0 flex-1 rounded border border-slate-200 bg-white" />
           </Card>

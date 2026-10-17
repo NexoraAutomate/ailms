@@ -3,12 +3,17 @@
 import { useEffect, useState } from 'react'
 import {
   CalendarDays,
+  CheckCircle2,
+  CircleAlert,
+  ClipboardList,
   FileText,
   GitBranch,
+  Inbox,
   Link2,
   Lock,
   MessageSquare,
   Paperclip,
+  Send,
   Sparkles,
 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
@@ -43,8 +48,7 @@ const LETTER_TABS: {
 ]
 
 export function Details({ id, go }: { id: string; go: (p: string) => void }) {
-  const { letters, users, me, refresh, addAction, applyLetterField, acceptAiAction } = useAppData()
-  const [action, setAction] = useState('')
+  const { letters, users, me, refresh, applyLetterField, acceptAiAction } = useAppData()
   const [replyOpen, setReplyOpen] = useState(false)
   const [tab, setTab] = useState<LetterTabId>('details')
   const cached = letters.find((item) => item.id === id) ?? null
@@ -102,13 +106,39 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   if (!letter) return <p className="text-sm text-slate-500">Letter not found.</p>
 
   const canReply = letterRowActions(letter, me.role).includes('reply')
+  const TypeIcon = letter.type === 'Incoming' ? Inbox : Send
+  const PriorityIcon = letter.priority === 'Urgent' ? CircleAlert : letter.priority === 'Important' ? ClipboardList : CheckCircle2
+  const StatusIcon =
+    letter.status === 'Overdue'
+      ? CircleAlert
+      : letter.status === 'Closed' || letter.status === 'Completed' || letter.status === 'Archived'
+        ? CheckCircle2
+        : ClipboardList
 
   return (
     <>
-      <button onClick={() => go('All Letters')} className="mb-4 text-xs font-semibold text-[#1769aa]">← Back to letter database</button>
+      <Button variant="outline" size="xs" className="mb-4" onClick={() => go('All Letters')}>← Back to letter database</Button>
       <PageTitle
         title={letter.subject}
-        description={`${letter.number} · ${letter.type} correspondence`}
+        description={
+          <>
+            <p className="font-medium text-slate-600">{letter.number}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Badge tone={letter.type === 'Incoming' ? 'blue' : 'violet'}>
+                <TypeIcon className="size-3" />
+                {letter.type}
+              </Badge>
+              <Badge tone={priorityTone(letter.priority)}>
+                <PriorityIcon className="size-3" />
+                {letter.priority}
+              </Badge>
+              <Badge tone={statusTone(letter.status)}>
+                <StatusIcon className="size-3" />
+                {letter.status}
+              </Badge>
+            </div>
+          </>
+        }
         action={
           canReply ? (
             <Button onClick={() => setReplyOpen(true)}>
@@ -136,31 +166,17 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
       <CollapsibleCardMotionProvider animated={false}>
         <AppTabPanel tabKey={tab}>
           {tab === 'details' && (
-            <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-              <Card className="p-5">
-                <h2 className="mb-4 text-sm font-bold text-slate-700">Correspondence details</h2>
-                <div className="grid grid-cols-2 gap-5">
-                  {[['Letter number', letter.number], ['Letter date', letter.letterDate], ['Received date', letter.receivedDate], ['Type', letter.type], ['From', letter.from], ['To', letter.to], ['Department', letter.department], ['Assigned to', letter.assignedTo], ['Due date', letter.dueDate], ['Last action', letter.lastAction]].map(([a, b]) => (
-                    <div key={a}>
-                      <p className="text-[11px] text-slate-400">{a}</p>
-                      <p className="mt-1 text-xs font-semibold text-slate-700">{b}</p>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-              <Card className="p-5">
-                <h2 className="mb-4 text-sm font-bold text-slate-700">Tracking status</h2>
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone={letter.type === 'Incoming' ? 'blue' : 'violet'}>{letter.type}</Badge>
-                  <Badge tone={priorityTone(letter.priority)}>{letter.priority}</Badge>
-                  <Badge tone={statusTone(letter.status)}>{letter.status}</Badge>
-                </div>
-                <div className="mt-6 flex flex-col gap-3">
-                  <input value={action} onChange={(e) => setAction(e.target.value)} placeholder="Describe the next action" className="h-10 rounded-md border border-slate-200 px-3 text-xs" />
-                  <Button onClick={async () => { if (!action.trim()) return; await addAction(letter.id, action.trim()); setAction('') }}>Add action</Button>
-                </div>
-              </Card>
-            </div>
+            <Card className="p-5">
+              <h2 className="mb-4 text-sm font-bold text-slate-700">Correspondence details</h2>
+              <div className="grid grid-cols-2 gap-5">
+                {[['Letter number', letter.number], ['Letter date', letter.letterDate], ['Received date', letter.receivedDate], ['Type', letter.type], ['From', letter.from], ['To', letter.to], ['Department', letter.department], ['Assigned to', letter.assignedTo], ['Due date', letter.dueDate], ['Last action', letter.lastAction]].map(([a, b]) => (
+                  <div key={a}>
+                    <p className="text-[11px] text-slate-400">{a}</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-700">{b}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
           )}
 
           {tab === 'documents' && (
