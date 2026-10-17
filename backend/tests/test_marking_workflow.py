@@ -15,9 +15,11 @@ from app.marking_reminders import process_marking_reminders
 from app.marking_workflow_service import (
     add_attachments_to_marking,
     add_note,
+    assert_can_edit_letter_details,
     attachment_is_editable,
     available_marking_actions,
     batch_tracker,
+    can_edit_letter_details,
     close_letter,
     create_mark_batch,
     list_attachments,
@@ -120,6 +122,30 @@ class MarkingWorkflowTest(unittest.TestCase):
             self.db.commit()
         finally:
             self.db.close()
+
+    def test_initiator_can_edit_details_only_before_marking(self) -> None:
+        self.assertTrue(can_edit_letter_details(self.db, self.letter, self.initiator.name))
+        self.assertFalse(can_edit_letter_details(self.db, self.letter, self.user_a.name))
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertFalse(can_edit_letter_details(self.db, self.letter, self.initiator.name))
+        self.assertFalse(can_edit_letter_details(self.db, self.letter, self.user_a.name))
+        with self.assertRaises(HTTPException) as ctx:
+            assert_can_edit_letter_details(self.db, self.letter, self.initiator.name)
+        self.assertEqual(ctx.exception.status_code, 403)
+        parent = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        revoke_marking(self.db, marking=parent, actor_name=self.initiator.name)
+        self.db.flush()
+        self.assertTrue(can_edit_letter_details(self.db, self.letter, self.initiator.name))
 
     def test_notes_locked_after_marking_onward(self) -> None:
         add_note(

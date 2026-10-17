@@ -173,7 +173,9 @@ TRENDS = [
 
 
 def seed_if_empty(db: Session) -> None:
-    if db.query(Letter).count():
+    # Skip when letters OR users already exist so a deliberate empty-letter
+    # reset (admin + test accounts, no correspondence) is not overwritten.
+    if db.query(Letter).count() or db.query(User).count():
         return
 
     for category, values in MASTER_DATA.items():
@@ -366,6 +368,9 @@ def ensure_procurement_thread_samples(db: Session) -> None:
     competing vendor replies → internal evaluation → award recommendation.
     Idempotent via marker letter number VND/AQ/2026/001.
     """
+    # Do not invent sample correspondence on an intentionally letter-empty DB.
+    if db.query(Letter).count() == 0:
+        return
     marker = "VND/AQ/2026/001"
     if db.query(Letter).filter(Letter.number == marker).first():
         return

@@ -63,6 +63,53 @@ def has_active_markings(db: Session, letter_id: int) -> bool:
     )
 
 
+def letter_ids_with_active_markings(db: Session, letter_ids: list[int]) -> set[int]:
+    if not letter_ids:
+        return set()
+    rows = (
+        db.query(Marking.letter_id)
+        .filter(Marking.letter_id.in_(letter_ids), Marking.status == "active")
+        .distinct()
+        .all()
+    )
+    return {int(row[0]) for row in rows}
+
+
+def can_edit_letter_details(
+    db: Session,
+    letter: Letter,
+    actor_name: str,
+    *,
+    has_active: bool | None = None,
+) -> bool:
+    """
+    Initiator may edit registration details only until the letter is marked onward.
+    Revoking every active marking restores editability for the initiator.
+    """
+    if letter.is_archived or letter.status in {CLOSED_LETTER, ARCHIVED_LETTER}:
+        return False
+    if not is_initiator(letter, actor_name):
+        return False
+    active = has_active_markings(db, letter.id) if has_active is None else has_active
+    return not active
+
+
+def assert_can_edit_letter_details(db: Session, letter: Letter, actor_name: str) -> None:
+    if can_edit_letter_details(db, letter, actor_name):
+        return
+    if not is_initiator(letter, actor_name):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the user who registered this correspondence can edit its details",
+        )
+    if letter.is_archived or letter.status in {CLOSED_LETTER, ARCHIVED_LETTER}:
+        raise HTTPException(status_code=400, detail="Closed or archived correspondence cannot be edited")
+    raise HTTPException(
+        status_code=403,
+        detail="Correspondence details cannot be edited after the letter has been marked to another user",
+    )
+
+
 def marking_has_children(db: Session, marking_id: int) -> bool:
     return (
         db.query(Marking.id).filter(Marking.parent_marking_id == marking_id).first() is not None

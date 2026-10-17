@@ -1,15 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ComponentType } from 'react'
 import {
   Archive,
   ArrowUpRight,
   CheckCircle2,
   CornerUpLeft,
+  ExternalLink,
+  Eye,
   MessageSquare,
+  Paperclip,
   Pencil,
   RefreshCw,
+  Replace,
   Send,
   ShieldCheck,
   Trash2,
@@ -19,11 +23,12 @@ import {
   XCircle,
 } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/app-select'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Badge, Card } from '@/components/cms/ui'
+import { cn } from '@/lib/utils'
 import { formatDateTime } from '@/lib/datetime'
 import { statusTone, type Letter, type LetterStatus } from '@/services/letters'
 import {
@@ -46,14 +51,14 @@ import {
 import { getCurrentApproval, listApprovals, type Approval } from '@/services/approvals'
 import { listEscalations, resolveEscalation, type Escalation } from '@/services/escalations'
 import {
+  deleteLetterDocument,
   documentDownloadUrl,
   documentPreviewUrl,
   formatFileSize,
-  listDocumentVersions,
   listLetterDocuments,
+  updateLetterDocument,
   uploadDocumentVersion,
   uploadLetterDocument,
-  type DocumentVersion,
   type LetterDocument,
 } from '@/services/documents'
 import { createRelation, fetchCorrespondenceThread, listRelationTypes, type CorrespondenceThread } from '@/services/correspondence'
@@ -616,18 +621,17 @@ export function CorrespondenceThreadPanel({ letter, go }: { letter: Letter; go: 
   ])
 
   return (
-    <CollapsibleCard
-      className="mt-5"
-      title="Reference & linked letters"
-      description="Link reference letters from this record, and see where this letter is cited elsewhere."
-      headerAside={
-        !loading ? (
+    <CollapsibleCard collapsible={false}>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+        <p className="text-xs text-slate-400">
+          Link reference letters from this record, and see where this letter is cited elsewhere.
+        </p>
+        {!loading ? (
           <Badge tone={incoming.length > 0 ? 'blue' : 'slate'}>
             Referenced in {incoming.length}
           </Badge>
-        ) : undefined
-      }
-    >
+        ) : null}
+      </div>
       {loading && <p className="text-xs text-slate-500">Loading thread…</p>}
       {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
       {!loading && thread && (
@@ -728,11 +732,10 @@ export function RelatedMeetingsPanel({ letter, go }: { letter: Letter; go: (p: s
   }, [letter.id])
 
   return (
-    <CollapsibleCard
-      className="mt-5"
-      title="Related meetings"
-      action={<Button size="sm" variant="outline" onClick={() => go('Meetings')}>All meetings</Button>}
-    >
+    <CollapsibleCard collapsible={false}>
+      <div className="mb-3 flex justify-end">
+        <Button size="sm" variant="outline" onClick={() => go('Meetings')}>All meetings</Button>
+      </div>
       {loading && <p className="text-xs text-slate-500">Loading…</p>}
       {!loading && meetings.length === 0 && <p className="text-xs text-slate-500">No meetings linked to this letter.</p>}
       <div className="flex flex-col gap-2">
@@ -749,32 +752,40 @@ export function RelatedMeetingsPanel({ letter, go }: { letter: Letter; go: (p: s
 
 export function DocumentsPanel({ letter }: { letter: Letter }) {
   const { masterData, refresh } = useAppData()
-  const types = masterData['Document Types'] ?? [
-    'Supporting Document',
+  // Initiator / original-letter library only — workflow file types stay on the Workflow tab.
+  const allTypes = masterData['Document Types'] ?? [
     'Original Letter',
-    'Draft Response',
-    'Final Response',
+    'Scanned Letter',
+    'Supporting Document',
+    'Reference Document',
     'Email',
-    'Presentation',
-    'Attachment',
     'Other',
   ]
+  const types = (
+    allTypes.filter(
+      (type) =>
+        !['Draft Response', 'Final Response', 'Presentation', 'Nomination List'].includes(type),
+    )
+  )
+  const defaultType = types.includes('Original Letter')
+    ? 'Original Letter'
+    : (types[0] ?? 'Supporting Document')
   const [documents, setDocuments] = useState<LetterDocument[]>([])
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [versions, setVersions] = useState<DocumentVersion[]>([])
-  const [documentType, setDocumentType] = useState(types[0] ?? 'Supporting Document')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [documentType, setDocumentType] = useState(defaultType)
   const [changeDescription, setChangeDescription] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [previewId, setPreviewId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
     setLoading(true)
     setError('')
     try {
-      setDocuments(await listLetterDocuments(letter.id))
+      setDocuments(await listLetterDocuments(letter.id, 'letter'))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load documents')
     } finally {
@@ -785,11 +796,6 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
   useEffect(() => {
     void load()
   }, [letter.id])
-
-  const loadVersions = async (documentId: string) => {
-    setExpanded(documentId)
-    setVersions(await listDocumentVersions(documentId))
-  }
 
   const upload = async () => {
     if (!file) {
@@ -802,6 +808,7 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
       await uploadLetterDocument(letter.id, file, documentType, changeDescription)
       setFile(null)
       setChangeDescription('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
       await load()
       await refresh()
     } catch (err) {
@@ -811,101 +818,217 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
     }
   }
 
-  const uploadRevision = async (documentId: string, revisionFile: File) => {
+  const replaceDocument = async (documentId: string, revisionFile: File) => {
     setBusy(true)
     setError('')
     try {
-      await uploadDocumentVersion(documentId, revisionFile, changeDescription || 'Revised upload')
-      await loadVersions(documentId)
+      await uploadDocumentVersion(documentId, revisionFile, 'Replaced from attachments')
       await load()
       await refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to upload new version')
+      setError(err instanceof Error ? err.message : 'Unable to replace attachment')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveDocumentType = async (documentId: string, nextType: string) => {
+    setBusy(true)
+    setError('')
+    try {
+      await updateLetterDocument(documentId, { documentType: nextType })
+      setEditingId(null)
+      await load()
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update attachment')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeDocument = async (documentId: string) => {
+    if (!window.confirm('Delete this attachment?')) return
+    setBusy(true)
+    setError('')
+    try {
+      await deleteLetterDocument(documentId)
+      if (editingId === documentId) setEditingId(null)
+      await load()
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete attachment')
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <CollapsibleCard
-      className="mt-5"
-      title="Documents & attachments"
-      description="Secure uploads stored on server filesystem (metadata in database)."
-    >
-      {loading && <p className="text-xs text-slate-500">Loading documents…</p>}
+    <CollapsibleCard collapsible={false}>
+      <p className="mb-4 text-xs text-slate-400">
+        Original letter copy and related references attached at registration. Files added during workflow stay on the Workflow tab.
+      </p>
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
-      <div className="mb-5 grid gap-3 rounded-md border border-dashed border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-xs">
-          <span className="font-semibold text-slate-600">Document type</span>
-          <AppSelect
-            value={documentType}
-            onValueChange={setDocumentType}
-            options={types}
-            className="h-10"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs sm:col-span-2">
-          <span className="font-semibold text-slate-600">Change description</span>
-          <input value={changeDescription} onChange={(e) => setChangeDescription(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3" placeholder="Optional notes for this upload" />
-        </label>
-        <label className="flex flex-col gap-1 text-xs sm:col-span-2">
-          <span className="font-semibold text-slate-600">File</span>
-          <input
-            type="file"
-            accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.ppt,.pptx,.odt,.ods,.odp,.eml,.msg,.zip"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="text-xs"
-          />
-        </label>
-        <div className="sm:col-span-2">
-          <Button size="sm" disabled={busy} onClick={() => void upload()}>Upload document</Button>
-        </div>
-      </div>
-      {documents.length === 0 && !loading && <p className="text-xs text-slate-500">No documents attached yet.</p>}
-      <div className="flex flex-col gap-3">
-        {documents.map((doc) => {
-          const current = doc.currentVersion
-          return (
-            <div key={doc.id} className="rounded-md border border-slate-100 bg-white px-3 py-3 text-xs">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-slate-700">{doc.documentType}</p>
-                  {current && (
-                    <p className="text-slate-500">{current.originalFilename} · v{current.versionNumber} · {formatFileSize(current.fileSize)}</p>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {current && (
-                    <>
-                      <Button size="sm" variant="outline" onClick={() => window.open(documentDownloadUrl(current.id), '_blank')}>Download</Button>
-                      {current.previewable && (
-                        <Button size="sm" variant="outline" onClick={() => setPreviewId(current.id)}>Preview</Button>
+      <div className="grid gap-5 lg:grid-cols-3 lg:items-start">
+        <div className="space-y-2 lg:col-span-2">
+          {loading && <p className="text-xs text-slate-500">Loading documents…</p>}
+          {!loading && documents.length === 0 && (
+            <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-xs text-slate-500">
+              No documents attached yet.
+            </p>
+          )}
+          <ul className="space-y-2">
+            {documents.map((doc) => {
+              const current = doc.currentVersion
+              return (
+                <li
+                  key={doc.id}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 shadow-sm"
+                >
+                  <div className="flex items-start gap-2">
+                    <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold text-slate-800">
+                        {current?.originalFilename || `Document #${doc.id}`}
+                      </p>
+                      {current ? (
+                        <p className="mt-0.5 text-[10px] text-slate-500">
+                          v{current.versionNumber} · {formatFileSize(current.fileSize)}
+                          {current.uploadedBy ? ` · ${current.uploadedBy}` : ''}
+                        </p>
+                      ) : null}
+                      {editingId === doc.id ? (
+                        <AppSelect
+                          value={doc.documentType}
+                          disabled={busy}
+                          onValueChange={(v) => void saveDocumentType(doc.id, v)}
+                          options={types}
+                          size="sm"
+                          className="mt-1 w-full text-[10px]"
+                        />
+                      ) : (
+                        <p className="mt-0.5 text-[10px] font-medium text-slate-500">{doc.documentType}</p>
                       )}
-                    </>
-                  )}
-                  <Button size="sm" variant="ghost" onClick={() => void loadVersions(doc.id)}>Version history</Button>
-                </div>
-              </div>
-              {expanded === doc.id && (
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  {versions.map((v) => (
-                    <div key={v.id} className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded bg-slate-50 px-2 py-2">
-                      <span>v{v.versionNumber} · {v.originalFilename} · {v.status}</span>
-                      <div className="flex gap-1.5">
-                        <Button size="xs" variant="outline" onClick={() => window.open(documentDownloadUrl(v.id), '_blank')}>Download</Button>
-                        {v.previewable && <Button size="xs" variant="outline" onClick={() => setPreviewId(v.id)}>Preview</Button>}
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {current?.previewable ? (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            onClick={() => setPreviewId(current.id)}
+                          >
+                            <Eye data-icon="inline-start" /> Preview
+                          </Button>
+                        ) : null}
+                        {current ? (
+                          <a
+                            href={documentDownloadUrl(current.id)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={cn(buttonVariants({ size: 'xs', variant: 'outline' }))}
+                          >
+                            <ExternalLink data-icon="inline-start" className="size-3" /> Open
+                          </a>
+                        ) : null}
+                        <label
+                          className={cn(
+                            buttonVariants({ size: 'xs', variant: 'outline' }),
+                            busy ? 'pointer-events-none opacity-50' : 'cursor-pointer',
+                          )}
+                        >
+                          <Replace data-icon="inline-start" className="size-3" /> Replace
+                          <input
+                            type="file"
+                            className="hidden"
+                            disabled={busy}
+                            onChange={(e) => {
+                              const next = e.target.files?.[0]
+                              e.target.value = ''
+                              if (next) void replaceDocument(doc.id, next)
+                            }}
+                          />
+                        </label>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => setEditingId((currentId) => (currentId === doc.id ? null : doc.id))}
+                        >
+                          <Pencil data-icon="inline-start" /> Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="destructive"
+                          disabled={busy}
+                          onClick={() => void removeDocument(doc.id)}
+                        >
+                          <Trash2 data-icon="inline-start" /> Delete
+                        </Button>
                       </div>
                     </div>
-                  ))}
-                  <label className="mt-2 flex flex-col gap-1">
-                    <span className="font-semibold text-slate-600">Upload new version</span>
-                    <input type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadRevision(doc.id, f) }} className="text-xs" />
-                  </label>
-                </div>
-              )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+
+        <aside className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 lg:col-span-1">
+          <h3 className="mb-3 text-sm font-bold text-slate-700">Add attachment</h3>
+          <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1 text-xs">
+              <span className="font-semibold text-slate-600">Document type</span>
+              <AppSelect
+                value={documentType}
+                onValueChange={setDocumentType}
+                options={types}
+                className="h-10"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs">
+              <span className="font-semibold text-slate-600">Description</span>
+              <input
+                value={changeDescription}
+                onChange={(e) => setChangeDescription(e.target.value)}
+                className="h-10 rounded-md border border-slate-200 bg-white px-3"
+                placeholder="Optional notes for this upload"
+              />
+            </label>
+            {file ? (
+              <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
+                <p className="truncate font-semibold text-slate-700" title={file.name}>{file.name}</p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  {file.type || 'Unknown type'} · {formatFileSize(file.size)}
+                </p>
+              </div>
+            ) : null}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.ppt,.pptx,.odt,.ods,.odp,.eml,.msg,.zip"
+              className="hidden"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                aria-label="Choose attachment"
+                title="Choose attachment"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Paperclip className="size-3.5" />
+              </Button>
+              <Button size="sm" disabled={busy || !file} onClick={() => void upload()}>
+                {busy ? 'Uploading…' : 'Upload Attachment'}
+              </Button>
             </div>
-          )
-        })}
+          </div>
+        </aside>
       </div>
       {previewId !== null && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4">

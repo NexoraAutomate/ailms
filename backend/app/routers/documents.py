@@ -6,20 +6,46 @@ from app.database import get_db
 from app.document_service import (
     add_document_version,
     create_document_with_upload,
+    delete_document,
     get_version_for_access,
+    remove_document_files,
     serialize_document,
     serialize_version,
+    update_document_meta,
 )
-from app.models import Document, DocumentVersion
-from app.schemas import DocumentOut, DocumentVersionOut
+from app.models import CorrespondenceAttachment, Document, DocumentVersion
+from app.schemas import DocumentOut, DocumentUpdate, DocumentVersionOut
 from app.storage_service import can_preview, resolve_media_type, resolve_storage_path
 
 router = APIRouter(tags=["documents"])
 
 
 @router.get("/documents", response_model=list[DocumentOut])
-def list_documents(letter_id: int = Query(..., alias="letterId"), db: Session = Depends(get_db)) -> list[DocumentOut]:
-    rows = db.query(Document).filter(Document.letter_id == letter_id).order_by(Document.id.desc()).all()
+def list_documents(
+    letter_id: int = Query(..., alias="letterId"),
+    scope: str = Query(
+        default="letter",
+        pattern="^(letter|workflow|all)$",
+        description="letter = registration/initiator docs; workflow = marking attachments; all = both",
+    ),
+    db: Session = Depends(get_db),
+) -> list[DocumentOut]:
+    query = db.query(Document).filter(Document.letter_id == letter_id)
+    if scope in {"letter", "workflow"}:
+        workflow_doc_ids = (
+            db.query(CorrespondenceAttachment.document_id)
+            .filter(
+                CorrespondenceAttachment.letter_id == letter_id,
+                CorrespondenceAttachment.document_id.isnot(None),
+            )
+            .distinct()
+        )
+        if scope == "letter":
+            # Documents & Attachments tab: original letter / initiator uploads only.
+            query = query.filter(~Document.id.in_(workflow_doc_ids))
+        else:
+            query = query.filter(Document.id.in_(workflow_doc_ids))
+    rows = query.order_by(Document.id.desc()).all()
     return [DocumentOut(**serialize_document(db, row)) for row in rows]
 
 
@@ -80,6 +106,29 @@ async def upload_version(
     db.commit()
     db.refresh(version)
     return DocumentVersionOut(**serialize_version(version))
+
+
+@router.patch("/documents/{document_id}", response_model=DocumentOut)
+def patch_document(
+    document_id: int,
+    payload: DocumentUpdate,
+    db: Session = Depends(get_db),
+) -> DocumentOut:
+    document = update_document_meta(
+        db,
+        document_id=document_id,
+        document_type=payload.documentType,
+    )
+    db.commit()
+    db.refresh(document)
+    return DocumentOut(**serialize_document(db, document))
+
+
+@router.delete("/documents/{document_id}", status_code=204)
+def remove_document(document_id: int, db: Session = Depends(get_db)) -> None:
+    storage_keys = delete_document(db, document_id=document_id)
+    db.commit()
+    remove_document_files(storage_keys)
 
 
 @router.get("/document-versions/{version_id}/download")

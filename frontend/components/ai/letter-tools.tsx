@@ -900,10 +900,10 @@ export function AIAnalyzeDocument({ letter }: { letter: Letter }) {
     setStatus('success')
   }
   return (
-    <CollapsibleCard
-      title="Attachment analysis"
-      action={<Button size="sm" variant="outline" onClick={() => void run()}>AI Analyze Document</Button>}
-    >
+    <CollapsibleCard collapsible={false}>
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={() => void run()}>AI Analyze Document</Button>
+      </div>
       <AIStatusIndicator status={status === 'success' ? 'idle' : status} />
       {notes.length === 0 && status === 'idle' && <p className="text-xs text-slate-500">Mock document analysis is available. No OCR or live model is used.</p>}
       <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">{notes.map((note) => <li key={note}>{note}</li>)}</ul>
@@ -1174,16 +1174,8 @@ export function AIIntelligencePanel({
   })
 
   return (
-    <CollapsibleCard
-      title={
-        <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700">
-          <Sparkles className="size-4 text-[#1769aa]" />
-          AI Intelligence Panel
-        </h2>
-      }
-      contentClassName="p-0 sm:p-0"
-    >
-      <div className="flex gap-2 overflow-x-auto px-3 pt-0 pb-3 sm:px-4">
+    <CollapsibleCard collapsible={false} contentClassName="p-0 sm:p-0">
+      <div className="flex gap-2 overflow-x-auto px-3 pt-3 pb-3 sm:px-4">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}

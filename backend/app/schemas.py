@@ -41,6 +41,8 @@ class LetterOut(BaseModel):
     departmentId: int | None = None
     validatedAt: str = ""
     classifiedAt: str = ""
+    # True when the current viewer may edit registration details (initiator, not yet marked onward).
+    canEditDetails: bool = False
 
 
 class LetterCreate(BaseModel):
@@ -541,6 +543,10 @@ class DocumentOut(BaseModel):
     createdAt: str
     versionCount: int
     currentVersion: DocumentVersionOut | None = None
+
+
+class DocumentUpdate(BaseModel):
+    documentType: str | None = None
 
 
 class StagedDocumentOut(BaseModel):

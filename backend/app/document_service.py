@@ -14,6 +14,7 @@ from app.storage_service import (
     build_storage_key,
     can_preview,
     copy_storage_file,
+    resolve_storage_path,
     save_upload_file,
 )
 
@@ -372,3 +373,75 @@ def get_version_for_access(db: Session, version_id: int) -> tuple[DocumentVersio
         raise HTTPException(status_code=404, detail="Record not found")
     letter = _get_letter(db, document.letter_id)
     return version, document, letter
+
+
+def update_document_meta(
+    db: Session,
+    *,
+    document_id: int,
+    document_type: str | None = None,
+    actor: str | None = None,
+) -> Document:
+    document = db.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    letter = _get_letter(db, document.letter_id)
+    assert_letter_mutable(letter)
+    actor = actor or current_user_name(db)
+    if document_type is not None:
+        if document_type not in DOCUMENT_TYPES:
+            raise HTTPException(status_code=422, detail="Validation failed: invalid document type")
+        document.document_type = document_type
+    add_audit(
+        db,
+        user=actor,
+        module="Documents",
+        action="Document Updated",
+        record=letter.number,
+        description=f"Document #{document.id} type set to {document.document_type}",
+    )
+    db.flush()
+    return document
+
+
+def delete_document(
+    db: Session,
+    *,
+    document_id: int,
+    actor: str | None = None,
+) -> list[str]:
+    document = db.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    letter = _get_letter(db, document.letter_id)
+    assert_letter_mutable(letter)
+    actor = actor or current_user_name(db)
+    versions = (
+        db.query(DocumentVersion)
+        .filter(DocumentVersion.document_id == document.id)
+        .all()
+    )
+    storage_keys = [row.storage_key for row in versions if row.storage_key]
+    add_audit(
+        db,
+        user=actor,
+        module="Documents",
+        action="Document Deleted",
+        record=letter.number,
+        description=f"Deleted {document.document_type} document #{document.id}",
+    )
+    db.delete(document)
+    db.flush()
+    return storage_keys
+
+
+def remove_document_files(storage_keys: list[str]) -> None:
+    for key in storage_keys:
+        if not key or key == "pending":
+            continue
+        try:
+            path = resolve_storage_path(key)
+        except HTTPException:
+            continue
+        if path.is_file():
+            path.unlink(missing_ok=True)

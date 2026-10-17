@@ -84,11 +84,17 @@ def list_letters(
         query = query.filter(owned_letter_filter(actor))
 
     rows = query.order_by(Letter.id.desc()).all()
+    from app.marking_workflow_service import can_edit_letter_details, letter_ids_with_active_markings
+
+    active_marked = letter_ids_with_active_markings(db, [row.id for row in rows])
     items = [
         serialize_letter(
             row,
             include_body=False,
             accessible=admin or user_can_access_letter(db, row, actor, role),
+            can_edit_details=can_edit_letter_details(
+                db, row, actor, has_active=row.id in active_marked
+            ),
         )
         for row in rows
     ]
@@ -179,7 +185,7 @@ def get_letter(letter_id: int, db: Session = Depends(get_db)) -> LetterOut:
     actor = current_user_name(db)
     role = resolve_user_role(db, actor)
     assert_letter_access(db, letter, actor, role)
-    return serialize_letter(letter, accessible=True)
+    return serialize_letter(letter, accessible=True, db=db, viewer=actor)
 
 
 @router.post("", response_model=LetterOut, status_code=201)
@@ -187,14 +193,19 @@ def create_letter(payload: LetterCreate, db: Session = Depends(get_db)) -> Lette
     letter = create_letter_record(db, payload)
     db.commit()
     db.refresh(letter)
-    return serialize_letter(letter)
+    actor = current_user_name(db)
+    return serialize_letter(letter, db=db, viewer=actor)
 
 
 @router.patch("/{letter_id}", response_model=LetterOut)
 def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(get_db)) -> LetterOut:
+    from app.marking_workflow_service import assert_can_edit_letter_details
+
     letter = _get_letter(db, letter_id)
-    assert_letter_access(db, letter, current_user_name(db))
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
     assert_active_letter(letter)
+    assert_can_edit_letter_details(db, letter, actor)
     data = payload.model_dump(exclude_unset=True, by_alias=False)
     mapping = {
         "letterDate": "letter_date",
@@ -207,9 +218,21 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
         "actionRequired": "action_required",
         "bodyText": "body_text",
     }
+    if "number" in data:
+        next_number = (data["number"] or "").strip()
+        if not next_number:
+            raise HTTPException(status_code=422, detail="Letter number is required")
+        data["number"] = next_number
+        if next_number != letter.number:
+            clash = (
+                db.query(Letter.id)
+                .filter(Letter.number == next_number, Letter.id != letter.id)
+                .first()
+            )
+            if clash:
+                raise HTTPException(status_code=409, detail="Letter number already exists")
     if "status" in data:
         _apply_status(letter, data.pop("status"))
-    actor = current_user_name(db)
     for key, value in data.items():
         attr = mapping.get(key, key)
         if attr == "assigned_to" and value is not None and value != letter.assigned_to:
@@ -217,7 +240,7 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
         setattr(letter, attr, value)
     add_audit(
         db,
-        user=current_user_name(db),
+        user=actor,
         module="Letters",
         action="Letter Updated",
         record=letter.number,
@@ -225,19 +248,20 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
     )
     db.commit()
     db.refresh(letter)
-    return serialize_letter(letter)
+    return serialize_letter(letter, db=db, viewer=actor)
 
 
 @router.patch("/{letter_id}/status", response_model=LetterOut)
 def update_letter_status(letter_id: int, payload: LetterStatusUpdate, db: Session = Depends(get_db)) -> LetterOut:
     letter = _get_letter(db, letter_id)
-    assert_letter_access(db, letter, current_user_name(db))
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
     assert_active_letter(letter)
     _apply_status(letter, payload.status)
     letter.last_action = f"Status changed to {payload.status}"
     add_audit(
         db,
-        user=current_user_name(db),
+        user=actor,
         module="Letters",
         action="Status Changed",
         record=letter.number,
@@ -245,7 +269,7 @@ def update_letter_status(letter_id: int, payload: LetterStatusUpdate, db: Sessio
     )
     db.commit()
     db.refresh(letter)
-    return serialize_letter(letter)
+    return serialize_letter(letter, db=db, viewer=actor)
 
 
 @router.get("/{letter_id}/actions", response_model=list[LetterActionOut])

@@ -69,6 +69,8 @@ export type Letter = {
   departmentId?: number | null
   validatedAt?: string
   classifiedAt?: string
+  /** Initiator may edit registration details only until marked onward. */
+  canEditDetails?: boolean
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }

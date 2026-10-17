@@ -22,7 +22,7 @@ export type PendingReferenceLink = {
 type RegisterMode = 'manual' | 'upload'
 
 export function Register({ go }: { go: (p: string) => void }) {
-  const { registerLetter, departments, organizations, users, masterData, letters } = useAppData()
+  const { registerLetter, departments, organizations, users, masterData, letters, me } = useAppData()
   const [mode, setMode] = useState<RegisterMode>('manual')
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -54,6 +54,11 @@ export function Register({ go }: { go: (p: string) => void }) {
     status: 'Registered',
   })
   const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
+
+  useEffect(() => {
+    if (!me.name) return
+    setForm((current) => (current.assignedTo ? current : { ...current, assignedTo: me.name }))
+  }, [me.name])
 
   useEffect(() => {
     listRelationTypes()
@@ -138,7 +143,7 @@ export function Register({ go }: { go: (p: string) => void }) {
   return (
     <>
       <PageTitle title="Register letter" description="Capture correspondence details and assign the next action." action={<Button variant="outline" onClick={() => go('All Letters')}>Cancel</Button>} />
-      <Card className="max-w-4xl">
+      <Card className="mx-auto w-full max-w-4xl">
         <div className="mb-0 flex gap-2 px-5 pt-4 pb-3">
           <button
             type="button"
@@ -177,8 +182,8 @@ export function Register({ go }: { go: (p: string) => void }) {
               <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Subject *</span><input value={form.subject} onChange={(e) => set('subject', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Priority</span><AppSelect value={form.priority} onValueChange={(v) => set('priority', v)} options={(masterData.Priorities ?? ['Routine', 'Important', 'Urgent'])} className="h-10 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Confidentiality</span><AppSelect value={form.confidentiality} onValueChange={(v) => set('confidentiality', v)} options={(masterData['Confidentiality Levels'] ?? ['Normal'])} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">From organization</span><input list="orgs" value={form.from} onChange={(e) => set('from', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">To organization</span><input list="orgs" value={form.to} onChange={(e) => set('to', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
+              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">From organization</span><AppSelect value={form.from} onValueChange={(v) => set('from', v)} options={[{ value: '', label: 'Select…' }, ...organizations.filter((org) => !org.status || org.status === 'Active').map((org) => org.name)]} className="h-10 text-xs" /></label>
+              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">To organization</span><AppSelect value={form.to} onValueChange={(v) => set('to', v)} options={[{ value: '', label: 'Select…' }, ...organizations.filter((org) => !org.status || org.status === 'Active').map((org) => org.name)]} className="h-10 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Department</span><AppSelect value={form.department} onValueChange={(v) => set('department', v)} options={[{ value: '', label: 'Select...' }, ...departments.map((d) => ({ value: d.name, label: d.name }))]} className="h-10 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Assigned to</span><AppSelect value={form.assignedTo} onValueChange={(v) => set('assignedTo', v)} options={[{ value: '', label: 'Select...' }, ...users.map((u) => ({ value: u.name, label: u.name }))]} className="h-10 text-xs" /></label>
               <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Due date</span><input type="date" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
@@ -258,7 +263,6 @@ export function Register({ go }: { go: (p: string) => void }) {
                 </div>
               )}
             </div>
-            <datalist id="orgs">{organizations.map((org) => <option key={org.name} value={org.name} />)}</datalist>
             {error && <p className="px-5 pb-2 text-xs text-red-600">{error}</p>}
             <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
               <Button variant="outline" disabled={busy} onClick={() => submit('Registered')}>Save as draft</Button>

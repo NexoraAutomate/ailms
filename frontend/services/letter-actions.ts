@@ -204,7 +204,7 @@ export function letterRowActions(letter: Letter, role: string): LetterRowActionI
   const status = workflowStatus(letter)
   const catalog = BUTTONS_BY_STATUS[status] ?? ['edit']
   const actions = catalog.filter((action) => {
-    if (action === 'edit') return true
+    if (action === 'edit') return letter.canEditDetails === true
     if (action === 'reply') return replyWorkflowAction(status, role) !== null
     return transitionAllowed(action, status, role)
   })

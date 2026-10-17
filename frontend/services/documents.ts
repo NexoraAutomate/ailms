@@ -40,8 +40,9 @@ async function parseError(response: Response) {
   throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
 }
 
-export async function listLetterDocuments(letterId: string) {
-  const response = await fetch(`${API_BASE}/api/documents?letterId=${encodeURIComponent(letterId)}`, { cache: 'no-store' })
+export async function listLetterDocuments(letterId: string, scope: 'letter' | 'workflow' | 'all' = 'letter') {
+  const search = new URLSearchParams({ letterId, scope })
+  const response = await fetch(`${API_BASE}/api/documents?${search.toString()}`, { cache: 'no-store' })
   if (!response.ok) await parseError(response)
   return response.json() as Promise<LetterDocument[]>
 }
@@ -75,6 +76,21 @@ export async function uploadDocumentVersion(documentId: string, file: File, chan
   })
   if (!response.ok) await parseError(response)
   return response.json() as Promise<DocumentVersion>
+}
+
+export async function updateLetterDocument(documentId: string, input: { documentType?: string }) {
+  const response = await fetch(`${API_BASE}/api/documents/${documentId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!response.ok) await parseError(response)
+  return response.json() as Promise<LetterDocument>
+}
+
+export async function deleteLetterDocument(documentId: string) {
+  const response = await fetch(`${API_BASE}/api/documents/${documentId}`, { method: 'DELETE' })
+  if (!response.ok) await parseError(response)
 }
 
 export function documentDownloadUrl(versionId: number) {

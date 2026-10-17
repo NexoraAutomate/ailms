@@ -39,11 +39,24 @@ def _user_unread_count(db: Session, user_name: str) -> int:
 
 
 def _letters(db: Session, user_name: str, role: str) -> list:
+    from app.marking_workflow_service import can_edit_letter_details, letter_ids_with_active_markings
+
     query = db.query(Letter).filter(Letter.is_archived.is_(False))
     if not is_administrator(role):
         query = query.filter(owned_letter_filter(user_name))
     rows = query.order_by(Letter.id.desc()).all()
-    return [serialize_letter(row, include_body=False, accessible=True) for row in rows]
+    active_marked = letter_ids_with_active_markings(db, [row.id for row in rows])
+    return [
+        serialize_letter(
+            row,
+            include_body=False,
+            accessible=True,
+            can_edit_details=can_edit_letter_details(
+                db, row, user_name, has_active=row.id in active_marked
+            ),
+        )
+        for row in rows
+    ]
 
 
 def _operational_counts(db: Session) -> dict[str, int]:

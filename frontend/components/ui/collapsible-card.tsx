@@ -7,13 +7,19 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 type CollapsibleCardProps = {
-  title: ReactNode
+  /** Omit when the surrounding tab (or parent) already names this section. */
+  title?: ReactNode
   description?: string
   /** Extra controls in the header (e.g. status badge, secondary actions). */
   headerAside?: ReactNode
   /** Kept visible in the header; clicks do not toggle expand/collapse. */
   action?: ReactNode
   defaultExpanded?: boolean
+  /**
+   * When false, renders a plain card with no expand/collapse header
+   * (for tab panels that already identify the section).
+   */
+  collapsible?: boolean
   className?: string
   contentClassName?: string
   children: ReactNode
@@ -48,6 +54,7 @@ export function CollapsibleCard({
   headerAside,
   action,
   defaultExpanded = true,
+  collapsible = true,
   className,
   contentClassName,
   children,
@@ -56,6 +63,14 @@ export function CollapsibleCard({
   const reduceMotion = useReducedMotion()
   const panelId = useId()
   const motionEnabled = useContext(CollapsibleCardMotionContext) && !reduceMotion
+
+  if (!collapsible) {
+    return (
+      <section className={cn('overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm', className)}>
+        <div className={cn('p-4 sm:p-5', contentClassName)}>{children}</div>
+      </section>
+    )
+  }
 
   const header = (
     <div
@@ -73,15 +88,19 @@ export function CollapsibleCard({
       className="flex cursor-pointer flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 transition-colors hover:bg-slate-50/80 sm:px-5"
     >
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          {typeof title === 'string' ? (
-            <h2 className="text-sm font-bold text-slate-700">{title}</h2>
-          ) : (
-            title
-          )}
-          {headerAside}
-        </div>
-        {description ? <p className="mt-0.5 text-xs text-slate-400">{description}</p> : null}
+        {(title != null && title !== '') || headerAside ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {title != null && title !== '' ? (
+              typeof title === 'string' ? (
+                <h2 className="text-sm font-bold text-slate-700">{title}</h2>
+              ) : (
+                title
+              )
+            ) : null}
+            {headerAside}
+          </div>
+        ) : null}
+        {description ? <p className={cn('text-xs text-slate-400', (title != null && title !== '') || headerAside ? 'mt-0.5' : undefined)}>{description}</p> : null}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {action ? (

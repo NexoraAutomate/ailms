@@ -301,7 +301,7 @@ export function MarkingWorkflowPanel({
   }, [actions, allMarkings, me.name])
 
   return (
-    <CollapsibleCard title="Marking workflow" defaultExpanded>
+    <CollapsibleCard collapsible={false}>
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
 

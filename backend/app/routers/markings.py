@@ -155,7 +155,7 @@ def mark_letter(
     return {
         "batch": serialize_batch(batch),
         "markings": [serialize_marking(m) for m in markings],
-        "letter": serialize_letter(letter),
+        "letter": serialize_letter(letter, db=db, viewer=actor),
     }
 
 
@@ -182,7 +182,7 @@ def revoke(
     )
     db.commit()
     db.refresh(marking)
-    return {"marking": serialize_marking(marking), "letter": serialize_letter(letter)}
+    return {"marking": serialize_marking(marking), "letter": serialize_letter(letter, db=db, viewer=actor)}
 
 
 @router.get("/letters/{letter_id}/notes")
@@ -217,7 +217,7 @@ def post_note(
     db.commit()
     notes = list_notes(db, letter_id, actor_name=actor)
     created = next((n for n in notes if n["id"] == note.id), notes[-1] if notes else {})
-    return {"note": created, "letter": serialize_letter(letter)}
+    return {"note": created, "letter": serialize_letter(letter, db=db, viewer=actor)}
 
 
 @router.get("/letters/{letter_id}/attachments")
@@ -251,7 +251,7 @@ def post_letter_attachments(
     db.commit()
     return {
         "attachments": [serialize_attachment(db, row, editable=True) for row in created],
-        "letter": serialize_letter(letter),
+        "letter": serialize_letter(letter, db=db, viewer=actor),
     }
 
 
@@ -279,7 +279,7 @@ def patch_note(
     db.commit()
     notes = list_notes(db, letter.id, actor_name=actor)
     updated = next((n for n in notes if n["id"] == note_id), {})
-    return {"note": updated, "letter": serialize_letter(letter)}
+    return {"note": updated, "letter": serialize_letter(letter, db=db, viewer=actor)}
 
 
 @router.delete("/notes/{note_id}")
@@ -302,7 +302,7 @@ def remove_note(
         client_ip=client_ip_from_request(request),
     )
     db.commit()
-    return {"ok": True, "letter": serialize_letter(letter)}
+    return {"ok": True, "letter": serialize_letter(letter, db=db, viewer=actor)}
 
 
 def _attachment_letter(db: Session, attachment: CorrespondenceAttachment) -> Letter:
@@ -337,7 +337,7 @@ def patch_attachment(
     db.refresh(attachment)
     return {
         "attachment": serialize_attachment(db, attachment, editable=True),
-        "letter": serialize_letter(letter),
+        "letter": serialize_letter(letter, db=db, viewer=actor),
     }
 
 
@@ -367,7 +367,7 @@ def attachment_replaced(
     db.refresh(attachment)
     return {
         "attachment": serialize_attachment(db, attachment, editable=True),
-        "letter": serialize_letter(letter),
+        "letter": serialize_letter(letter, db=db, viewer=actor),
     }
 
 
@@ -391,7 +391,7 @@ def remove_attachment(
         client_ip=client_ip_from_request(request),
     )
     db.commit()
-    return {"ok": True, "letter": serialize_letter(letter)}
+    return {"ok": True, "letter": serialize_letter(letter, db=db, viewer=actor)}
 
 
 @router.post("/{marking_id}/respond")
@@ -424,7 +424,7 @@ def respond(
     return {
         "note": created,
         "marking": serialize_marking(marking),
-        "letter": serialize_letter(letter),
+        "letter": serialize_letter(letter, db=db, viewer=actor),
     }
 
 
@@ -461,4 +461,4 @@ def close(
     )
     db.commit()
     db.refresh(letter)
-    return {"letter": serialize_letter(letter)}
+    return {"letter": serialize_letter(letter, db=db, viewer=actor)}

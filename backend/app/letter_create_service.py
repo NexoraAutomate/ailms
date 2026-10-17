@@ -26,7 +26,8 @@ def create_letter_record(
 
     data = payload.model_dump(by_alias=False)
     actor = actor or current_user_name(db)
-    assigned_to = data["assignedTo"] or ""
+    # Default holder is the registrant unless another assignee is chosen at registration.
+    assigned_to = (data["assignedTo"] or "").strip() or actor
     letter = Letter(
         number=data["number"],
         letter_date=data["letterDate"],
@@ -41,7 +42,7 @@ def create_letter_record(
         due_date=data["dueDate"],
         assigned_to=assigned_to,
         created_by=actor,
-        assigned_by=actor if assigned_to else "",
+        assigned_by=actor,
         last_action=data["lastAction"] or "Registered",
         confidentiality=data["confidentiality"],
         action_required=data["actionRequired"],
@@ -59,7 +60,7 @@ def create_letter_record(
         record=letter.number,
         description=f"{letter.type} letter registered",
     )
-    if letter.assigned_to:
+    if letter.assigned_to and letter.assigned_to != actor:
         add_notification(
             db,
             title="New Assignment",
