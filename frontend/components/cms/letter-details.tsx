@@ -20,7 +20,6 @@ import { CollapsibleCardMotionProvider } from '@/components/ui/collapsible-card'
 import { getLetter, priorityTone, statusTone, type Letter } from '@/services/letters'
 import { letterRowActions } from '@/services/letter-actions'
 import {
-  ApprovalEscalationPanel,
   CorrespondenceThreadPanel,
   DocumentsPanel,
   RelatedMeetingsPanel,
@@ -174,7 +173,6 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
           {tab === 'workflow' && (
             <div>
               <MarkingWorkflowPanel letter={letter} users={users} onDone={refresh} />
-              <ApprovalEscalationPanel letter={letter} onDone={refresh} />
               <RelatedMeetingsPanel letter={letter} go={go} />
             </div>
           )}
