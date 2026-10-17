@@ -61,19 +61,41 @@ def has_active_markings(db: Session, letter_id: int) -> bool:
     )
 
 
+def marking_has_children(db: Session, marking_id: int) -> bool:
+    return (
+        db.query(Marking.id).filter(Marking.parent_marking_id == marking_id).first() is not None
+    )
+
+
+def leaf_inbound_markings(db: Session, letter_id: int, user_name: str) -> list[Marking]:
+    """Active markings to the user that have not been remade onward."""
+    name = (user_name or "").strip()
+    if not name:
+        return []
+    inbound = (
+        db.query(Marking)
+        .filter(
+            Marking.letter_id == letter_id,
+            Marking.to_user == name,
+            Marking.status == "active",
+        )
+        .order_by(Marking.id.asc())
+        .all()
+    )
+    return [m for m in inbound if not marking_has_children(db, m.id)]
+
+
 def user_holds_letter(db: Session, letter: Letter, actor_name: str) -> bool:
+    """
+    Holder may mark / note / close.
+    After marking onward, the marker is no longer a holder (revoke-only until remade).
+    """
     name = (actor_name or "").strip()
     if not name:
         return False
-    if (
-        db.query(Marking.id)
-        .filter(Marking.letter_id == letter.id, Marking.to_user == name, Marking.status == "active")
-        .first()
-    ):
-        return True
     if is_initiator(letter, name) and not has_active_markings(db, letter.id):
         return True
-    return False
+    return len(leaf_inbound_markings(db, letter.id, name)) > 0
 
 
 def assert_can_mutate(db: Session, letter: Letter, actor_name: str) -> None:
@@ -176,6 +198,18 @@ def create_mark_batch(
             raise HTTPException(status_code=400, detail="Parent marking is not active")
         if parent.to_user != actor_name and not _is_admin(db, actor_name):
             raise HTTPException(status_code=403, detail="Parent marking is not addressed to you")
+        if marking_has_children(db, parent.id):
+            raise HTTPException(status_code=400, detail="Parent marking was already remade onward")
+    else:
+        # Auto-link to the sole leaf inbound so remake blocks prior marker's revoke.
+        leaves = leaf_inbound_markings(db, letter.id, actor_name)
+        if len(leaves) == 1:
+            parent = leaves[0]
+        elif len(leaves) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="parentMarkingId is required when you hold multiple active markings",
+            )
 
     seen: set[str] = set()
     normalized: list[dict[str, Any]] = []
@@ -653,29 +687,26 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
         actions = []
     else:
         actions = []
-        if user_holds_letter(db, letter, actor_name) or _is_admin(db, actor_name):
+        holds = user_holds_letter(db, letter, actor_name)
+        # After marking onward, marker is revoke-only (Admin may still mutate).
+        if holds or _is_admin(db, actor_name):
             actions.extend(["mark", "add_note"])
-            mine = (
-                db.query(Marking)
-                .filter(
-                    Marking.letter_id == letter.id,
-                    Marking.to_user == actor_name,
-                    Marking.action == "response_required",
-                    Marking.status == "active",
-                )
-                .first()
-            )
-            if mine:
+            leaves = leaf_inbound_markings(db, letter.id, actor_name)
+            if any(m.action == "response_required" for m in leaves):
                 actions.append("respond")
-        if is_initiator(letter, actor_name) and user_holds_letter(db, letter, actor_name):
+        if is_initiator(letter, actor_name) and holds:
             actions.append("close")
-        # Revoke candidates exist?
-        revokable = (
-            db.query(Marking.id)
-            .filter(Marking.letter_id == letter.id, Marking.from_user == actor_name, Marking.status == "active")
-            .first()
+        # Revoke only while recipient has not remade onward.
+        outbound = (
+            db.query(Marking)
+            .filter(
+                Marking.letter_id == letter.id,
+                Marking.from_user == actor_name,
+                Marking.status == "active",
+            )
+            .all()
         )
-        if revokable:
+        if any(not marking_has_children(db, m.id) for m in outbound):
             actions.append("revoke")
     return actions
 

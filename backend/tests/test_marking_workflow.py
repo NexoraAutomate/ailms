@@ -14,6 +14,7 @@ from app.db_upgrade import upgrade_simple_marking_schema
 from app.marking_reminders import process_marking_reminders
 from app.marking_workflow_service import (
     add_note,
+    available_marking_actions,
     batch_tracker,
     close_letter,
     create_mark_batch,
@@ -100,6 +101,34 @@ class MarkingWorkflowTest(unittest.TestCase):
             self.db.commit()
         finally:
             self.db.close()
+
+    def test_marker_is_revoke_only_after_marking_onward(self) -> None:
+        self.assertTrue(user_holds_letter(self.db, self.letter, self.initiator.name))
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertFalse(user_holds_letter(self.db, self.letter, self.initiator.name))
+        self.assertTrue(user_holds_letter(self.db, self.letter, self.user_a.name))
+        initiator_actions = available_marking_actions(self.db, self.letter, self.initiator.name)
+        self.assertIn("revoke", initiator_actions)
+        self.assertNotIn("mark", initiator_actions)
+        self.assertNotIn("add_note", initiator_actions)
+        self.assertNotIn("close", initiator_actions)
+        with self.assertRaises(HTTPException) as ctx:
+            add_note(
+                self.db,
+                letter=self.letter,
+                actor_name=self.initiator.name,
+                body_text="Should not be allowed",
+            )
+        self.assertEqual(ctx.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as ctx2:
+            close_letter(self.db, letter=self.letter, actor_name=self.initiator.name, force=True)
+        self.assertEqual(ctx2.exception.status_code, 403)
 
     def test_mixed_batch_and_notifications_path(self) -> None:
         self.assertTrue(user_holds_letter(self.db, self.letter, self.initiator.name))
