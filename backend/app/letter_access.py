@@ -1,4 +1,4 @@
-"""Per-user letter visibility: assignee, creator, RouteStep, ActionItem, dept managers."""
+"""Per-user letter visibility: assignee, creator, markings, RouteStep, ActionItem, dept managers."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models import ActionItem, Letter, RouteStep, User
+from app.models import ActionItem, Letter, Marking, RouteStep, User
 
 
 def is_administrator(role: str | None) -> bool:
@@ -53,6 +53,18 @@ def user_on_route_or_action(db: Session, letter_id: int, user_name: str) -> bool
     return False
 
 
+def user_on_marking(db: Session, letter_id: int, user_name: str) -> bool:
+    return (
+        db.query(Marking.id)
+        .filter(
+            Marking.letter_id == letter_id,
+            or_(Marking.from_user == user_name, Marking.to_user == user_name),
+        )
+        .first()
+        is not None
+    )
+
+
 def user_can_access_letter(db: Session, letter: Letter, user_name: str, role: str | None = None) -> bool:
     from app.services import normalize_role
 
@@ -69,6 +81,8 @@ def user_can_access_letter(db: Session, letter: Letter, user_name: str, role: st
             return True
     if letter_meant_for_user(letter, user_name):
         return True
+    if user_on_marking(db, letter.id, user_name):
+        return True
     if user_on_route_or_action(db, letter.id, user_name):
         return True
     return False
@@ -81,7 +95,7 @@ def assert_letter_access(db: Session, letter: Letter, user_name: str, role: str 
 
 
 def owned_letter_filter(user_name: str):
-    """SQLAlchemy filter for Track / bootstrap scoping (includes RouteStep / ActionItem)."""
+    """SQLAlchemy filter for Track / bootstrap scoping (includes markings + legacy route/action)."""
     name = (user_name or "").strip()
     return or_(
         Letter.assigned_to == name,
@@ -89,4 +103,9 @@ def owned_letter_filter(user_name: str):
         Letter.assigned_by == name,
         Letter.id.in_(select(ActionItem.letter_id).where(ActionItem.assignee == name)),
         Letter.id.in_(select(RouteStep.letter_id).where(RouteStep.to_user == name)),
+        Letter.id.in_(
+            select(Marking.letter_id).where(
+                or_(Marking.from_user == name, Marking.to_user == name)
+            )
+        ),
     )

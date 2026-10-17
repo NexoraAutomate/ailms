@@ -27,6 +27,7 @@ from app.routers.auth import router as auth_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.letters import router as letters_router
 from app.routers.workflow import router as workflow_router
+from app.routers.markings import router as markings_router
 from app.routers.approvals import router as approvals_router
 from app.routers.escalations import router as escalations_router
 from app.routers.reminders import router as reminders_router
@@ -97,6 +98,7 @@ app.include_router(master_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(workflow_router, prefix="/api")
+app.include_router(markings_router, prefix="/api")
 app.include_router(approvals_router, prefix="/api")
 app.include_router(escalations_router, prefix="/api")
 app.include_router(reminders_router, prefix="/api")

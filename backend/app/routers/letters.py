@@ -94,17 +94,23 @@ def list_letters(
     ]
 
     if view == "inbox":
-        # Received for action — exclude letters this user has already responded / marked onward.
+        from app.marking_workflow_service import letter_ids_marked_to_user
+
+        marked_to = {str(i) for i in letter_ids_marked_to_user(db, actor)}
         items = [
             item
             for item in items
-            if item.assignedTo == actor and (item.assignedBy or "") != actor
+            if item.id in marked_to
+            or (item.assignedTo == actor and (item.assignedBy or "") != actor)
         ]
     elif view == "sent":
+        from app.marking_workflow_service import letter_ids_marked_by_user
+
+        marked_by = {str(i) for i in letter_ids_marked_by_user(db, actor)}
         items = [
             item
             for item in items
-            if item.createdBy == actor or item.assignedBy == actor
+            if item.id in marked_by or item.createdBy == actor or item.assignedBy == actor
         ]
     elif view == "incoming":
         items = [item for item in items if item.type == "Incoming"]
