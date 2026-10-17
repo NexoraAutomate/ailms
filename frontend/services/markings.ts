@@ -60,6 +60,19 @@ export type MarkBatchInput = {
   parentMarkingId?: number | null
 }
 
+export type CorrespondenceAttachment = {
+  id: number
+  documentId: number | null
+  versionId: number | null
+  previewable: boolean
+  mimeType: string
+  attachmentKind: string
+  storageKey: string
+  originalFilename: string
+  clientIp: string
+  createdAt: string
+}
+
 export type CorrespondenceNote = {
   id: number
   letterId: string
@@ -69,15 +82,8 @@ export type CorrespondenceNote = {
   isResponse: boolean
   clientIp: string
   createdAt: string
-  attachments: {
-    id: number
-    documentId: number | null
-    attachmentKind: string
-    storageKey: string
-    originalFilename: string
-    clientIp: string
-    createdAt: string
-  }[]
+  editable: boolean
+  attachments: CorrespondenceAttachment[]
 }
 
 export function markingActionLabel(action: string) {
@@ -149,4 +155,45 @@ export async function fetchBatchTracker(batchId: number) {
     allResponsesReceived: boolean
     markings: MarkingNode[]
   }>(`/api/markings/batches/${batchId}/tracker`)
+}
+
+export async function updateMarkingNote(noteId: number, bodyText: string) {
+  return api.patch<{ note: CorrespondenceNote; letter: Letter }>(`/api/markings/notes/${noteId}`, {
+    bodyText,
+  })
+}
+
+export async function deleteMarkingNote(noteId: number) {
+  return api.delete<{ ok: boolean; letter: Letter }>(`/api/markings/notes/${noteId}`)
+}
+
+export async function addAttachmentsToNote(
+  noteId: number,
+  attachments: { attachmentKind: string; documentId?: number; originalFilename?: string }[],
+) {
+  return api.post<{ note: CorrespondenceNote; letter: Letter }>(
+    `/api/markings/notes/${noteId}/attachments`,
+    { attachments },
+  )
+}
+
+export async function updateMarkingAttachment(
+  attachmentId: number,
+  input: { attachmentKind?: string; originalFilename?: string },
+) {
+  return api.patch<{ attachment: CorrespondenceAttachment; letter: Letter }>(
+    `/api/markings/attachments/${attachmentId}`,
+    input,
+  )
+}
+
+export async function markAttachmentReplaced(attachmentId: number, originalFilename: string) {
+  return api.post<{ attachment: CorrespondenceAttachment; letter: Letter }>(
+    `/api/markings/attachments/${attachmentId}/replaced`,
+    { originalFilename },
+  )
+}
+
+export async function deleteMarkingAttachment(attachmentId: number) {
+  return api.delete<{ ok: boolean; letter: Letter }>(`/api/markings/attachments/${attachmentId}`)
 }

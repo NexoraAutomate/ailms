@@ -1,7 +1,19 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, CornerUpLeft, MessageSquare, Paperclip, Send, X, XCircle } from 'lucide-react'
+import {
+  CheckCircle2,
+  CornerUpLeft,
+  ExternalLink,
+  Eye,
+  MessageSquare,
+  Paperclip,
+  Pencil,
+  Send,
+  Trash2,
+  X,
+  XCircle,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import {
@@ -11,7 +23,12 @@ import {
 import { Badge } from '@/components/cms/ui'
 import { formatDateTime } from '@/lib/datetime'
 import type { Letter } from '@/services/letters'
-import { uploadLetterDocument } from '@/services/documents'
+import {
+  documentDownloadUrl,
+  documentPreviewUrl,
+  uploadDocumentVersion,
+  uploadLetterDocument,
+} from '@/services/documents'
 import {
   ACTION_LABELS,
   ATTACHMENT_KINDS,
@@ -23,15 +40,21 @@ import {
   type ResponseType,
 } from '@/services/marking-types'
 import {
+  addAttachmentsToNote,
   addMarkingNote,
   closeMarkedLetter,
+  deleteMarkingAttachment,
+  deleteMarkingNote,
   fetchMarkingActions,
   fetchMarkingNotes,
   fetchMarkingTree,
+  markAttachmentReplaced,
   markLetter,
   markingActionLabel,
   respondToMarking,
   revokeMarking,
+  updateMarkingAttachment,
+  updateMarkingNote,
   type CorrespondenceNote,
   type MarkRecipientInput,
   type MarkingNode,
@@ -97,6 +120,9 @@ export function MarkingWorkflowPanel({
   const [forceClose, setForceClose] = useState(false)
   const [respondMarkingId, setRespondMarkingId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  const [previewVersionId, setPreviewVersionId] = useState<number | null>(null)
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
+  const [editingNoteBody, setEditingNoteBody] = useState('')
 
   const resetComposer = () => {
     setRemarks('')
@@ -286,7 +312,10 @@ export function MarkingWorkflowPanel({
           {groupNotesByAuthor(notes).map((group) => {
             const author = group[0]?.authorUser ?? ''
             const hasResponse = group.some((n) => n.isResponse)
-            const attachments = group.flatMap((n) => n.attachments)
+            const groupEditable = group.some((n) => n.editable)
+            const attachments = group.flatMap((n) =>
+              n.attachments.map((a) => ({ ...a, noteId: n.id, noteEditable: n.editable })),
+            )
             return (
               <li
                 key={`note-group-${group[0]?.id ?? author}`}
@@ -295,17 +324,118 @@ export function MarkingWorkflowPanel({
                 <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5">
                   <p className="text-sm font-semibold text-slate-800">{author}</p>
                   {hasResponse && <Badge>Response</Badge>}
+                  {!groupEditable && (
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                      Locked
+                    </span>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3">
                   <div className="divide-y divide-slate-100 px-4 py-1 md:col-span-2 md:border-r md:border-slate-100">
                     {group.map((note) => (
                       <div key={note.id} className="py-3">
-                        <div className="mb-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                        <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
                           <span>{note.createdAt ? formatDateTime(note.createdAt) : ''}</span>
                           {note.clientIp ? <span>IP {note.clientIp}</span> : null}
                           {note.isResponse ? <span className="font-medium text-slate-600">Response</span> : null}
+                          {note.editable && (
+                            <span className="ml-auto flex gap-2">
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium text-[#1769aa] hover:underline"
+                                onClick={() => {
+                                  setEditingNoteId(note.id)
+                                  setEditingNoteBody(note.bodyText)
+                                }}
+                              >
+                                <Pencil className="h-3 w-3" /> Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 font-medium text-rose-600 hover:underline"
+                                disabled={busy}
+                                onClick={() =>
+                                  void run(async () => {
+                                    await deleteMarkingNote(note.id)
+                                  })
+                                }
+                              >
+                                <Trash2 className="h-3 w-3" /> Delete
+                              </button>
+                            </span>
+                          )}
                         </div>
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{note.bodyText}</p>
+                        {editingNoteId === note.id ? (
+                          <div className="space-y-2">
+                            <textarea
+                              className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                              rows={3}
+                              value={editingNoteBody}
+                              onChange={(e) => setEditingNoteBody(e.target.value)}
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                disabled={busy}
+                                onClick={() =>
+                                  void run(async () => {
+                                    await updateMarkingNote(note.id, editingNoteBody)
+                                    setEditingNoteId(null)
+                                  })
+                                }
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setEditingNoteId(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                            {note.bodyText}
+                          </p>
+                        )}
+                        {note.editable && (
+                          <label className="mt-2 inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-[#1769aa] hover:underline">
+                            <Paperclip className="h-3 w-3" /> Add files
+                            <input
+                              type="file"
+                              multiple
+                              className="hidden"
+                              onChange={(e) => {
+                                const files = Array.from(e.target.files || [])
+                                e.target.value = ''
+                                if (!files.length) return
+                                void run(async () => {
+                                  const uploaded: {
+                                    attachmentKind: string
+                                    documentId: number
+                                    originalFilename: string
+                                  }[] = []
+                                  for (const file of files) {
+                                    const doc = await uploadLetterDocument(
+                                      letter.id,
+                                      file,
+                                      defaultKind,
+                                      `Workflow attachment (${defaultKind})`,
+                                    )
+                                    uploaded.push({
+                                      attachmentKind: defaultKind,
+                                      documentId: Number(doc.id),
+                                      originalFilename: file.name,
+                                    })
+                                  }
+                                  await addAttachmentsToNote(note.id, uploaded)
+                                })
+                              }}
+                            />
+                          </label>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -322,16 +452,96 @@ export function MarkingWorkflowPanel({
                           >
                             <div className="flex items-start gap-2">
                               <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1">
                                 <p className="truncate text-xs font-semibold text-slate-800">
                                   {a.originalFilename ||
                                     a.storageKey ||
                                     (a.documentId ? `Document #${a.documentId}` : 'File')}
                                 </p>
-                                <p className="mt-0.5 text-[10px] font-medium text-slate-500">{a.attachmentKind}</p>
+                                {a.noteEditable ? (
+                                  <select
+                                    className="mt-1 w-full rounded border border-slate-200 px-1 py-0.5 text-[10px]"
+                                    value={a.attachmentKind}
+                                    disabled={busy}
+                                    onChange={(e) =>
+                                      void run(async () => {
+                                        await updateMarkingAttachment(a.id, {
+                                          attachmentKind: e.target.value,
+                                        })
+                                      })
+                                    }
+                                  >
+                                    {ATTACHMENT_KINDS.map((kind) => (
+                                      <option key={kind} value={kind}>
+                                        {kind}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <p className="mt-0.5 text-[10px] font-medium text-slate-500">
+                                    {a.attachmentKind}
+                                  </p>
+                                )}
                                 {a.clientIp ? (
                                   <p className="mt-0.5 text-[10px] text-slate-400">IP {a.clientIp}</p>
                                 ) : null}
+                                <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1 text-[10px] font-medium">
+                                  {a.versionId && a.previewable ? (
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-0.5 text-[#1769aa] hover:underline"
+                                      onClick={() => setPreviewVersionId(a.versionId)}
+                                    >
+                                      <Eye className="h-3 w-3" /> Preview
+                                    </button>
+                                  ) : null}
+                                  {a.versionId ? (
+                                    <a
+                                      href={documentDownloadUrl(a.versionId)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-0.5 text-[#1769aa] hover:underline"
+                                    >
+                                      <ExternalLink className="h-3 w-3" /> Open
+                                    </a>
+                                  ) : null}
+                                  {a.noteEditable && a.documentId ? (
+                                    <label className="inline-flex cursor-pointer items-center gap-0.5 text-[#1769aa] hover:underline">
+                                      Replace
+                                      <input
+                                        type="file"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0]
+                                          e.target.value = ''
+                                          if (!file || !a.documentId) return
+                                          void run(async () => {
+                                            await uploadDocumentVersion(
+                                              String(a.documentId),
+                                              file,
+                                              'Replaced from workflow',
+                                            )
+                                            await markAttachmentReplaced(a.id, file.name)
+                                          })
+                                        }}
+                                      />
+                                    </label>
+                                  ) : null}
+                                  {a.noteEditable ? (
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-0.5 text-rose-600 hover:underline"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        void run(async () => {
+                                          await deleteMarkingAttachment(a.id)
+                                        })
+                                      }
+                                    >
+                                      <Trash2 className="h-3 w-3" /> Delete
+                                    </button>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
                           </li>
@@ -345,6 +555,34 @@ export function MarkingWorkflowPanel({
           })}
         </ul>
       </div>
+
+      {previewVersionId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl bg-white p-4 shadow-xl">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-sm font-bold text-slate-700">Document preview</p>
+              <div className="flex gap-2">
+                <a
+                  href={documentDownloadUrl(previewVersionId)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-medium text-[#1769aa] hover:underline"
+                >
+                  Open / download
+                </a>
+                <Button size="sm" variant="outline" onClick={() => setPreviewVersionId(null)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+            <iframe
+              title="Document preview"
+              src={documentPreviewUrl(previewVersionId)}
+              className="min-h-0 flex-1 rounded border border-slate-200 bg-white"
+            />
+          </div>
+        </div>
+      )}
 
       {dialog === 'mark' && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center">

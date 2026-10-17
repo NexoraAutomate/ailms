@@ -20,10 +20,12 @@ from app.marking_workflow_service import (
     create_mark_batch,
     list_tracked,
     marking_tree,
+    note_is_editable,
     revoke_marking,
+    update_note,
     user_holds_letter,
 )
-from app.models import Letter, Marking, MarkingReminderLog, User
+from app.models import CorrespondenceNote, Letter, Marking, MarkingReminderLog, User
 
 
 def _num() -> str:
@@ -101,6 +103,33 @@ class MarkingWorkflowTest(unittest.TestCase):
             self.db.commit()
         finally:
             self.db.close()
+
+    def test_notes_locked_after_marking_onward(self) -> None:
+        add_note(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            body_text="Draft while holding",
+            client_ip="10.0.0.5",
+        )
+        self.db.flush()
+        note = (
+            self.db.query(CorrespondenceNote)
+            .filter(CorrespondenceNote.letter_id == self.letter.id)
+            .one()
+        )
+        self.assertTrue(note_is_editable(self.db, note, self.initiator.name))
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertFalse(note_is_editable(self.db, note, self.initiator.name))
+        with self.assertRaises(HTTPException) as ctx:
+            update_note(self.db, note=note, actor_name=self.initiator.name, body_text="Nope")
+        self.assertEqual(ctx.exception.status_code, 403)
 
     def test_marker_is_revoke_only_after_marking_onward(self) -> None:
         self.assertTrue(user_holds_letter(self.db, self.letter, self.initiator.name))
