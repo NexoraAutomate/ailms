@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
+  CalendarDays,
   FileText,
   GitBranch,
   Link2,
@@ -26,7 +27,7 @@ import {
 } from '@/components/cms/letter-panels'
 import { MarkingWorkflowPanel } from '@/components/cms/marking-workflow-panel'
 
-type LetterTabId = 'details' | 'documents' | 'workflow' | 'references' | 'ai'
+type LetterTabId = 'details' | 'documents' | 'workflow' | 'meetings' | 'references' | 'ai'
 
 const LETTER_TABS: {
   id: LetterTabId
@@ -36,6 +37,7 @@ const LETTER_TABS: {
   { id: 'details', label: 'Correspondence Details', icon: FileText },
   { id: 'documents', label: 'Documents & Attachments', icon: Paperclip },
   { id: 'workflow', label: 'Workflow', icon: GitBranch },
+  { id: 'meetings', label: 'Related Meetings', icon: CalendarDays },
   { id: 'references', label: 'Reference & Linked Letters', icon: Link2 },
   { id: 'ai', label: 'AI Intelligence Panel', icon: Sparkles },
 ]
@@ -170,12 +172,9 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
             </div>
           )}
 
-          {tab === 'workflow' && (
-            <div>
-              <MarkingWorkflowPanel letter={letter} users={users} onDone={refresh} />
-              <RelatedMeetingsPanel letter={letter} go={go} />
-            </div>
-          )}
+          {tab === 'workflow' && <MarkingWorkflowPanel letter={letter} users={users} onDone={refresh} />}
+
+          {tab === 'meetings' && <RelatedMeetingsPanel letter={letter} go={go} />}
 
           {tab === 'references' && (
             <CorrespondenceThreadPanel letter={letter} go={go} />
