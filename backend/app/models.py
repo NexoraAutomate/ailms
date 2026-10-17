@@ -117,6 +117,14 @@ class Letter(Base):
     )
     validated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     classified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    initiator_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_by: Mapped[str] = mapped_column(String(120), default="")
+    close_ip: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -231,6 +239,144 @@ class DispatchRecord(Base):
     recipients: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     dispatched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MarkingBatch(Base):
+    """One mark submit that creates one or more recipient markings."""
+
+    __tablename__ = "cms_marking_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    from_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    from_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_users.id", ondelete="SET NULL"), nullable=True
+    )
+    remarks: Mapped[str] = mapped_column(Text, default="")
+    pathway_notify: Mapped[bool] = mapped_column(Boolean, default=False)
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class Marking(Base):
+    """Directed assignment edge in the correspondence marking tree."""
+
+    __tablename__ = "cms_markings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_marking_batches.id", ondelete="CASCADE"), index=True
+    )
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    parent_marking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_markings.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    from_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    to_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    action: Mapped[str] = mapped_column(String(40), default="forward", index=True)
+    response_type: Mapped[str] = mapped_column(String(40), default="")
+    response_type_other: Mapped[str] = mapped_column(String(200), default="")
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    due_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    priority: Mapped[str] = mapped_column(String(40), default="Routine")
+    track: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_by: Mapped[str] = mapped_column(String(120), default="")
+    revoke_ip: Mapped[str] = mapped_column(String(80), default="")
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    response_note_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class CorrespondenceNote(Base):
+    """User input on a correspondence (optionally fulfilling Response Required)."""
+
+    __tablename__ = "cms_correspondence_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    marking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_markings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    author_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    body_text: Mapped[str] = mapped_column(Text, default="")
+    is_response: Mapped[bool] = mapped_column(Boolean, default=False)
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class CorrespondenceAttachment(Base):
+    """Typed file attached to a correspondence note."""
+
+    __tablename__ = "cms_correspondence_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    note_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_correspondence_notes.id", ondelete="CASCADE"), index=True
+    )
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    attachment_kind: Mapped[str] = mapped_column(String(60), default="Other")
+    storage_key: Mapped[str] = mapped_column(String(500), default="")
+    original_filename: Mapped[str] = mapped_column(String(255), default="")
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MarkingSubscription(Base):
+    """Pathway notification subscription for a marker on a letter/batch."""
+
+    __tablename__ = "cms_marking_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_marking_batches.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    user_name: Mapped[str] = mapped_column(String(120), default="", index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MarkingReminderLog(Base):
+    """Dedupe log for Response Required reminder notifications."""
+
+    __tablename__ = "cms_marking_reminder_log"
+    __table_args__ = (
+        UniqueConstraint("marking_id", "reminder_key", "anchor_date", name="uq_cms_marking_reminder_dedup"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    marking_id: Mapped[int] = mapped_column(ForeignKey("cms_markings.id", ondelete="CASCADE"), index=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    reminder_key: Mapped[str] = mapped_column(String(40), index=True)
+    anchor_date: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class OutboundEmail(Base):
+    """Provisioned outbound email queue (SMTP may be disabled)."""
+
+    __tablename__ = "cms_outbound_emails"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    to_address: Mapped[str] = mapped_column(String(255), default="")
+    subject: Mapped[str] = mapped_column(String(255), default="")
+    body_text: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    letter_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_letters.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    notification_type: Mapped[str] = mapped_column(String(60), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class LetterAction(Base):

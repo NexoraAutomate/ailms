@@ -759,3 +759,282 @@ def infer_department_tiers(db) -> None:
         ):
             continue
         d.tier = tier_by_depth.get(depth(d.id), "Group")
+
+
+def upgrade_simple_marking_schema(engine: Engine) -> None:
+    """Simple marking workflow tables + letter close/initiator columns (spec 01 / 08)."""
+    inspector = inspect(engine)
+
+    if inspector.has_table("cms_letters"):
+        columns = {col["name"] for col in inspector.get_columns("cms_letters")}
+        statements: list[str] = []
+        if "initiator_user_id" not in columns:
+            statements.append(
+                "ALTER TABLE cms_letters ADD COLUMN initiator_user_id INTEGER "
+                "REFERENCES cms_users(id) ON DELETE SET NULL"
+            )
+        if "closed_at" not in columns:
+            statements.append("ALTER TABLE cms_letters ADD COLUMN closed_at TIMESTAMP NULL")
+        if "closed_by" not in columns:
+            statements.append("ALTER TABLE cms_letters ADD COLUMN closed_by VARCHAR(120) DEFAULT ''")
+        if "close_ip" not in columns:
+            statements.append("ALTER TABLE cms_letters ADD COLUMN close_ip VARCHAR(80) DEFAULT ''")
+        if statements:
+            with engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+                if "initiator_user_id" not in columns:
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS ix_cms_letters_initiator_user_id "
+                            "ON cms_letters (initiator_user_id)"
+                        )
+                    )
+
+    if not inspector.has_table("cms_marking_batches"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_marking_batches (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        from_user VARCHAR(120) DEFAULT '',
+                        from_user_id INTEGER REFERENCES cms_users(id) ON DELETE SET NULL,
+                        remarks TEXT DEFAULT '',
+                        pathway_notify BOOLEAN DEFAULT FALSE,
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_marking_batches_letter_id "
+                    "ON cms_marking_batches (letter_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_marking_batches_from_user "
+                    "ON cms_marking_batches (from_user)"
+                )
+            )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_markings"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_markings (
+                        id SERIAL PRIMARY KEY,
+                        batch_id INTEGER NOT NULL REFERENCES cms_marking_batches(id) ON DELETE CASCADE,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        parent_marking_id INTEGER REFERENCES cms_markings(id) ON DELETE SET NULL,
+                        from_user VARCHAR(120) DEFAULT '',
+                        to_user VARCHAR(120) DEFAULT '',
+                        action VARCHAR(40) DEFAULT 'forward',
+                        response_type VARCHAR(40) DEFAULT '',
+                        response_type_other VARCHAR(200) DEFAULT '',
+                        instructions TEXT DEFAULT '',
+                        due_at DATE NULL,
+                        priority VARCHAR(40) DEFAULT 'Routine',
+                        track BOOLEAN DEFAULT TRUE,
+                        reminders_enabled BOOLEAN DEFAULT FALSE,
+                        status VARCHAR(40) DEFAULT 'active',
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        revoked_at TIMESTAMP NULL,
+                        revoked_by VARCHAR(120) DEFAULT '',
+                        revoke_ip VARCHAR(80) DEFAULT '',
+                        responded_at TIMESTAMP NULL,
+                        response_note_id INTEGER NULL
+                    )
+                    """
+                )
+            )
+            for idx in (
+                "letter_id",
+                "batch_id",
+                "parent_marking_id",
+                "from_user",
+                "to_user",
+                "action",
+                "status",
+                "track",
+            ):
+                conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS ix_cms_markings_{idx} ON cms_markings ({idx})"
+                    )
+                )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_correspondence_notes"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_correspondence_notes (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        marking_id INTEGER REFERENCES cms_markings(id) ON DELETE SET NULL,
+                        author_user VARCHAR(120) DEFAULT '',
+                        body_text TEXT DEFAULT '',
+                        is_response BOOLEAN DEFAULT FALSE,
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_notes_letter_id "
+                    "ON cms_correspondence_notes (letter_id)"
+                )
+            )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_correspondence_attachments"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_correspondence_attachments (
+                        id SERIAL PRIMARY KEY,
+                        note_id INTEGER NOT NULL
+                            REFERENCES cms_correspondence_notes(id) ON DELETE CASCADE,
+                        document_id INTEGER REFERENCES cms_documents(id) ON DELETE SET NULL,
+                        attachment_kind VARCHAR(60) DEFAULT 'Other',
+                        storage_key VARCHAR(500) DEFAULT '',
+                        original_filename VARCHAR(255) DEFAULT '',
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_note_id "
+                    "ON cms_correspondence_attachments (note_id)"
+                )
+            )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_marking_subscriptions"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_marking_subscriptions (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        batch_id INTEGER REFERENCES cms_marking_batches(id) ON DELETE CASCADE,
+                        user_name VARCHAR(120) DEFAULT '',
+                        active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_marking_subscriptions_letter_id "
+                    "ON cms_marking_subscriptions (letter_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_marking_subscriptions_user_name "
+                    "ON cms_marking_subscriptions (user_name)"
+                )
+            )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_marking_reminder_log"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_marking_reminder_log (
+                        id SERIAL PRIMARY KEY,
+                        marking_id INTEGER NOT NULL REFERENCES cms_markings(id) ON DELETE CASCADE,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        reminder_key VARCHAR(40) NOT NULL,
+                        anchor_date DATE NOT NULL,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        CONSTRAINT uq_cms_marking_reminder_dedup
+                            UNIQUE (marking_id, reminder_key, anchor_date)
+                    )
+                    """
+                )
+            )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_outbound_emails"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_outbound_emails (
+                        id SERIAL PRIMARY KEY,
+                        to_address VARCHAR(255) DEFAULT '',
+                        subject VARCHAR(255) DEFAULT '',
+                        body_text TEXT DEFAULT '',
+                        status VARCHAR(40) DEFAULT 'pending',
+                        letter_id INTEGER REFERENCES cms_letters(id) ON DELETE SET NULL,
+                        notification_type VARCHAR(60) DEFAULT '',
+                        error_message TEXT DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        sent_at TIMESTAMP NULL
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_outbound_emails_status "
+                    "ON cms_outbound_emails (status)"
+                )
+            )
+
+
+def migrate_letters_to_simple_marking_statuses(db) -> int:
+    """Map legacy/enterprise letter statuses to Open/Closed/Archived (spec 08)."""
+    from app.models import Letter, User
+
+    closed_old = {
+        "Closed",
+        "Completed",
+        "Information Delivered",
+        "Dispatched",
+        "Rejected",
+    }
+    updated = 0
+    users_by_name = {u.name: u.id for u in db.query(User).all()}
+    for letter in db.query(Letter).all():
+        changed = False
+        if letter.status == "Archived" or letter.is_archived:
+            if letter.status != "Archived":
+                letter.status = "Archived"
+                changed = True
+        elif letter.status in closed_old:
+            if letter.status != "Closed":
+                letter.status = "Closed"
+                changed = True
+        elif letter.status != "Open":
+            letter.status = "Open"
+            changed = True
+        if not letter.initiator_user_id and letter.created_by:
+            uid = users_by_name.get(letter.created_by.strip())
+            if uid:
+                letter.initiator_user_id = uid
+                changed = True
+        if changed:
+            updated += 1
+    return updated
+
