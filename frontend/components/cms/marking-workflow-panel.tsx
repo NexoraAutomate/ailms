@@ -200,7 +200,9 @@ export function MarkingWorkflowPanel({
     return null
   }
 
-  const recentMarkings = useMemo(() => flattenMarkings(tree).slice(-3), [tree])
+  const allMarkings = useMemo(() => flattenMarkings(tree), [tree])
+  const recentMarkings = useMemo(() => allMarkings.slice(-3), [allMarkings])
+  const priorCount = Math.max(0, allMarkings.length - recentMarkings.length)
 
   const { steps, currentStep } = useMemo(() => {
     const byName = new Map(users.map((u) => [u.name, u]))
@@ -250,6 +252,7 @@ export function MarkingWorkflowPanel({
           <AnimatedProgressStepper
             steps={steps}
             currentStep={currentStep}
+            priorCount={priorCount}
             footerLabel={steps.length ? 'Current' : undefined}
           />
           {revokableRecent.length > 0 && (

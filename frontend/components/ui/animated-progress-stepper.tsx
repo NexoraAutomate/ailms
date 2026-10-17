@@ -51,6 +51,11 @@ type AnimatedProgressStepperProps = {
   className?: string
   /** Optional footer; omit to hide the "Currently working" line. */
   footerLabel?: string
+  /**
+   * When the visible window is truncated (e.g. last 3 of a longer chain),
+   * show a faded lead-in on the left for earlier unmarked officials.
+   */
+  priorCount?: number
 }
 
 const SMOOTH = { duration: 0.55, ease: [0.22, 1, 0.36, 1] as const }
@@ -193,10 +198,12 @@ export function AnimatedProgressStepper({
   currentStep,
   className,
   footerLabel,
+  priorCount = 0,
 }: AnimatedProgressStepperProps) {
   const [openStep, setOpenStep] = useState<AnimatedProgressStep | null>(null)
   const safeIndex = Math.max(0, Math.min(currentStep, Math.max(steps.length - 1, 0)))
   const active = useMemo(() => steps[safeIndex], [steps, safeIndex])
+  const showPriorLead = priorCount > 0
 
   if (!steps.length) {
     return (
@@ -212,6 +219,29 @@ export function AnimatedProgressStepper({
         <ol
           className="mx-auto flex w-full min-w-[min(100%,28rem)] max-w-4xl items-start justify-between gap-0 px-2 sm:min-w-0 sm:px-4 md:px-6"
         >
+          {showPriorLead ? (
+            <li
+              className="relative flex w-10 shrink-0 flex-col items-center text-center sm:w-14"
+              aria-label={`${priorCount} earlier marking${priorCount === 1 ? '' : 's'} in this chain`}
+              title={`${priorCount} earlier marking${priorCount === 1 ? '' : 's'} in this chain`}
+            >
+              {/* Faded trail from off-canvas into the first visible node */}
+              <div
+                className="pointer-events-none absolute top-[22px] right-0 z-0 flex h-0 w-[140%] items-center sm:top-6"
+                aria-hidden
+              >
+                <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200/80 to-slate-300" />
+              </div>
+              <div className="relative z-1 flex items-center gap-1 opacity-40">
+                <span className="size-2 rounded-full bg-slate-300 sm:size-2.5" />
+                <span className="size-2.5 rounded-full bg-slate-300/80 sm:size-3" />
+                <span className="size-3 rounded-full border border-dashed border-slate-300 bg-slate-100 sm:size-3.5" />
+              </div>
+              <p className="mt-2.5 max-w-[3.5rem] text-[9px] font-medium leading-tight text-slate-400 sm:max-w-[4rem]">
+                +{priorCount} earlier
+              </p>
+            </li>
+          ) : null}
           {steps.map((step, index) => {
             const done = index < safeIndex
             const current = index === safeIndex
@@ -220,6 +250,14 @@ export function AnimatedProgressStepper({
 
             return (
               <li key={step.id} className="relative flex min-w-0 flex-1 flex-col items-center text-center">
+                {index === 0 && showPriorLead ? (
+                  <div
+                    className="pointer-events-none absolute top-[22px] right-1/2 z-0 h-0 w-1/2 sm:top-6"
+                    aria-hidden
+                  >
+                    <div className="h-px w-full bg-gradient-to-r from-slate-300/70 to-[#1769aa]/50" />
+                  </div>
+                ) : null}
                 {index < steps.length - 1 ? (
                   <div
                     className="pointer-events-none absolute top-[22px] left-1/2 z-0 flex h-0 w-full items-center sm:top-6"
