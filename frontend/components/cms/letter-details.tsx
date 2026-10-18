@@ -485,7 +485,7 @@ function LetterIdentityCard({
   onSubjectChange: (value: string) => void
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:bg-slate-900/40">
+    <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
       <div className="mb-3 flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
         <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
           <FileText className="size-3.5" />
@@ -550,7 +550,7 @@ function LetterOtherDetailsCard({
   onAssignedToChange?: (value: string) => void
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:bg-slate-900/40">
+    <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
       <div className="mb-3 flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
         <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
           <ClipboardList className="size-3.5" />
@@ -670,7 +670,7 @@ function LetterPartiesCard({
   ]
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:bg-slate-900/40">
+    <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
       <div className="mb-3 flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
         <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
           <ArrowLeftRight className="size-3.5" />
@@ -753,7 +753,7 @@ function LetterDatesCard({
   ]
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:bg-slate-900/40">
+    <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
       <div className="mb-3 flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
         <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
           <CalendarDays className="size-3.5" />

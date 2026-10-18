@@ -1,11 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
   CornerUpLeft,
   ExternalLink,
   Eye,
+  Lock,
   MessageSquare,
   Paperclip,
   Pencil,
@@ -17,6 +18,15 @@ import {
 } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button, buttonVariants } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import {
@@ -84,6 +94,46 @@ function flattenMarkings(nodes: MarkingNode[]): MarkingNode[] {
   return out.sort((a, b) => a.id - b.id)
 }
 
+function hasActiveChild(m: MarkingNode) {
+  return m.children.some((c) => c.status === 'active')
+}
+
+/** When the holder remade this incident onward to the next user (active remake). */
+function onwardMarkedAt(
+  incidentKey: MarkingIncidentKey,
+  author: string,
+  markings: MarkingNode[],
+): string | undefined {
+  const authorNorm = (author || '').trim().toLowerCase()
+  if (!authorNorm) return undefined
+
+  const pickLatest = (rows: MarkingNode[]) => {
+    if (!rows.length) return undefined
+    let best = rows[0]!
+    for (const row of rows) {
+      if (activityTime(row.createdAt, row.id) > activityTime(best.createdAt, best.id)) {
+        best = row
+      }
+    }
+    return best.createdAt || undefined
+  }
+
+  if (incidentKey === 'root') {
+    const outbound = markings.filter(
+      (m) =>
+        m.parentMarkingId == null &&
+        m.status === 'active' &&
+        (m.fromUser || '').trim().toLowerCase() === authorNorm,
+    )
+    return pickLatest(outbound)
+  }
+
+  const hold = markings.find((m) => m.id === incidentKey)
+  if (!hold) return undefined
+  const remakes = hold.children.filter((c) => c.status === 'active')
+  return pickLatest(remakes)
+}
+
 function emptyRecipient(): MarkRecipientInput {
   return { toUser: '', action: 'forward', track: true, remindersEnabled: true }
 }
@@ -108,23 +158,129 @@ function markingKey(id: number | null | undefined): MarkingIncidentKey {
   return id == null ? 'root' : id
 }
 
-/** Group notes + attachments by the marking incident they belong to. */
+function activityTime(createdAt: string | undefined, id: number): number {
+  const parsed = createdAt ? Date.parse(createdAt) : NaN
+  return Number.isFinite(parsed) ? parsed : id
+}
+
+/** 0 → A, 25 → Z, 26 → AA, 27 → AB, … (Excel-style). */
+function attachmentLetterLabel(index: number): string {
+  let n = index + 1
+  let label = ''
+  while (n > 0) {
+    n -= 1
+    label = String.fromCharCode(65 + (n % 26)) + label
+    n = Math.floor(n / 26)
+  }
+  return label
+}
+
+const WORKFLOW_VISIBILITY_KEY = 'ailms.markingWorkflow.visibility'
+
+type WorkflowVisibility = {
+  /** Emerald highlight + YOU badge on the logged-in user's comment cards. */
+  highlightOwnComments: boolean
+  /** Show date/time and IP on each comment. */
+  showCommentMeta: boolean
+  /** Show the people pathway stepper. */
+  showStepper: boolean
+  /** Show centered mark chips (e.g. A. Rahman → N. Ahmed). */
+  showMarkingCards: boolean
+}
+
+const DEFAULT_WORKFLOW_VISIBILITY: WorkflowVisibility = {
+  highlightOwnComments: true,
+  showCommentMeta: true,
+  showStepper: true,
+  showMarkingCards: true,
+}
+
+function readWorkflowVisibility(): WorkflowVisibility {
+  if (typeof window === 'undefined') return DEFAULT_WORKFLOW_VISIBILITY
+  try {
+    const raw = localStorage.getItem(WORKFLOW_VISIBILITY_KEY)
+    if (!raw) return DEFAULT_WORKFLOW_VISIBILITY
+    const parsed = JSON.parse(raw) as Partial<WorkflowVisibility>
+    return { ...DEFAULT_WORKFLOW_VISIBILITY, ...parsed }
+  } catch {
+    return DEFAULT_WORKFLOW_VISIBILITY
+  }
+}
+
+function writeWorkflowVisibility(next: WorkflowVisibility) {
+  try {
+    localStorage.setItem(WORKFLOW_VISIBILITY_KEY, JSON.stringify(next))
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+type ContentIncident = {
+  key: MarkingIncidentKey
+  notes: CorrespondenceNote[]
+  attachments: CorrespondenceAttachment[]
+}
+
+type TimelineItem =
+  | { kind: 'mark'; marking: MarkingNode; sortAt: number }
+  | { kind: 'content'; incident: ContentIncident; sortAt: number }
+
+/** Group notes + attachments by marking incident; newest items first within each group. */
 function groupByMarkingIncident(
   notes: CorrespondenceNote[],
   attachments: CorrespondenceAttachment[],
-): { key: MarkingIncidentKey; notes: CorrespondenceNote[]; attachments: CorrespondenceAttachment[] }[] {
-  const order: MarkingIncidentKey[] = []
-  const map = new Map<MarkingIncidentKey, { notes: CorrespondenceNote[]; attachments: CorrespondenceAttachment[] }>()
+): ContentIncident[] {
+  const map = new Map<MarkingIncidentKey, ContentIncident>()
   const ensure = (key: MarkingIncidentKey) => {
     if (!map.has(key)) {
-      map.set(key, { notes: [], attachments: [] })
-      order.push(key)
+      map.set(key, { key, notes: [], attachments: [] })
     }
     return map.get(key)!
   }
-  for (const note of notes) ensure(markingKey(note.markingId)).notes.push(note)
-  for (const att of attachments) ensure(markingKey(att.markingId)).attachments.push(att)
-  return order.map((key) => ({ key, ...map.get(key)! }))
+  const notesDesc = [...notes].sort(
+    (a, b) => activityTime(b.createdAt, b.id) - activityTime(a.createdAt, a.id),
+  )
+  const attachmentsDesc = [...attachments].sort(
+    (a, b) => activityTime(b.createdAt, b.id) - activityTime(a.createdAt, a.id),
+  )
+  for (const note of notesDesc) ensure(markingKey(note.markingId)).notes.push(note)
+  for (const att of attachmentsDesc) ensure(markingKey(att.markingId)).attachments.push(att)
+  return [...map.values()]
+}
+
+function latestIncidentActivity(incident: ContentIncident): number {
+  let max = 0
+  for (const n of incident.notes) max = Math.max(max, activityTime(n.createdAt, n.id))
+  for (const a of incident.attachments) max = Math.max(max, activityTime(a.createdAt, a.id))
+  return max
+}
+
+/** Timeline: content cards + centered marking chips (chips show even with no comments). */
+function buildCommentsTimeline(
+  markings: MarkingNode[],
+  notes: CorrespondenceNote[],
+  attachments: CorrespondenceAttachment[],
+): TimelineItem[] {
+  const items: TimelineItem[] = []
+
+  for (const marking of markings) {
+    items.push({
+      kind: 'mark',
+      marking,
+      sortAt: activityTime(marking.createdAt, marking.id),
+    })
+  }
+
+  for (const incident of groupByMarkingIncident(notes, attachments)) {
+    if (incident.notes.length === 0 && incident.attachments.length === 0) continue
+    items.push({
+      kind: 'content',
+      incident,
+      sortAt: latestIncidentActivity(incident),
+    })
+  }
+
+  return items.sort((a, b) => b.sortAt - a.sortAt)
 }
 
 export function MarkingWorkflowPanel({
@@ -143,6 +299,7 @@ export function MarkingWorkflowPanel({
   const [attachments, setAttachments] = useState<CorrespondenceAttachment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [visibility, setVisibility] = useState<WorkflowVisibility>(DEFAULT_WORKFLOW_VISIBILITY)
   const [dialog, setDialog] = useState<'mark' | 'note' | 'respond' | 'attach' | 'close' | null>(null)
   const [remarks, setRemarks] = useState('')
   const [pathwayNotify, setPathwayNotify] = useState(false)
@@ -156,6 +313,8 @@ export function MarkingWorkflowPanel({
   const [previewVersionId, setPreviewVersionId] = useState<number | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
   const [editingNoteBody, setEditingNoteBody] = useState('')
+  const loadInFlightRef = useRef(false)
+  const busyRef = useRef(false)
 
   const resetComposer = () => {
     setRemarks('')
@@ -169,16 +328,33 @@ export function MarkingWorkflowPanel({
   const canAddAttachment = actions.includes('add_note')
 
   const flatMarkings = useMemo(() => flattenMarkings(tree), [tree])
-  const markingById = useMemo(() => {
-    const map = new Map<number, MarkingNode>()
-    for (const m of flatMarkings) map.set(m.id, m)
-    return map
-  }, [flatMarkings])
 
-  const incidentGroups = useMemo(
-    () => groupByMarkingIncident(notes, attachments),
-    [notes, attachments],
+  const timelineItems = useMemo(
+    () => buildCommentsTimeline(flatMarkings, notes, attachments),
+    [attachments, flatMarkings, notes],
   )
+
+  /** Stable serials: oldest comment = 1, newest = N. */
+  const noteSerialById = useMemo(() => {
+    const ordered = [...notes].sort((a, b) => {
+      const byTime = activityTime(a.createdAt, a.id) - activityTime(b.createdAt, b.id)
+      return byTime !== 0 ? byTime : a.id - b.id
+    })
+    const map = new Map<number, number>()
+    ordered.forEach((note, index) => map.set(note.id, index + 1))
+    return map
+  }, [notes])
+
+  /** Stable letters: oldest attachment = A, then B…Z, AA, AB… */
+  const attachmentLetterById = useMemo(() => {
+    const ordered = [...attachments].sort((a, b) => {
+      const byTime = activityTime(a.createdAt, a.id) - activityTime(b.createdAt, b.id)
+      return byTime !== 0 ? byTime : a.id - b.id
+    })
+    const map = new Map<number, string>()
+    ordered.forEach((att, index) => map.set(att.id, attachmentLetterLabel(index)))
+    return map
+  }, [attachments])
 
   const uploadPendingAttachments = async () => {
     const uploaded: { attachmentKind: string; documentId: number; originalFilename: string }[] = []
@@ -193,9 +369,14 @@ export function MarkingWorkflowPanel({
     return uploaded
   }
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
+  const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    // Background polls skip when a refresh is already running; explicit reloads always run.
+    if (silent && loadInFlightRef.current) return
+    loadInFlightRef.current = true
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
     try {
       const [available, markingTree, noteRows, attachmentRows] = await Promise.all([
         fetchMarkingActions(letter.id),
@@ -214,9 +395,12 @@ export function MarkingWorkflowPanel({
         .find((n) => n.status === 'active' && n.action === 'response_required')
       setRespondMarkingId(rr?.id ?? null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load marking workflow')
+      if (!silent) {
+        setError(err instanceof Error ? err.message : 'Unable to load marking workflow')
+      }
     } finally {
-      setLoading(false)
+      loadInFlightRef.current = false
+      if (!silent) setLoading(false)
     }
   }, [letter.id])
 
@@ -224,7 +408,46 @@ export function MarkingWorkflowPanel({
     void load()
   }, [load])
 
+  useEffect(() => {
+    setVisibility(readWorkflowVisibility())
+  }, [])
+
+  const updateVisibility = <K extends keyof WorkflowVisibility>(key: K, value: WorkflowVisibility[K]) => {
+    setVisibility((prev) => {
+      const next = { ...prev, [key]: value }
+      writeWorkflowVisibility(next)
+      return next
+    })
+  }
+
+  // While this user can still revoke, poll so Revoke disappears as soon as the
+  // recipient adds a note/attachment — without requiring a page reload.
+  const watchRevoke = actions.includes('revoke')
+  useEffect(() => {
+    if (!watchRevoke) return
+
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return
+      if (busyRef.current) return
+      void load({ silent: true })
+    }
+
+    const intervalId = window.setInterval(refresh, 2000)
+    const onFocus = () => refresh()
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [load, watchRevoke])
+
   const run = async (fn: () => Promise<void>) => {
+    busyRef.current = true
     setBusy(true)
     setError('')
     try {
@@ -236,6 +459,7 @@ export function MarkingWorkflowPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Action failed')
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
@@ -250,12 +474,27 @@ export function MarkingWorkflowPanel({
   }
 
   const allMarkings = useMemo(() => flattenMarkings(tree), [tree])
-  const recentMarkings = useMemo(() => allMarkings.slice(-3), [allMarkings])
-  const priorCount = Math.max(0, allMarkings.length - recentMarkings.length)
+  // Pathway stepper uses active marks only — revoked remakes drop out of the chain.
+  const activeMarkings = useMemo(
+    () => allMarkings.filter((m) => m.status === 'active'),
+    [allMarkings],
+  )
+  // Last three mark recipients only. Older marks collapse into the faded lead.
+  // The registrant is not a special first circle — they appear only if marked to.
+  const recentMarkings = useMemo(() => activeMarkings.slice(-3), [activeMarkings])
+  const priorCount = Math.max(0, activeMarkings.length - recentMarkings.length)
 
   const { steps, currentStep } = useMemo(() => {
     const byName = new Map(users.map((u) => [u.name, u]))
-    const built: AnimatedProgressStep[] = recentMarkings.map((marking) => {
+    const initialsOf = (name: string) =>
+      name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? '')
+        .join('')
+
+    const markingSteps: AnimatedProgressStep[] = recentMarkings.map((marking) => {
       const profile = byName.get(marking.toUser)
       return {
         id: String(marking.id),
@@ -273,45 +512,123 @@ export function MarkingWorkflowPanel({
           createdAt: marking.createdAt,
         },
         avatarUrl: profile?.avatarUrl || '',
-        initials: marking.toUser
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 2)
-          .map((part) => part[0]?.toUpperCase() ?? '')
-          .join(''),
+        initials: initialsOf(marking.toUser),
       }
     })
-    const activeIdx = recentMarkings.findIndex((m) => m.status === 'active')
-    const current =
-      activeIdx >= 0 ? activeIdx : built.length > 0 ? built.length - 1 : 0
-    return { steps: built, currentStep: current }
-  }, [recentMarkings, users])
 
-  // Only the last marker can revoke: their own active outbound with no children.
+    // Before any active mark, show the registrant as the sole holder.
+    if (markingSteps.length === 0) {
+      const initiatorName = (letter.createdBy || '').trim()
+      if (!initiatorName) return { steps: [] as AnimatedProgressStep[], currentStep: 0 }
+      const profile = byName.get(initiatorName)
+      return {
+        steps: [
+          {
+            id: 'initiator',
+            title: initiatorName,
+            department: profile?.department || 'Registrant',
+            task: 'Registered',
+            taskDetail: {
+              action: 'registered',
+              actionLabel: 'Registered',
+              performedBy: initiatorName,
+              assignedTo: letter.assignedTo || initiatorName,
+              department: profile?.department,
+            },
+            avatarUrl: profile?.avatarUrl || '',
+            initials: initialsOf(initiatorName),
+          },
+        ],
+        currentStep: 0,
+      }
+    }
+
+    // Current holder = active leaf (no active remake onward).
+    const leafIdx = recentMarkings.findIndex((m) => !hasActiveChild(m))
+    const current = leafIdx >= 0 ? leafIdx : markingSteps.length - 1
+    return { steps: markingSteps, currentStep: current }
+  }, [recentMarkings, users, letter.createdBy, letter.assignedTo])
+
+  // Last marker may revoke only if recipient has not remade or added comments/attachments.
   const revokableMarkings = useMemo(() => {
     if (!actions.includes('revoke')) return []
     const meName = (me.name || '').trim()
     if (!meName) return []
-    return allMarkings.filter(
-      (m) =>
-        m.status === 'active' &&
-        m.fromUser === meName &&
-        m.children.length === 0,
-    )
-  }, [actions, allMarkings, me.name])
+    return allMarkings.filter((m) => {
+      if (m.status !== 'active' || m.fromUser !== meName || hasActiveChild(m)) {
+        return false
+      }
+      const recipient = (m.toUser || '').trim()
+      const hasNote = notes.some(
+        (n) => n.markingId === m.id && (n.authorUser || '').trim() === recipient,
+      )
+      const hasAttachment = attachments.some(
+        (a) => a.markingId === m.id && (a.createdBy || '').trim() === recipient,
+      )
+      return !hasNote && !hasAttachment
+    })
+  }, [actions, allMarkings, attachments, me.name, notes])
 
   return (
-    <CollapsibleCard collapsible={false}>
+    <CollapsibleCard collapsible={false} contentClassName="relative">
+      <div className="absolute top-3 right-3 z-20 sm:top-4 sm:right-4">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            type="button"
+            aria-label="Workflow display options"
+            className={cn(
+              buttonVariants({ size: 'icon-xs', variant: 'ghost' }),
+              'text-slate-500 hover:text-slate-800',
+            )}
+          >
+            <Eye className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Show on workflow</DropdownMenuLabel>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuCheckboxItem
+                checked={visibility.showStepper}
+                onCheckedChange={(checked) => updateVisibility('showStepper', checked === true)}
+              >
+                Marking History
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={visibility.showMarkingCards}
+                onCheckedChange={(checked) => updateVisibility('showMarkingCards', checked === true)}
+              >
+                Marking cards
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={visibility.highlightOwnComments}
+                onCheckedChange={(checked) => updateVisibility('highlightOwnComments', checked === true)}
+              >
+                Highlight my comments
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={visibility.showCommentMeta}
+                onCheckedChange={(checked) => updateVisibility('showCommentMeta', checked === true)}
+              >
+                Comment date & IP
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
 
-      {!loading && (
+      {!loading && visibility.showStepper && (
         <div className="mb-5">
           <AnimatedProgressStepper
             steps={steps}
             currentStep={currentStep}
             priorCount={priorCount}
             footerLabel={steps.length ? 'Current' : undefined}
+            viewerName={me.name}
           />
         </div>
       )}
@@ -325,7 +642,7 @@ export function MarkingWorkflowPanel({
           )}
           {actions.includes('add_note') && (
             <Button size="sm" variant="outline" onClick={() => setDialog('note')}>
-              <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add note
+              <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add Comment
             </Button>
           )}
           {revokableMarkings.map((m) => (
@@ -354,7 +671,7 @@ export function MarkingWorkflowPanel({
                 setDialog('attach')
               }}
             >
-              <Paperclip className="mr-1 h-3.5 w-3.5" /> Add attachment
+              <Paperclip className="mr-1 h-3.5 w-3.5" /> Add Attachment
             </Button>
           )}
           {actions.includes('respond') && (
@@ -378,54 +695,185 @@ export function MarkingWorkflowPanel({
       )}
 
       <div>
-        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Notes & attachments</h3>
-        {incidentGroups.length === 0 && (
-          <p className="text-xs text-slate-500">No notes or attachments yet.</p>
+        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Comments & Attachments</h3>
+        {timelineItems.filter(
+          (item) => item.kind === 'content' || visibility.showMarkingCards,
+        ).length === 0 && (
+          <p className="text-xs text-slate-500">No notes, attachments, or markings yet.</p>
         )}
-        <ul className="space-y-4">
-          {incidentGroups.map((incident) => {
-            const marking = incident.key === 'root' ? null : markingById.get(incident.key) ?? null
-            const title = marking
-              ? `${marking.fromUser} → ${marking.toUser}`
-              : 'Initiator hold'
-            const subtitle = marking ? markingActionLabel(marking.action) : 'Before first mark'
+        <ul className="space-y-3">
+          {timelineItems.map((item) => {
+            if (item.kind === 'mark') {
+              if (!visibility.showMarkingCards) return null
+              const { marking } = item
+              const revoked = marking.status === 'revoked'
+              return (
+                <li key={`mark-${marking.id}`} className="flex justify-center py-0.5">
+                  <div
+                    className={cn(
+                      'inline-flex max-w-full flex-col items-center gap-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm',
+                      revoked && 'bg-slate-50 text-slate-400',
+                    )}
+                  >
+                    {marking.createdAt ? (
+                      <span className="text-[10px] leading-none text-slate-400">
+                        {formatDateTime(marking.createdAt)}
+                      </span>
+                    ) : null}
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      <span className={cn('font-medium', revoked && 'line-through')}>
+                        {marking.fromUser} → {marking.toUser}
+                      </span>
+                      {revoked ? (
+                        <Badge tone="slate">Revoked</Badge>
+                      ) : (
+                        <Badge tone={marking.action === 'forward' ? 'amber' : 'slate'}>
+                          {markingActionLabel(marking.action)}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              )
+            }
+
+            const { incident } = item
+            const meName = (me.name || '').trim().toLowerCase()
+            const authoredByMe =
+              incident.notes.length > 0 &&
+              Boolean(meName) &&
+              incident.notes.every((n) => (n.authorUser || '').trim().toLowerCase() === meName)
+            const isOwnComments = visibility.highlightOwnComments && authoredByMe
             return (
               <li
                 key={`incident-${incident.key}`}
-                className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                className={cn(
+                  'overflow-hidden rounded-xl border shadow-sm',
+                  isOwnComments
+                    ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/40'
+                    : 'border-slate-200 bg-white',
+                )}
               >
-                <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2.5">
-                  <p className="text-sm font-semibold text-slate-800">{title}</p>
-                  <Badge>{subtitle}</Badge>
-                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3">
-                  <div className="divide-y divide-slate-100 px-4 py-1 md:col-span-2 md:border-r md:border-slate-100">
-                    <p className="pt-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">Notes</p>
+                  <div
+                    className={cn(
+                      'divide-y px-4 py-1 md:col-span-2 md:border-r',
+                      isOwnComments
+                        ? 'divide-emerald-200/70 md:border-emerald-200/70 dark:divide-emerald-800/50 dark:md:border-emerald-800/50'
+                        : 'divide-slate-100 md:border-slate-100',
+                    )}
+                  >
                     {incident.notes.length === 0 ? (
-                      <p className="pb-3 text-xs text-slate-400">None</p>
+                      <>
+                        <p className="pt-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                          Comments
+                        </p>
+                        <p className="pb-3 text-xs text-slate-400">None</p>
+                      </>
                     ) : (
-                      groupNotesByAuthor(incident.notes).map((group) => {
+                      groupNotesByAuthor(incident.notes).flatMap((group) => {
                         const author = group[0]?.authorUser ?? ''
+                        const isOwnAuthor =
+                          visibility.highlightOwnComments &&
+                          Boolean(meName) &&
+                          author.trim().toLowerCase() === meName
                         const hasResponse = group.some((n) => n.isResponse)
                         const groupEditable = group.some((n) => n.editable)
-                        return (
-                          <div key={`note-group-${group[0]?.id ?? author}`} className="py-2">
-                            <div className="mb-1 flex items-center gap-2">
-                              <p className="text-xs font-semibold text-slate-700">{author}</p>
+                        const groupKey = `note-group-${group[0]?.id ?? author}`
+                        const markedOnwardAt = onwardMarkedAt(incident.key, author, allMarkings)
+                        return [
+                          <div key={`${groupKey}-heading`} className="pt-3 pb-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p
+                                className={cn(
+                                  'text-base font-bold tracking-wide',
+                                  isOwnAuthor
+                                    ? 'text-emerald-900 dark:text-emerald-300'
+                                    : 'text-slate-700',
+                                )}
+                              >
+                                {author}
+                              </p>
+                              {isOwnAuthor ? (
+                                <span className="rounded-full bg-emerald-200/80 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-emerald-900">
+                                  YOU
+                                </span>
+                              ) : null}
                               {hasResponse && <Badge>Response</Badge>}
                               {!groupEditable && (
-                                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
-                                  Locked
-                                </span>
+                                <Lock
+                                  className={cn(
+                                    'size-3.5',
+                                    isOwnAuthor
+                                      ? 'text-emerald-700/70 dark:text-emerald-400/80'
+                                      : 'text-slate-400',
+                                  )}
+                                  aria-label="Locked"
+                                />
                               )}
                             </div>
+                            {markedOnwardAt ? (
+                              <p
+                                className={cn(
+                                  'mt-0.5 text-[11px]',
+                                  isOwnAuthor
+                                    ? 'text-emerald-800/75 dark:text-emerald-300/75'
+                                    : 'text-slate-500',
+                                )}
+                              >
+                                Marked onward {formatDateTime(markedOnwardAt)}
+                              </p>
+                            ) : null}
+                          </div>,
+                          <div key={groupKey} className="py-1">
                             {group.map((note) => (
-                              <div key={note.id} className="border-t border-slate-50 py-2.5 first:border-t-0">
-                                <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-                                  <span>{note.createdAt ? formatDateTime(note.createdAt) : ''}</span>
-                                  {note.clientIp ? <span>IP {note.clientIp}</span> : null}
+                              <div
+                                key={note.id}
+                                className={cn(
+                                  'border-t py-2.5 first:border-t-0',
+                                  isOwnComments
+                                    ? 'border-emerald-100 dark:border-emerald-900/40'
+                                    : 'border-slate-50',
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    'mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]',
+                                    isOwnComments
+                                      ? 'text-emerald-800/80 dark:text-emerald-300/80'
+                                      : 'text-slate-500',
+                                  )}
+                                >
+                                  <span
+                                    className={cn(
+                                      'inline-flex min-w-7 items-center justify-center rounded-full px-2 py-0.5 text-base font-bold tabular-nums leading-none',
+                                      isOwnComments
+                                        ? 'bg-emerald-200/90 text-emerald-950 dark:bg-emerald-800/80 dark:text-emerald-100'
+                                        : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
+                                    )}
+                                    aria-label={`Comment ${noteSerialById.get(note.id) ?? ''}`}
+                                  >
+                                    {noteSerialById.get(note.id) ?? '—'}
+                                  </span>
+                                  {visibility.showCommentMeta ? (
+                                    <>
+                                      <span>
+                                        {note.createdAt ? formatDateTime(note.createdAt) : ''}
+                                      </span>
+                                      {note.clientIp ? <span>IP {note.clientIp}</span> : null}
+                                    </>
+                                  ) : null}
                                   {note.isResponse ? (
-                                    <span className="font-medium text-slate-600">Response</span>
+                                    <span
+                                      className={cn(
+                                        'font-medium',
+                                        isOwnComments
+                                          ? 'text-emerald-900 dark:text-emerald-300'
+                                          : 'text-slate-600',
+                                      )}
+                                    >
+                                      Response
+                                    </span>
                                   ) : null}
                                   {note.editable && (
                                     <span className="ml-auto flex flex-wrap gap-1.5">
@@ -487,19 +935,40 @@ export function MarkingWorkflowPanel({
                                     </div>
                                   </div>
                                 ) : (
-                                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                                  <p
+                                    className={cn(
+                                      'whitespace-pre-wrap text-sm leading-relaxed',
+                                      isOwnComments
+                                        ? 'text-emerald-950 dark:text-emerald-200'
+                                        : 'text-slate-700',
+                                    )}
+                                  >
                                     {note.bodyText}
                                   </p>
                                 )}
                               </div>
                             ))}
-                          </div>
-                        )
+                          </div>,
+                        ]
                       })
                     )}
                   </div>
-                  <div className="border-t border-slate-100 bg-slate-50/80 px-3 py-3 md:col-span-1 md:border-t-0">
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  <div
+                    className={cn(
+                      'border-t px-3 py-3 md:col-span-1 md:border-t-0',
+                      isOwnComments
+                        ? 'border-emerald-200/70 bg-emerald-100/50 dark:border-emerald-800/50 dark:bg-emerald-950/60'
+                        : 'border-slate-100 bg-slate-50/80',
+                    )}
+                  >
+                    <p
+                      className={cn(
+                        'mb-2 text-[10px] font-bold uppercase tracking-wide',
+                        isOwnComments
+                          ? 'text-emerald-800/80 dark:text-emerald-400/80'
+                          : 'text-slate-500',
+                      )}
+                    >
                       Attachments
                     </p>
                     {incident.attachments.length === 0 ? (
@@ -509,8 +978,14 @@ export function MarkingWorkflowPanel({
                         {incident.attachments.map((a) => (
                           <li
                             key={a.id}
-                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 shadow-sm"
+                            className="relative rounded-lg border border-slate-200 bg-white px-2.5 py-2 pr-9 shadow-sm"
                           >
+                            <span
+                              className="absolute top-1.5 right-1.5 inline-flex min-w-6 items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-sm font-bold tabular-nums leading-none text-slate-800 dark:bg-slate-700 dark:text-slate-100"
+                              aria-label={`Attachment ${attachmentLetterById.get(a.id) ?? ''}`}
+                            >
+                              {attachmentLetterById.get(a.id) ?? '—'}
+                            </span>
                             <div className="flex items-start gap-2">
                               <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
                               <div className="min-w-0 flex-1">
@@ -745,6 +1220,7 @@ export function MarkingWorkflowPanel({
               <input type="checkbox" checked={pathwayNotify} onChange={(e) => setPathwayNotify(e.target.checked)} />
               Notify me of the pathway (further marks / responses)
             </label>
+            {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" disabled={busy} onClick={() => setDialog(null)}>
                 Cancel
@@ -777,7 +1253,7 @@ export function MarkingWorkflowPanel({
       {(dialog === 'note' || dialog === 'respond') && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold">{dialog === 'note' ? 'Add note' : 'Submit response'}</h2>
+            <h2 className="text-sm font-bold">{dialog === 'note' ? 'Add Comment' : 'Submit response'}</h2>
             <textarea
               className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
               rows={4}
@@ -786,7 +1262,7 @@ export function MarkingWorkflowPanel({
               placeholder={dialog === 'note' ? 'Your input…' : 'Your response…'}
             />
             <p className="mt-2 text-[11px] text-slate-400">
-              Use <span className="font-medium">Add attachment</span> to attach files separately.
+              Use <span className="font-medium">Add Attachment</span> to attach files separately.
             </p>
             <div className="mt-3 flex justify-end gap-2">
               <Button
@@ -832,7 +1308,7 @@ export function MarkingWorkflowPanel({
       {dialog === 'attach' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold">Add attachment</h2>
+            <h2 className="text-sm font-bold">Add Attachment</h2>
             <p className="mt-1 text-xs text-slate-500">
               Files are linked to your current marking hold, not to individual notes.
             </p>

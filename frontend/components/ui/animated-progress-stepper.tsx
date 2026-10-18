@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { motion } from 'motion/react'
 import { Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -51,11 +51,18 @@ type AnimatedProgressStepperProps = {
   className?: string
   /** Optional footer; omit to hide the "Currently working" line. */
   footerLabel?: string
+  /** Logged-in user display name — when it matches the current holder, show a YOU badge. */
+  viewerName?: string
   /**
    * When the visible window is truncated (e.g. last 3 of a longer chain),
-   * show a faded lead-in on the left for earlier unmarked officials.
+   * show a faded lead-in for earlier unmarked officials.
    */
   priorCount?: number
+  /**
+   * Insert the "+N earlier" lead before this step index.
+   * Use 1 when the initiator is always step 0 and truncated markings follow.
+   */
+  priorLeadAfterIndex?: number
 }
 
 const SMOOTH = { duration: 0.55, ease: [0.22, 1, 0.36, 1] as const }
@@ -193,17 +200,50 @@ function TaskDialog({
 /**
  * People pipeline: completed nodes are highlighted; current node pulses; future stay grey.
  */
+function PriorLeadMarker({ priorCount }: { priorCount: number }) {
+  return (
+    <li
+      className="relative flex w-10 shrink-0 flex-col items-center text-center sm:w-14"
+      aria-label={`${priorCount} earlier marking${priorCount === 1 ? '' : 's'} in this chain`}
+      title={`${priorCount} earlier marking${priorCount === 1 ? '' : 's'} in this chain`}
+    >
+      <div
+        className="pointer-events-none absolute top-[22px] right-0 z-0 flex h-0 w-[140%] items-center sm:top-6"
+        aria-hidden
+      >
+        <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200/80 to-slate-300" />
+      </div>
+      <div className="relative z-1 flex items-center gap-1 opacity-40">
+        <span className="size-2 rounded-full bg-slate-300 sm:size-2.5" />
+        <span className="size-2.5 rounded-full bg-slate-300/80 sm:size-3" />
+        <span className="size-3 rounded-full border border-dashed border-slate-300 bg-slate-100 sm:size-3.5" />
+      </div>
+      <p className="mt-2.5 max-w-[3.5rem] text-[9px] font-medium leading-tight text-slate-400 sm:max-w-[4rem]">
+        +{priorCount} earlier
+      </p>
+    </li>
+  )
+}
+
 export function AnimatedProgressStepper({
   steps,
   currentStep,
   className,
   footerLabel,
+  viewerName,
   priorCount = 0,
+  priorLeadAfterIndex = 0,
 }: AnimatedProgressStepperProps) {
   const [openStep, setOpenStep] = useState<AnimatedProgressStep | null>(null)
   const safeIndex = Math.max(0, Math.min(currentStep, Math.max(steps.length - 1, 0)))
   const active = useMemo(() => steps[safeIndex], [steps, safeIndex])
+  const isYou = useMemo(() => {
+    const viewer = (viewerName || '').trim().toLowerCase()
+    const holder = (active?.title || '').trim().toLowerCase()
+    return Boolean(viewer && holder && viewer === holder)
+  }, [active?.title, viewerName])
   const showPriorLead = priorCount > 0
+  const leadAt = Math.max(0, Math.min(priorLeadAfterIndex, steps.length))
 
   if (!steps.length) {
     return (
@@ -219,29 +259,7 @@ export function AnimatedProgressStepper({
         <ol
           className="mx-auto flex w-full min-w-[min(100%,28rem)] max-w-4xl items-start justify-between gap-0 px-2 sm:min-w-0 sm:px-4 md:px-6"
         >
-          {showPriorLead ? (
-            <li
-              className="relative flex w-10 shrink-0 flex-col items-center text-center sm:w-14"
-              aria-label={`${priorCount} earlier marking${priorCount === 1 ? '' : 's'} in this chain`}
-              title={`${priorCount} earlier marking${priorCount === 1 ? '' : 's'} in this chain`}
-            >
-              {/* Faded trail from off-canvas into the first visible node */}
-              <div
-                className="pointer-events-none absolute top-[22px] right-0 z-0 flex h-0 w-[140%] items-center sm:top-6"
-                aria-hidden
-              >
-                <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200/80 to-slate-300" />
-              </div>
-              <div className="relative z-1 flex items-center gap-1 opacity-40">
-                <span className="size-2 rounded-full bg-slate-300 sm:size-2.5" />
-                <span className="size-2.5 rounded-full bg-slate-300/80 sm:size-3" />
-                <span className="size-3 rounded-full border border-dashed border-slate-300 bg-slate-100 sm:size-3.5" />
-              </div>
-              <p className="mt-2.5 max-w-[3.5rem] text-[9px] font-medium leading-tight text-slate-400 sm:max-w-[4rem]">
-                +{priorCount} earlier
-              </p>
-            </li>
-          ) : null}
+          {showPriorLead && leadAt === 0 ? <PriorLeadMarker priorCount={priorCount} /> : null}
           {steps.map((step, index) => {
             const done = index < safeIndex
             const current = index === safeIndex
@@ -249,108 +267,135 @@ export function AnimatedProgressStepper({
             const afterLineComplete = done
 
             return (
-              <li key={step.id} className="relative flex min-w-0 flex-1 flex-col items-center text-center">
-                {index === 0 && showPriorLead ? (
-                  <div
-                    className="pointer-events-none absolute top-[22px] right-1/2 z-0 h-0 w-1/2 sm:top-6"
-                    aria-hidden
-                  >
-                    <div className="h-px w-full bg-gradient-to-r from-slate-300/70 to-[#1769aa]/50" />
-                  </div>
+              <Fragment key={step.id}>
+                {showPriorLead && leadAt === index && index > 0 ? (
+                  <PriorLeadMarker priorCount={priorCount} />
                 ) : null}
-                {index < steps.length - 1 ? (
-                  <div
-                    className="pointer-events-none absolute top-[22px] left-1/2 z-0 flex h-0 w-full items-center sm:top-6"
-                    aria-hidden
-                  >
+                <li className="relative flex min-w-0 flex-1 flex-col items-center text-center">
+                  {index === leadAt && showPriorLead && leadAt === 0 ? (
                     <div
-                      className={cn(
-                        'h-px w-full',
-                        afterLineComplete ? 'bg-[#1769aa]' : 'bg-slate-200',
-                      )}
-                    />
-                    {step.letterDurationLabel ? (
-                      <span
+                      className="pointer-events-none absolute top-[22px] right-1/2 z-0 h-0 w-1/2 sm:top-6"
+                      aria-hidden
+                    >
+                      <div className="h-px w-full bg-gradient-to-r from-slate-300/70 to-[#1769aa]/50" />
+                    </div>
+                  ) : null}
+                  {index < steps.length - 1 ? (
+                    <div
+                      className="pointer-events-none absolute top-[22px] left-1/2 z-0 flex h-0 w-full items-center sm:top-6"
+                      aria-hidden
+                    >
+                      <div
                         className={cn(
-                          'absolute left-1/2 top-1/2 z-1 -translate-x-1/2 -translate-y-1/2 rounded-full border bg-white px-1.5 py-0.5 text-[9px] font-semibold tabular-nums shadow-sm',
-                          afterLineComplete
-                            ? 'border-[#1769aa]/25 text-[#0d3763]'
-                            : 'border-slate-200 text-slate-400',
+                          'h-px w-full',
+                          afterLineComplete ? 'bg-[#1769aa]' : 'bg-slate-200',
                         )}
-                        title={`Time on this letter: ${step.letterDurationLabel}`}
+                      />
+                      {step.letterDurationLabel ? (
+                        <span
+                          className={cn(
+                            'absolute left-1/2 top-1/2 z-1 -translate-x-1/2 -translate-y-1/2 rounded-full border bg-white px-1.5 py-0.5 text-[9px] font-semibold tabular-nums shadow-sm',
+                            afterLineComplete
+                              ? 'border-[#1769aa]/25 text-[#0d3763]'
+                              : 'border-slate-200 text-slate-400',
+                          )}
+                          title={`Time on this letter: ${step.letterDurationLabel}`}
+                        >
+                          {step.letterDurationLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div className="relative z-1">
+                    <StepAvatar step={step} done={done} current={current} pending={pending} />
+                  </div>
+
+                  <div className="mt-2.5 min-w-0 w-full max-w-[7.5rem] px-1 sm:max-w-[9rem]">
+                    <p
+                      className={cn(
+                        'truncate text-[11px] font-semibold',
+                        current ? 'text-[#0d3763]' : done ? 'text-slate-700' : 'text-slate-400',
+                      )}
+                      title={step.title}
+                    >
+                      {step.title}
+                    </p>
+                    {step.department ? (
+                      <p className={cn('mt-0.5 truncate text-[10px]', current || done ? 'text-slate-500' : 'text-slate-400')} title={step.department}>
+                        {step.department}
+                      </p>
+                    ) : null}
+                    {step.avgResponseLabel ? (
+                      <p
+                        className={cn('mt-0.5 truncate text-[10px] tabular-nums', current || done ? 'font-medium text-slate-600' : 'text-slate-400')}
+                        title={`Average response time: ${step.avgResponseLabel}`}
                       >
-                        {step.letterDurationLabel}
-                      </span>
+                        {step.avgResponseLabel}
+                      </p>
+                    ) : null}
+                    {step.letterDurationLabel && index === steps.length - 1 ? (
+                      <p
+                        className={cn('mt-0.5 truncate text-[10px] tabular-nums', current ? 'font-medium text-[#1769aa]' : 'text-slate-500')}
+                        title={`Time on this letter so far: ${step.letterDurationLabel}`}
+                      >
+                        Current: {step.letterDurationLabel}
+                      </p>
+                    ) : null}
+                    {step.task ? (
+                      <button
+                        type="button"
+                        onClick={() => setOpenStep(step)}
+                        className={cn(
+                          'mt-0.5 block w-full truncate text-[10px] underline-offset-2 hover:underline',
+                          current || done ? 'font-medium text-[#1769aa]' : 'text-slate-400',
+                        )}
+                        title={`View task: ${step.task}`}
+                      >
+                        {step.task}
+                      </button>
                     ) : null}
                   </div>
-                ) : null}
-
-                <div className="relative z-1">
-                  <StepAvatar step={step} done={done} current={current} pending={pending} />
-                </div>
-
-                <div className="mt-2.5 min-w-0 w-full max-w-[7.5rem] px-1 sm:max-w-[9rem]">
-                  <p
-                    className={cn(
-                      'truncate text-[11px] font-semibold',
-                      current ? 'text-[#0d3763]' : done ? 'text-slate-700' : 'text-slate-400',
-                    )}
-                    title={step.title}
-                  >
-                    {step.title}
-                  </p>
-                  {step.department ? (
-                    <p className={cn('mt-0.5 truncate text-[10px]', current || done ? 'text-slate-500' : 'text-slate-400')} title={step.department}>
-                      {step.department}
-                    </p>
-                  ) : null}
-                  {step.avgResponseLabel ? (
-                    <p
-                      className={cn('mt-0.5 truncate text-[10px] tabular-nums', current || done ? 'font-medium text-slate-600' : 'text-slate-400')}
-                      title={`Average response time: ${step.avgResponseLabel}`}
-                    >
-                      {step.avgResponseLabel}
-                    </p>
-                  ) : null}
-                  {step.letterDurationLabel && index === steps.length - 1 ? (
-                    <p
-                      className={cn('mt-0.5 truncate text-[10px] tabular-nums', current ? 'font-medium text-[#1769aa]' : 'text-slate-500')}
-                      title={`Time on this letter so far: ${step.letterDurationLabel}`}
-                    >
-                      Current: {step.letterDurationLabel}
-                    </p>
-                  ) : null}
-                  {step.task ? (
-                    <button
-                      type="button"
-                      onClick={() => setOpenStep(step)}
-                      className={cn(
-                        'mt-0.5 block w-full truncate text-[10px] underline-offset-2 hover:underline',
-                        current || done ? 'font-medium text-[#1769aa]' : 'text-slate-400',
-                      )}
-                      title={`View task: ${step.task}`}
-                    >
-                      {step.task}
-                    </button>
-                  ) : null}
-                </div>
-              </li>
+                </li>
+              </Fragment>
             )
           })}
         </ol>
       </div>
 
       {footerLabel && active ? (
-        <motion.p
+        <motion.div
           key={active.id}
-          className="mt-4 px-2 text-center text-xs text-slate-500 sm:px-4"
+          className="mt-4 flex justify-center px-2 sm:px-4"
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={SMOOTH}
         >
-          {footerLabel}: <span className="font-semibold text-[#0d3763]">{active.title}</span>
-          {active.task ? ` · ${active.task}` : null}
-        </motion.p>
+          <p
+            className={cn(
+              'inline-flex max-w-full flex-wrap items-center justify-center gap-1.5 px-2.5 py-1 text-xs',
+              isYou
+                ? 'rounded-full border border-emerald-200 bg-emerald-50 font-medium text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300'
+                : 'text-slate-500',
+            )}
+          >
+            <span>{footerLabel}:</span>
+            <span
+              className={cn(
+                'font-semibold',
+                isYou ? 'text-emerald-900 dark:text-emerald-300' : 'text-[#0d3763]',
+              )}
+            >
+              {active.title}
+            </span>
+            {isYou ? (
+              <span className="rounded-full bg-emerald-200/80 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-emerald-900">
+                YOU
+              </span>
+            ) : null}
+            {active.task ? <span>· {active.task}</span> : null}
+          </p>
+        </motion.div>
       ) : null}
 
       {openStep ? <TaskDialog step={openStep} onClose={() => setOpenStep(null)} /> : null}

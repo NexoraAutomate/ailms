@@ -111,9 +111,57 @@ def assert_can_edit_letter_details(db: Session, letter: Letter, actor_name: str)
 
 
 def marking_has_children(db: Session, marking_id: int) -> bool:
+    """True if this marking was remade onward (has an active child).
+
+    Revoked remakes do not count — after revoke, the parent leaf hold is restored.
+    """
     return (
-        db.query(Marking.id).filter(Marking.parent_marking_id == marking_id).first() is not None
+        db.query(Marking.id)
+        .filter(
+            Marking.parent_marking_id == marking_id,
+            Marking.status == "active",
+        )
+        .first()
+        is not None
     )
+
+
+def marking_recipient_has_activity(db: Session, marking: Marking) -> bool:
+    """True if the marked-to user has added comments or attachments on this marking."""
+    recipient = (marking.to_user or "").strip()
+    if not recipient:
+        return False
+    has_note = (
+        db.query(CorrespondenceNote.id)
+        .filter(
+            CorrespondenceNote.marking_id == marking.id,
+            CorrespondenceNote.author_user == recipient,
+        )
+        .first()
+        is not None
+    )
+    if has_note:
+        return True
+    return (
+        db.query(CorrespondenceAttachment.id)
+        .filter(
+            CorrespondenceAttachment.marking_id == marking.id,
+            CorrespondenceAttachment.created_by == recipient,
+        )
+        .first()
+        is not None
+    )
+
+
+def marking_is_revokable(db: Session, marking: Marking) -> bool:
+    """Last marker may revoke only while recipient has not remade or contributed."""
+    if marking.status != "active":
+        return False
+    if marking_has_children(db, marking.id):
+        return False
+    if marking_recipient_has_activity(db, marking):
+        return False
+    return True
 
 
 def leaf_inbound_markings(db: Session, letter_id: int, user_name: str) -> list[Marking]:
@@ -303,17 +351,20 @@ def create_mark_batch(
             response_type = ""
             response_type_other = ""
 
-        dup = (
-            db.query(Marking.id)
+        # Only block while an outstanding leaf mark to this user still exists.
+        # Prior marks that were remade onward (have children) must not prevent
+        # marking the same person again after the correspondence returns.
+        outstanding = (
+            db.query(Marking)
             .filter(
                 Marking.letter_id == letter.id,
                 Marking.from_user == actor_name,
                 Marking.to_user == to_user,
                 Marking.status == "active",
             )
-            .first()
+            .all()
         )
-        if dup:
+        if any(not marking_has_children(db, m.id) for m in outstanding):
             raise HTTPException(
                 status_code=400,
                 detail=f"Active marking already exists from you to '{to_user}'",
@@ -437,15 +488,15 @@ def revoke_marking(
         raise HTTPException(status_code=403, detail="Only the marker can revoke")
     if marking.status != "active":
         raise HTTPException(status_code=400, detail="Marking is not active")
-    child = (
-        db.query(Marking.id)
-        .filter(Marking.parent_marking_id == marking.id)
-        .first()
-    )
-    if child:
+    if marking_has_children(db, marking.id):
         raise HTTPException(
             status_code=409,
             detail="Cannot revoke: recipient has already marked this correspondence onward",
+        )
+    if marking_recipient_has_activity(db, marking):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot revoke: recipient has already added comments or attachments",
         )
 
     marking.status = "revoked"
@@ -689,7 +740,7 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
     notes = (
         db.query(CorrespondenceNote)
         .filter(CorrespondenceNote.letter_id == letter_id)
-        .order_by(CorrespondenceNote.id.asc())
+        .order_by(CorrespondenceNote.id.desc())
         .all()
     )
     out: list[dict] = []
@@ -715,7 +766,7 @@ def list_attachments(db: Session, letter_id: int, actor_name: str | None = None)
     rows = (
         db.query(CorrespondenceAttachment)
         .filter(CorrespondenceAttachment.letter_id == letter_id)
-        .order_by(CorrespondenceAttachment.id.asc())
+        .order_by(CorrespondenceAttachment.id.desc())
         .all()
     )
     return [
@@ -1039,7 +1090,7 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
                 actions.append("respond")
         if is_initiator(letter, actor_name) and holds:
             actions.append("close")
-        # Revoke only while recipient has not remade onward.
+        # Revoke only while recipient has not remade onward or contributed.
         outbound = (
             db.query(Marking)
             .filter(
@@ -1049,7 +1100,7 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
             )
             .all()
         )
-        if any(not marking_has_children(db, m.id) for m in outbound):
+        if any(marking_is_revokable(db, m) for m in outbound):
             actions.append("revoke")
     return actions
 

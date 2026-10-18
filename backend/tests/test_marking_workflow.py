@@ -25,6 +25,7 @@ from app.marking_workflow_service import (
     list_attachments,
     list_notes,
     list_tracked,
+    marking_has_children,
     marking_tree,
     note_is_editable,
     revoke_marking,
@@ -239,6 +240,46 @@ class MarkingWorkflowTest(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_can_remark_same_user_after_correspondence_returns(self) -> None:
+        """Prior active mark that was remade onward must not block marking that user again."""
+        first = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        parent = self.db.query(Marking).filter(Marking.batch_id == first.id).one()
+
+        # Recipient remakes back to initiator (prior A→recipient stays active with children).
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=parent.id,
+            recipients=[{"toUser": self.initiator.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertTrue(user_holds_letter(self.db, self.letter, self.initiator.name))
+        self.assertTrue(marking_has_children(self.db, parent.id))
+        self.assertEqual(parent.status, "active")
+
+        # Initiator may mark the same recipient again after the letter returns.
+        second = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        remark = (
+            self.db.query(Marking)
+            .filter(Marking.batch_id == second.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        self.assertEqual(remark.status, "active")
+        self.assertIsNotNone(remark.parent_marking_id)
+
     def test_chain_and_revoke_rules(self) -> None:
         batch = create_mark_batch(
             self.db,
@@ -284,6 +325,121 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.db.refresh(child)
         self.assertEqual(child.status, "revoked")
         self.assertEqual(child.revoke_ip, "10.0.0.1")
+        # Revoked remake restores the prior holder's leaf — mark/note come back, revoke goes away.
+        self.assertFalse(marking_has_children(self.db, parent.id))
+        self.assertTrue(user_holds_letter(self.db, self.letter, self.user_a.name))
+        restored = available_marking_actions(self.db, self.letter, self.user_a.name)
+        self.assertIn("mark", restored)
+        self.assertIn("add_note", restored)
+        self.assertNotIn("revoke", restored)
+
+    def test_initiator_revoke_restores_hold_and_actions(self) -> None:
+        batch = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        marking = self.db.query(Marking).filter(Marking.batch_id == batch.id).one()
+        self.assertFalse(user_holds_letter(self.db, self.letter, self.initiator.name))
+        self.assertIn("revoke", available_marking_actions(self.db, self.letter, self.initiator.name))
+
+        revoke_marking(self.db, marking=marking, actor_name=self.initiator.name)
+        self.db.flush()
+        self.assertEqual(marking.status, "revoked")
+        self.assertTrue(user_holds_letter(self.db, self.letter, self.initiator.name))
+        actions = available_marking_actions(self.db, self.letter, self.initiator.name)
+        self.assertIn("mark", actions)
+        self.assertIn("add_note", actions)
+        self.assertIn("close", actions)
+        self.assertNotIn("revoke", actions)
+
+    def test_cannot_revoke_after_recipient_comments_or_attachments(self) -> None:
+        batch = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        marking = self.db.query(Marking).filter(Marking.batch_id == batch.id).one()
+        self.assertIn(
+            "revoke",
+            available_marking_actions(self.db, self.letter, self.initiator.name),
+        )
+
+        add_note(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            body_text="Recipient comment",
+            marking_id=marking.id,
+        )
+        self.db.flush()
+        self.assertNotIn(
+            "revoke",
+            available_marking_actions(self.db, self.letter, self.initiator.name),
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            revoke_marking(self.db, marking=marking, actor_name=self.initiator.name)
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertIn("comments or attachments", ctx.exception.detail)
+
+        # Fresh letter: attachment alone also blocks revoke.
+        letter2 = Letter(
+            number=_num(),
+            letter_date=date.today(),
+            received_date=date.today(),
+            type="Incoming",
+            subject="Revoke after attachment",
+            sender="External",
+            recipient="Office",
+            department="Secretariat",
+            priority="Routine",
+            status="Open",
+            created_by=self.initiator.name,
+            initiator_user_id=self.initiator.id,
+            last_action="Registered",
+        )
+        self.db.add(letter2)
+        self.db.flush()
+        try:
+            batch2 = create_mark_batch(
+                self.db,
+                letter=letter2,
+                actor_name=self.initiator.name,
+                recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+            )
+            self.db.flush()
+            marking2 = self.db.query(Marking).filter(Marking.batch_id == batch2.id).one()
+            add_attachments_to_marking(
+                self.db,
+                letter=letter2,
+                actor_name=self.user_a.name,
+                marking_id=marking2.id,
+                attachments=[
+                    {"attachmentKind": "Supporting Doc", "originalFilename": "x.pdf"}
+                ],
+            )
+            self.db.flush()
+            self.assertNotIn(
+                "revoke",
+                available_marking_actions(self.db, letter2, self.initiator.name),
+            )
+            with self.assertRaises(HTTPException) as ctx2:
+                revoke_marking(self.db, marking=marking2, actor_name=self.initiator.name)
+            self.assertEqual(ctx2.exception.status_code, 409)
+        finally:
+            self.db.query(CorrespondenceAttachment).filter(
+                CorrespondenceAttachment.letter_id == letter2.id
+            ).delete()
+            self.db.query(CorrespondenceNote).filter(
+                CorrespondenceNote.letter_id == letter2.id
+            ).delete()
+            self.db.query(Marking).filter(Marking.letter_id == letter2.id).delete()
+            self.db.query(Letter).filter(Letter.id == letter2.id).delete()
+            self.db.flush()
 
     def test_response_required_fulfillment(self) -> None:
         batch = create_mark_batch(

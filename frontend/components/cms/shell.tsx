@@ -48,6 +48,7 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -368,10 +369,12 @@ function Header({ setMobile }: { setMobile: (v: boolean) => void }) {
             </span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 min-w-56">
-            <DropdownMenuLabel className="font-normal">
-              <p className="text-xs font-bold text-foreground">{me.name}</p>
-              <p className="text-[11px] text-muted-foreground">{me.username || settings.currentUser || me.name}</p>
-            </DropdownMenuLabel>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="font-normal">
+                <p className="text-xs font-bold text-foreground">{me.name}</p>
+                <p className="text-[11px] text-muted-foreground">{me.username || settings.currentUser || me.name}</p>
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               disabled={avatarBusy || !me.id}
