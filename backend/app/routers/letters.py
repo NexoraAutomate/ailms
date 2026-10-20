@@ -233,11 +233,16 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
                 raise HTTPException(status_code=409, detail="Letter number already exists")
     if "status" in data:
         _apply_status(letter, data.pop("status"))
+    body_changed = "bodyText" in data or "subject" in data
     for key, value in data.items():
         attr = mapping.get(key, key)
         if attr == "assigned_to" and value is not None and value != letter.assigned_to:
             letter.assigned_by = actor
         setattr(letter, attr, value)
+    if body_changed:
+        from app.rag.indexer import try_index_letter
+
+        try_index_letter(db, letter)
     add_audit(
         db,
         user=actor,

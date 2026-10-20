@@ -301,6 +301,126 @@ def upgrade_letter_body_text_column(engine: Engine) -> None:
         conn.execute(text("ALTER TABLE cms_letters ADD COLUMN body_text TEXT DEFAULT ''"))
 
 
+def ensure_pgvector_extension(engine: Engine) -> None:
+    """Install pgvector extension (required before ORM create_all of LetterChunk)."""
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+
+def upgrade_letter_chunks_schema(engine: Engine, *, dimensions: int | None = None) -> None:
+    """Create pgvector extension + cms_letter_chunks for hybrid RAG.
+
+    When EMBEDDING_DIMENSIONS changes (demo OpenAI 1536 → on-prem 768), the
+    table is dropped and recreated so vectors stay consistent; run reindex after.
+    """
+    from app.config import get_settings
+
+    dims = int(dimensions if dimensions is not None else get_settings().embedding_dimensions)
+    if dims < 8 or dims > 8192:
+        dims = 1536
+
+    ensure_pgvector_extension(engine)
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_letters"):
+        return
+
+    if inspector.has_table("cms_letter_chunks"):
+        # Detect existing vector(N); recreate if dimension mismatch.
+        with engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT format_type(a.atttypid, a.atttypmod) AS typ
+                    FROM pg_attribute a
+                    JOIN pg_class c ON a.attrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE c.relname = 'cms_letter_chunks'
+                      AND a.attname = 'embedding'
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                    """
+                )
+            ).first()
+        typ = (row[0] if row else "") or ""
+        expected = f"vector({dims})"
+        if typ == expected:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_letter_chunks_letter_id "
+                        "ON cms_letter_chunks (letter_id)"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_letter_chunks_embedding_model "
+                        "ON cms_letter_chunks (embedding_model)"
+                    )
+                )
+                # HNSW may already exist; IF NOT EXISTS supported on PG 9.5+ for indexes.
+                conn.execute(
+                    text(
+                        """
+                        DO $$
+                        BEGIN
+                          IF NOT EXISTS (
+                            SELECT 1 FROM pg_class WHERE relname = 'ix_cms_letter_chunks_embedding_hnsw'
+                          ) THEN
+                            CREATE INDEX ix_cms_letter_chunks_embedding_hnsw
+                              ON cms_letter_chunks
+                              USING hnsw (embedding vector_cosine_ops);
+                          END IF;
+                        END $$;
+                        """
+                    )
+                )
+            return
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS cms_letter_chunks CASCADE"))
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE cms_letter_chunks (
+                    id SERIAL PRIMARY KEY,
+                    letter_id INTEGER NOT NULL
+                        REFERENCES cms_letters(id) ON DELETE CASCADE,
+                    chunk_index INTEGER NOT NULL DEFAULT 0,
+                    content TEXT NOT NULL DEFAULT '',
+                    embedding vector({dims}),
+                    content_hash VARCHAR(64) NOT NULL DEFAULT '',
+                    embedding_model VARCHAR(120) NOT NULL DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    CONSTRAINT uq_letter_chunk_index UNIQUE (letter_id, chunk_index)
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_cms_letter_chunks_letter_id "
+                "ON cms_letter_chunks (letter_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_cms_letter_chunks_embedding_model "
+                "ON cms_letter_chunks (embedding_model)"
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE INDEX ix_cms_letter_chunks_embedding_hnsw
+                  ON cms_letter_chunks
+                  USING hnsw (embedding vector_cosine_ops)
+                """
+            )
+        )
+
+
 def upgrade_letter_ownership_columns(engine: Engine) -> None:
     """Add created_by / assigned_by for per-user letter visibility."""
     if not inspect(engine).has_table("cms_letters"):

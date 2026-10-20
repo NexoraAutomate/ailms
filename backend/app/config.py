@@ -14,6 +14,13 @@ _PROVIDER_ALLOWED_HOSTS: dict[str, str] = {
     "runpod": "api.runpod.ai",
 }
 
+# Embedding host allowlists when EMBEDDING_ALLOWED_HOSTS=auto.
+_EMBEDDING_ALLOWED_HOSTS: dict[str, str] = {
+    "ollama": "127.0.0.1,localhost",
+    "vllm": "127.0.0.1,localhost",
+    "openai": "api.openai.com",
+}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -120,9 +127,81 @@ class Settings(BaseSettings):
     # Cover cold start (model download/load) + generation; raise if jobs still time out.
     runpod_max_wait_seconds: int = 900
 
+    # ── Embeddings / hybrid RAG (OpenAI demo → Ollama/vLLM on-prem) ─────────
+    embedding_enabled: bool = True
+    # openai | ollama | vllm — independent of LLM_PROVIDER.
+    embedding_provider: str = "openai"
+    embedding_timeout_seconds: int = 120
+    embedding_dimensions: int = 1536
+    embedding_allowed_hosts: str = "auto"
+    # Fallback flat keys when a provider profile field is empty.
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
+    embedding_model: str = ""
+
+    embedding_openai_base_url: str = "https://api.openai.com/v1"
+    embedding_openai_api_key: str = ""
+    embedding_openai_model: str = "text-embedding-3-small"
+
+    embedding_ollama_base_url: str = "http://127.0.0.1:11434/v1"
+    embedding_ollama_api_key: str = "ollama"
+    embedding_ollama_model: str = "nomic-embed-text"
+
+    embedding_vllm_base_url: str = "http://127.0.0.1:8001/v1"
+    embedding_vllm_api_key: str = "EMPTY"
+    embedding_vllm_model: str = "nomic-ai/nomic-embed-text-v1.5"
+
+    rag_hybrid_enabled: bool = True
+    rag_chunk_size: int = 1200
+    rag_chunk_overlap: int = 200
+    rag_top_k: int = 8
+    rag_rrf_k: int = 60
+
     @property
     def provider_key(self) -> str:
         return self.llm_provider.strip().lower()
+
+    @property
+    def embedding_provider_key(self) -> str:
+        return self.embedding_provider.strip().lower()
+
+    @property
+    def active_embedding_model(self) -> str:
+        specific = {
+            "ollama": self.embedding_ollama_model,
+            "vllm": self.embedding_vllm_model,
+            "openai": self.embedding_openai_model,
+        }.get(self.embedding_provider_key, "")
+        return (specific or self.embedding_model or "").strip()
+
+    @property
+    def active_embedding_base_url(self) -> str:
+        specific = {
+            "ollama": self.embedding_ollama_base_url,
+            "vllm": self.embedding_vllm_base_url,
+            "openai": self.embedding_openai_base_url,
+        }.get(self.embedding_provider_key, "")
+        return (specific or self.embedding_base_url or "").strip()
+
+    @property
+    def active_embedding_api_key(self) -> str:
+        specific = {
+            "ollama": self.embedding_ollama_api_key,
+            "vllm": self.embedding_vllm_api_key,
+            "openai": self.embedding_openai_api_key or self.llm_openai_api_key,
+        }.get(self.embedding_provider_key, "")
+        return (specific or self.embedding_api_key or "").strip()
+
+    @property
+    def active_embedding_allowed_hosts(self) -> str:
+        raw = (self.embedding_allowed_hosts or "").strip()
+        if not raw:
+            return ""
+        if raw.lower() == "auto":
+            return _EMBEDDING_ALLOWED_HOSTS.get(
+                self.embedding_provider_key, "127.0.0.1,localhost"
+            )
+        return raw
 
     @property
     def active_llm_model(self) -> str:

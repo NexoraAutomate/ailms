@@ -4,11 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import Base, engine, ensure_database
 from app.db_upgrade import (
+    ensure_pgvector_extension,
     upgrade_ai_registration_schema,
     upgrade_department_org_schema,
     upgrade_enterprise_workflow_schema,
     upgrade_letter_archive_columns,
     upgrade_letter_body_text_column,
+    upgrade_letter_chunks_schema,
     upgrade_letter_ownership_columns,
     upgrade_letter_qa_cache_schema,
     upgrade_notification_columns,
@@ -118,6 +120,8 @@ app.include_router(ai_registration_router, prefix="/api")
 def on_startup() -> None:
     ensure_database()
     ensure_storage_dirs()
+    # pgvector extension must exist before create_all builds cms_letter_chunks.
+    ensure_pgvector_extension(engine)
     Base.metadata.create_all(bind=engine)
     upgrade_ai_registration_schema(engine)
     upgrade_department_org_schema(engine)
@@ -127,6 +131,7 @@ def on_startup() -> None:
     upgrade_notification_columns(engine)
     upgrade_letter_archive_columns(engine)
     upgrade_letter_body_text_column(engine)
+    upgrade_letter_chunks_schema(engine)
     upgrade_letter_ownership_columns(engine)
     upgrade_user_created_at(engine)
     upgrade_user_auth_schema(engine)

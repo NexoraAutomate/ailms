@@ -59,6 +59,11 @@ class SearchIn(BaseModel):
     query: str
 
 
+class ReindexIn(BaseModel):
+    force: bool = False
+    limit: int | None = None
+
+
 class ChatHistoryItem(BaseModel):
     role: str
     content: str = ""
@@ -304,6 +309,32 @@ async def api_draft(body: LetterRef, db: Session = Depends(get_db)) -> dict:
 async def api_search(body: SearchIn, db: Session = Depends(get_db)) -> dict:
     _guard_configured()
     return await natural_search(db, body.query.strip())
+
+
+@router.post("/reindex")
+async def api_reindex(body: ReindexIn, db: Session = Depends(get_db)) -> dict:
+    """Admin: (re)build pgvector chunks for letters. Required after embedding model/dim switch."""
+    from app.letter_access import is_administrator, resolve_user_role
+    from app.rag.indexer import reindex_all_letters
+
+    actor = current_user_name(db)
+    role = resolve_user_role(db, actor)
+    if not is_administrator(role):
+        raise HTTPException(status_code=403, detail="Administrator role required for reindex")
+    result = await reindex_all_letters(db, force=body.force, limit=body.limit)
+    add_audit(
+        db,
+        user=actor,
+        module="AI",
+        action="RAG Reindex",
+        record="cms_letter_chunks",
+        description=(
+            f"indexed={result.get('indexed')} unchanged={result.get('unchanged')} "
+            f"failed={result.get('failed')} force={body.force}"
+        ),
+    )
+    db.commit()
+    return result
 
 
 @router.post("/analyze-correspondence")

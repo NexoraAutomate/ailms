@@ -51,6 +51,10 @@ def create_letter_record(
     )
     db.add(letter)
     db.flush()
+    if (letter.body_text or "").strip() or (letter.subject or "").strip():
+        from app.rag.indexer import try_index_letter
+
+        try_index_letter(db, letter)
     bump_trend(db, letter.type, letter.letter_date)
     add_audit(
         db,

@@ -10,6 +10,7 @@ PyJWT>=2.9.0
 pymupdf>=1.24.0
 pillow>=10.0.0
 pytest>=8.0.0
+pgvector>=0.3.6
 # Optional heavy OCR stack. Install when the host Python/OS supports it:
 #   CPU:  pip install paddlepaddle paddleocr
 #   GPU:  do NOT use plain PyPI `paddlepaddle-gpu` (stale 2.6.x). Use Paddle's index:

@@ -306,6 +306,10 @@ def _letters_by_ids(db: Session, letter_ids: list[int]) -> list[dict[str, Any]]:
 def _brief_letters_for_prompt(letters: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
     briefs: list[dict[str, Any]] = []
     for row in letters[:limit]:
+        body = str(row.get("bodyText") or "")
+        snippet = str(row.get("ragSnippet") or "").strip()
+        # Prefer retrieved chunk snippet when present (RAG shortlist).
+        body_for_prompt = snippet if snippet else body
         briefs.append(
             {
                 "id": row.get("id"),
@@ -319,7 +323,7 @@ def _brief_letters_for_prompt(letters: list[dict[str, Any]], limit: int = 5) -> 
                 "letterDate": row.get("letterDate"),
                 "actionRequired": row.get("actionRequired"),
                 "remarks": row.get("remarks"),
-                "bodyText": _truncate_text(str(row.get("bodyText") or ""), _BODY_PROMPT_CHARS),
+                "bodyText": _truncate_text(body_for_prompt, _BODY_PROMPT_CHARS),
             }
         )
     return briefs
@@ -327,12 +331,23 @@ def _brief_letters_for_prompt(letters: list[dict[str, Any]], limit: int = 5) -> 
 
 def ai_status() -> dict[str, Any]:
     settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
+    from app.rag.embed_client import embeddings_are_configured
+
     provider = settings.provider_key
     payload: dict[str, Any] = {
         "enabled": llm_is_configured(),
         "provider": settings.llm_provider,
         "model": settings.active_llm_model,
         "baseUrl": settings.active_llm_base_url,
+        "rag": {
+            "hybridEnabled": settings.rag_hybrid_enabled,
+            "embeddingEnabled": settings.embedding_enabled,
+            "embeddingConfigured": embeddings_are_configured(settings),
+            "embeddingProvider": settings.embedding_provider,
+            "embeddingModel": settings.active_embedding_model,
+            "embeddingDimensions": settings.embedding_dimensions,
+            "topK": settings.rag_top_k,
+        },
     }
     if provider == "runpod":
         payload["endpointId"] = settings.runpod_endpoint_id
@@ -498,6 +513,47 @@ async def draft_response(db: Session, letter_id: int, style: str = "default") ->
 
 
 async def natural_search(db: Session, query: str) -> dict[str, Any]:
+    """Hybrid keyword + vector retrieval (RAG). Falls back to keyword / legacy snapshot."""
+    from app.config import get_settings
+    from app.rag.embed_client import embeddings_are_configured
+    from app.rag.hybrid_search import hybrid_search
+
+    cfg = get_settings()
+    if cfg.rag_hybrid_enabled and cfg.embedding_enabled and embeddings_are_configured(cfg):
+        result = await hybrid_search(db, query)
+        # Preserve response shape expected by /ai/search and assistant_chat.
+        return {
+            "query": result.get("query") or query,
+            "filters": result.get("filters") or {},
+            "summary": result.get("summary") or "",
+            "letters": result.get("letters") or [],
+        }
+
+    # Keyword-only when embeddings are off.
+    if cfg.rag_hybrid_enabled:
+        matched = _text_match_letters(db, query)
+        letters = [serialize_letter(row).model_dump(by_alias=True) for row in matched]
+        keywords = _search_keywords(query)
+        filters: dict[str, Any] = {"Retrieval": "keyword"}
+        if keywords and letters:
+            filters["Keywords"] = ", ".join(keywords)
+        summary = (
+            f"Matched {len(letters)} letter(s) using keywords: {', '.join(keywords)}."
+            if keywords and letters
+            else (
+                f"Matched {len(letters)} letter(s)."
+                if letters
+                else "No matching letters found for this query."
+            )
+        )
+        return {
+            "query": query,
+            "filters": filters,
+            "summary": summary,
+            "letters": letters,
+        }
+
+    # Legacy: LLM over register snapshot (disabled when RAG_HYBRID_ENABLED=true).
     register = _register_snapshot(db)
     keywords = _search_keywords(query)
     system = (
@@ -517,7 +573,7 @@ async def natural_search(db: Session, query: str) -> dict[str, Any]:
     data = await chat_json(system=system, user=user)
     raw_ids = data.get("letterIds") or []
     numeric_ids = [int(i) for i in raw_ids if str(i).isdigit()]
-    letters: list[dict[str, Any]] = []
+    letters = []
     if numeric_ids:
         rows = db.query(Letter).filter(Letter.id.in_(numeric_ids)).all()
         letters = [serialize_letter(row).model_dump(by_alias=True) for row in rows]

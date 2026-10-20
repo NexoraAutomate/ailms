@@ -67,6 +67,12 @@ def backfill_letter_body_text(db: Session) -> int:
             continue
         letter.body_text = body
         updated += 1
+        try:
+            from app.rag.indexer import try_index_letter
+
+            try_index_letter(db, letter)
+        except Exception:  # noqa: BLE001
+            logger.exception("RAG index failed during body_text backfill letter_id=%s", letter.id)
     if updated:
         db.flush()
         logger.info("Backfilled body_text on %s letter(s)", updated)
@@ -277,6 +283,13 @@ def approve_registration_job(
     letter.status = "LLM Analyzed"
     letter.last_action = "AI registration approved"
     db.flush()
+    # create_letter_record already indexes when body/subject present; force refresh after status set.
+    try:
+        from app.rag.indexer import try_index_letter
+
+        try_index_letter(db, letter)
+    except Exception:  # noqa: BLE001
+        logger.exception("RAG index failed after AI registration letter_id=%s", letter.id)
 
     create_document_from_staged_file(
         db,

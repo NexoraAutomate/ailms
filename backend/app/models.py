@@ -1,9 +1,21 @@
 from datetime import date, datetime
+from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+
+def _embedding_vector_dim() -> int:
+    """Match EMBEDDING_DIMENSIONS used by db_upgrade (default OpenAI 1536)."""
+    try:
+        from app.config import get_settings
+
+        return int(get_settings().embedding_dimensions)
+    except Exception:
+        return 1536
 
 
 class Department(Base):
@@ -129,6 +141,30 @@ class Letter(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     actions: Mapped[list["LetterAction"]] = relationship(back_populates="letter", cascade="all, delete-orphan")
+    chunks: Mapped[list["LetterChunk"]] = relationship(
+        back_populates="letter", cascade="all, delete-orphan"
+    )
+
+
+class LetterChunk(Base):
+    """Embedded text chunk for hybrid RAG (pgvector)."""
+
+    __tablename__ = "cms_letter_chunks"
+    __table_args__ = (UniqueConstraint("letter_id", "chunk_index", name="uq_letter_chunk_index"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_letters.id", ondelete="CASCADE"),
+        index=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    content: Mapped[str] = mapped_column(Text, default="")
+    embedding: Mapped[Any] = mapped_column(Vector(_embedding_vector_dim()), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    embedding_model: Mapped[str] = mapped_column(String(120), default="", index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    letter: Mapped["Letter"] = relationship(back_populates="chunks")
 
 
 class RouteStep(Base):
