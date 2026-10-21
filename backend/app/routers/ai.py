@@ -1,5 +1,8 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -16,10 +19,12 @@ from app.ai_service import (
     ai_status,
     analyze_correspondence,
     assistant_chat,
+    assistant_chat_deltas,
     classify,
     draft_response,
     extract_fields,
     letter_qa,
+    prepare_assistant_turn,
     management_insights,
     natural_search,
     recommend_actions,
@@ -372,6 +377,54 @@ async def api_chat(body: ChatIn, db: Session = Depends(get_db)) -> dict:
         body.message.strip(),
         history=history,
         context_letter_ids=list(body.context_letter_ids),
+    )
+
+
+def _sse(payload: dict) -> str:
+    encoded = json.dumps(jsonable_encoder(payload), ensure_ascii=False)
+    return f"data: {encoded}\n\n"
+
+
+@router.post("/chat/stream")
+async def api_chat_stream(body: ChatIn, db: Session = Depends(get_db)):
+    """Stream the assistant reply as Server-Sent Events.
+
+    Events: ``meta`` (search result), ``delta`` (text chunk), ``done``, ``error``.
+    Retrieval finishes before the stream starts so the DB session is not held open
+    across token generation.
+    """
+    _guard_configured()
+    if not body.message.strip():
+        raise HTTPException(status_code=422, detail="Message is required")
+    history = [{"role": item.role, "content": item.content} for item in body.history]
+    system, user, search = await prepare_assistant_turn(
+        db,
+        body.message.strip(),
+        history=history,
+        context_letter_ids=list(body.context_letter_ids),
+    )
+
+    async def events():
+        yield _sse({"type": "meta", "result": search})
+        try:
+            async for delta in assistant_chat_deltas(system, user):
+                yield _sse({"type": "delta", "text": delta})
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            yield _sse({"type": "error", "detail": detail})
+            return
+        except Exception as exc:  # noqa: BLE001 — surface a single client-safe message
+            yield _sse({"type": "error", "detail": str(exc) or "The AI service could not complete this request."})
+            return
+        yield _sse({"type": "done"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

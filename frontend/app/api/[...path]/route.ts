@@ -1,5 +1,6 @@
 import { request as httpRequest, type IncomingMessage } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { Readable } from 'node:stream'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const runtime = 'nodejs'
@@ -41,7 +42,26 @@ function errorCode(error: unknown): string {
   return ''
 }
 
-function forwardOnce(request: NextRequest, targetPath: string, body: Buffer): Promise<NextResponse> {
+function copyResponseHeaders(response: IncomingMessage): Headers {
+  const responseHeaders = new Headers()
+  for (const [key, value] of Object.entries(response.headers)) {
+    if (value == null || HOP_BY_HOP.has(key.toLowerCase())) continue
+    if (Array.isArray(value)) {
+      for (const item of value) responseHeaders.append(key, item)
+    } else {
+      responseHeaders.set(key, value)
+    }
+  }
+  return responseHeaders
+}
+
+function isEventStream(response: IncomingMessage): boolean {
+  const raw = response.headers['content-type']
+  const value = Array.isArray(raw) ? raw.join(';') : raw || ''
+  return value.toLowerCase().includes('text/event-stream')
+}
+
+function forwardOnce(request: NextRequest, targetPath: string, body: Buffer): Promise<Response> {
   const origin = apiOrigin()
   const transport = origin.protocol === 'https:' ? httpsRequest : httpRequest
   const headers: Record<string, string | string[]> = {}
@@ -74,18 +94,21 @@ function forwardOnce(request: NextRequest, targetPath: string, body: Buffer): Pr
         timeout: upstreamTimeoutMs(),
       },
       (response: IncomingMessage) => {
+        const responseHeaders = copyResponseHeaders(response)
+        if (isEventStream(response)) {
+          responseHeaders.set('Cache-Control', 'no-cache, no-transform')
+          responseHeaders.set('X-Accel-Buffering', 'no')
+          resolve(
+            new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
+              status: response.statusCode ?? 200,
+              headers: responseHeaders,
+            }),
+          )
+          return
+        }
         const chunks: Buffer[] = []
         response.on('data', (chunk: Buffer) => chunks.push(chunk))
         response.on('end', () => {
-          const responseHeaders = new Headers()
-          for (const [key, value] of Object.entries(response.headers)) {
-            if (value == null || HOP_BY_HOP.has(key.toLowerCase())) continue
-            if (Array.isArray(value)) {
-              for (const item of value) responseHeaders.append(key, item)
-            } else {
-              responseHeaders.set(key, value)
-            }
-          }
           resolve(
             new NextResponse(new Uint8Array(Buffer.concat(chunks)), {
               status: response.statusCode ?? 502,

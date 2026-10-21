@@ -175,6 +175,7 @@ export const AI_ENDPOINTS = {
   analyze: '/api/ai/analyze-correspondence',
   insights: '/api/ai/management-insights',
   chat: '/api/ai/chat',
+  chatStream: '/api/ai/chat/stream',
   letterQa: '/api/ai/letter-qa',
   status: '/api/ai/status',
   letterAnalysis: (letterId: string | number) => `/api/ai/letters/${letterId}/analysis`,
@@ -591,6 +592,96 @@ export async function assistantChat(
       return { text: mockAssistantReply(message, result), result }
     },
   )
+}
+
+export type AssistantStreamHandlers = {
+  onDelta?: (text: string) => void
+  onMeta?: (result: InterpretedQuery | undefined) => void
+}
+
+type AssistantStreamEvent = {
+  type?: string
+  text?: string
+  detail?: string
+  result?: InterpretedQuery
+}
+
+function consumeSseBuffer(buffer: string, emit: (data: string) => void): string {
+  const parts = buffer.split('\n\n')
+  const rest = parts.pop() ?? ''
+  for (const part of parts) {
+    const data = part
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n')
+    if (data) emit(data)
+  }
+  return rest
+}
+
+export async function assistantChatStream(
+  message: string,
+  letters: Letter[] = [],
+  options: AssistantChatOptions & AssistantStreamHandlers = {},
+): Promise<{ text: string; result?: InterpretedQuery }> {
+  const history = options.history ?? []
+  const contextLetterIds = options.contextLetterIds ?? []
+  const status = await fetchAiStatus()
+  if (!status.enabled) {
+    const result = await naturalLanguageSearchMock(message, letters, contextLetterIds)
+    const text = mockAssistantReply(message, result)
+    options.onMeta?.(result)
+    if (text) options.onDelta?.(text)
+    return { text, result }
+  }
+
+  const response = await api.stream(AI_ENDPOINTS.chatStream, {
+    message,
+    history,
+    contextLetterIds: contextLetterIds.map(Number).filter((id) => Number.isFinite(id)),
+  })
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let pending = ''
+  let text = ''
+  let result: InterpretedQuery | undefined
+
+  const handleEvent = (raw: string) => {
+    let event: AssistantStreamEvent
+    try {
+      event = JSON.parse(raw) as AssistantStreamEvent
+    } catch {
+      return
+    }
+    if (event.type === 'meta') {
+      result = event.result
+      options.onMeta?.(result)
+      return
+    }
+    if (event.type === 'delta' && event.text) {
+      text += event.text
+      options.onDelta?.(event.text)
+      return
+    }
+    if (event.type === 'error') {
+      throw new Error(event.detail || 'The AI service could not complete this request.')
+    }
+  }
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      pending = consumeSseBuffer(pending + decoder.decode(value, { stream: true }), handleEvent)
+    }
+    pending = consumeSseBuffer(pending + decoder.decode(), handleEvent)
+    if (pending.trim()) consumeSseBuffer(`${pending}\n\n`, handleEvent)
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+
+  return { text: text.trim(), result }
 }
 
 export type LetterQaReply = {

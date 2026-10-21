@@ -106,4 +106,29 @@ export const api = {
     return response.json() as Promise<T>
   },
   download: (path: string) => requestBlob(path),
+  /** POST and return the raw response so the caller can read a streaming body. */
+  stream: async (path: string, body?: unknown) => {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...authHeaders(),
+      },
+      cache: 'no-store',
+      credentials: 'include',
+    })
+    if (response.status === 401 && !path.startsWith('/api/auth/login') && !path.startsWith('/api/auth/signup')) {
+      redirectToLogin()
+      throw new Error('Not authenticated')
+    }
+    if (!response.ok) {
+      throw new Error(await parseError(response))
+    }
+    if (!response.body) {
+      throw new Error('Empty response')
+    }
+    return response
+  },
 }

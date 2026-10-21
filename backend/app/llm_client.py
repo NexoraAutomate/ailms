@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlparse
 
@@ -143,6 +144,53 @@ def _is_retryable_request_error(exc: Exception) -> bool:
     return isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError))
 
 
+def content_from_stream_payload(payload: Any) -> str | None:
+    """Extract a text delta from one OpenAI-compatible streaming chunk."""
+    if not isinstance(payload, dict):
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    delta = first.get("delta")
+    if isinstance(delta, dict):
+        content = delta.get("content")
+        if isinstance(content, str):
+            return content or None
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                    parts.append(part["text"])
+            joined = "".join(parts)
+            return joined or None
+    text = first.get("text")
+    if isinstance(text, str):
+        return text or None
+    return None
+
+
+def delta_from_sse_line(line: str) -> str | None:
+    """Parse one SSE line. Returns text, or None for keepalives, role chunks, and [DONE]."""
+    raw = line.strip()
+    if not raw or raw.startswith(":"):
+        return None
+    if not raw.startswith("data:"):
+        return None
+    data = raw[5:].strip()
+    if not data or data == "[DONE]":
+        return None
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        return None
+    return content_from_stream_payload(payload)
+
+
 async def chat_completion(
     *,
     system: str,
@@ -246,6 +294,118 @@ async def chat_completion(
     if isinstance(last_error, HTTPException):
         raise last_error
     raise HTTPException(status_code=503, detail=f"LLM request failed: {last_error}")
+
+
+async def chat_completion_stream(
+    *,
+    system: str,
+    user: str,
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+) -> AsyncIterator[str]:
+    """Yield text deltas as the model produces them.
+
+    OpenAI-compatible providers use ``stream: true``. Runpod's queue API returns
+    the finished text in one piece, which is yielded as a single delta.
+    """
+    settings = get_settings()
+    if not llm_is_configured():
+        raise LlmNotConfiguredError("LLM is not configured")
+    try:
+        assert_llm_host_allowed(settings)
+    except LlmHostNotAllowedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if settings.provider_key == _RUNPOD_PROVIDER:
+        from app.runpod_client import chat_completion_runpod
+
+        _log_prompt_preview(system, user)
+        text = await chat_completion_runpod(
+            system=system,
+            user=user,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        if text:
+            yield text
+        return
+
+    url = f"{settings.active_llm_base_url.rstrip('/')}/chat/completions"
+    payload: dict[str, Any] = {
+        "model": settings.active_llm_model,
+        "temperature": temperature,
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    payload.update(_extra_body())
+    payload["stream"] = True
+
+    _log_prompt_preview(system, user)
+    timeout = httpx.Timeout(settings.llm_timeout_seconds)
+    started_output = False
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(_MAX_ATTEMPTS):
+            started = time.perf_counter()
+            try:
+                async with client.stream("POST", url, headers=_headers(), json=payload) as response:
+                    if response.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS - 1:
+                        await response.aread()
+                        delay = _RETRY_BACKOFF_SECONDS[attempt]
+                        logger.warning(
+                            "LLM stream HTTP %s (attempt %d/%d); retrying in %.1fs",
+                            response.status_code,
+                            attempt + 1,
+                            _MAX_ATTEMPTS,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                    if response.status_code >= 400:
+                        body = (await response.aread()).decode("utf-8", errors="replace")
+                        raise HTTPException(
+                            status_code=503,
+                            detail=f"LLM error ({response.status_code}): {body[:400]}",
+                        )
+
+                    async for line in response.aiter_lines():
+                        delta = delta_from_sse_line(line)
+                        if not delta:
+                            continue
+                        started_output = True
+                        yield delta
+            except HTTPException:
+                raise
+            except httpx.RequestError as exc:
+                if started_output or attempt >= _MAX_ATTEMPTS - 1 or not _is_retryable_request_error(exc):
+                    raise HTTPException(status_code=503, detail=f"LLM request failed: {exc}") from exc
+                delay = _RETRY_BACKOFF_SECONDS[attempt]
+                logger.warning(
+                    "LLM stream request error (attempt %d/%d): %s; retrying in %.1fs",
+                    attempt + 1,
+                    _MAX_ATTEMPTS,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            logger.info(
+                "LLM stream model=%s provider=%s latencyMs=%d",
+                settings.active_llm_model,
+                settings.llm_provider,
+                latency_ms,
+            )
+            return
+
+    raise HTTPException(status_code=503, detail="LLM request failed")
 
 
 async def chat_json(*, system: str, user: str, temperature: float = 0.15) -> Any:

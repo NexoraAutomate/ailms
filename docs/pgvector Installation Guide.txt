@@ -1,0 +1,142 @@
+Windows
+
+Ensure C++ support in Visual Studio is installed and run x64 Native Tools Command Prompt for VS [version] as administrator. 
+
+	Select only these essential components:
+
+		✓ MSVC Build Tools for x64/x86 (Latest, non-Preview)
+		✓ Windows SDK — one compatible stable version
+
+Then use nmake to build:
+
+-set "PGROOT=C:\Program Files\PostgreSQL\18"
+-cd %TEMP%
+-git clone --branch v0.8.7 https://github.com/pgvector/pgvector.git
+-cd pgvector
+-nmake /F Makefile.win
+-nmake /F Makefile.win install
+
+-----OR-----
+
+set "PGROOT=C:\Program Files\PostgreSQL\16"
+cd /d "%TEMP%\pgvector"
+nmake /F Makefile.win
+nmake /F Makefile.win install
+
+if build failed at the final linking stage because 32-bit (x86) and 64-bit (x64) machine architectures are mismatched:
+
+Step 1 — Check your PostgreSQL architecture
+	Open Command Prompt and run:
+	"C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -d postgres -c "SELECT version();"
+	"C:\Program Files\PostgreSQL\16\bin\pg_config.exe" --configure
+	"C:\Program Files\PostgreSQL\16\bin\pg_config.exe" --bindir
+	"C:\Program Files\PostgreSQL\16\bin\pg_config.exe" --bindir
+
+Step 2 — Check the Visual Studio compiler environment
+	where cl
+	where link
+	cl
+	call " C:\Program Files(x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+
+Step 3 — Clean and rebuild pgvector
+cd /d "%TEMP%\pgvector"
+nmake /F Makefile.win clean
+nmake /F Makefile.win
+
+Step 4 — Install pgvector after a successful build
+cd /d "%TEMP%\pgvector"
+nmake /F Makefile.win install
+
+Then connect to the database where you want vector support and execute:
+CREATE EXTENSION vector;
+
+
+SELECT extversion
+FROM pg_extension
+WHERE extname = 'vector';
+
+The error is still the same because the build is trying to link an x64 object file into an x86 target. The output you shared is the linker command, not the output of the cl compiler-version check or pg_config --configure.
+
+Let's fix this directly.
+Step 1: Open the correct Visual Studio terminal
+On Windows:
+1. Open the Start menu.
+2. Search for x64 Native Tools Command Prompt for VS 2022 (or your installed Visual Studio version).
+3. Open it.
+4. Run these commands:
+cd /d "%TEMP%\pgvector"
+where cl
+cl
+
+
+If that terminal isn't available, tell me which Visual Studio or Build Tools version you installed.
+Step 2: Confirm PostgreSQL's architecture
+In the same terminal, run:
+"C:\Program Files\PostgreSQL\16\bin\pg_config.exe" --configure
+
+
+Also run:
+dumpbin /headers "C:\Program Files\PostgreSQL\16\lib\postgres.lib" | findstr /i machine
+
+The second command may display multiple machine entries because postgres.lib is a library containing many object files. We need to confirm that PostgreSQL and its build tools are 64-bit.
+Step 3: Clean the previous build
+Once the compiler and PostgreSQL architectures are confirmed to match, run:
+cd /d "%TEMP%\pgvector"
+nmake /F Makefile.win clean
+
+
+If the clean command fails, do not worry; share the error rather than deleting anything from your PostgreSQL installation.
+
+Then rebuild:
+nmake /F Makefile.win
+
+If PGROOT is not set
+
+Step 1 — Set PGROOT
+In your current Command Prompt, run:
+set "PGROOT=C:\Program Files\PostgreSQL\16"
+
+
+Verify it:
+echo %PGROOT%
+
+
+Expected output:
+C:\Program Files\PostgreSQL\16
+
+
+Step 2 — Clean the previous build
+Run:
+cd /d "%TEMP%\pgvector"
+nmake /F Makefile.win clean
+
+
+Step 3 — Rebuild pgvector
+Run:
+nmake /F Makefile.win
+
+
+Enable the extension
+
+Step 1
+In the same PostgreSQL database where you ran the failing query, execute:
+CREATE EXTENSION IF NOT EXISTS vector;
+
+
+If successful, you should see:
+CREATE EXTENSION
+
+
+Now test:
+SELECT '[1,2,3]'::vector;
+
+
+Expected output:
+[1,2,3]
+
+
+
+
+
+
+

@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.llm_client import chat_completion, chat_json, llm_is_configured
+from app.llm_client import chat_completion, chat_completion_stream, chat_json, llm_is_configured
 from app.models import Letter
 from app.services import CLOSED_STATUSES, days_pending, effective_status, serialize_letter
 
@@ -780,13 +780,14 @@ async def management_insights(db: Session) -> list[dict[str, Any]]:
     return data.get("insights", [])
 
 
-async def assistant_chat(
+async def prepare_assistant_turn(
     db: Session,
     message: str,
     *,
     history: list[dict[str, str]] | None = None,
     context_letter_ids: list[int] | None = None,
-) -> dict[str, Any]:
+) -> tuple[str, str, dict[str, Any]]:
+    """Build the assistant prompt and the search result shown beside the reply."""
     context_ids = [int(i) for i in (context_letter_ids or []) if str(i).isdigit() or isinstance(i, int)]
     followup = _is_followup_question(message)
 
@@ -835,8 +836,34 @@ async def assistant_chat(
         f"Filters: {search.get('filters')}\n"
         f"Matching letters ({len(letters)}):\n{_brief_letters_for_prompt(letters)}"
     )
+    return system, user, search
+
+
+async def assistant_chat(
+    db: Session,
+    message: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+    context_letter_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    system, user, search = await prepare_assistant_turn(
+        db,
+        message,
+        history=history,
+        context_letter_ids=context_letter_ids,
+    )
     text = await chat_completion(system=system, user=user, temperature=0.3)
     return {"text": text.strip(), "result": search}
+
+
+async def assistant_chat_deltas(
+    system: str,
+    user: str,
+):
+    """Yield reply text as the model generates it."""
+    async for delta in chat_completion_stream(system=system, user=user, temperature=0.3):
+        if delta:
+            yield delta
 
 
 async def letter_qa(

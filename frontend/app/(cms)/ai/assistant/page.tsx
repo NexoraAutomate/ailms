@@ -8,7 +8,7 @@ export default function AiAssistantPage() {
   const go = useGo()
   return (
     <>
-      <PageTitle title="AI Assistant" description="Ask questions about the correspondence register. Responses are mock, advisory intelligence." />
+      <PageTitle title="AI Assistant" description="Ask questions about the correspondence register. Answers stream as they are generated." />
       <AIAssistant go={go} />
     </>
   )

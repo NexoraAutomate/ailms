@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import { useAppData } from '@/components/app-provider'
 import { AIAdvisoryNote, AIInsightCard, AIStatusIndicator, AiBadge, SectionCard } from '@/components/ai/common'
 import { AIAnalysisPanel } from '@/components/ai/letter-tools'
 import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
-import { assistantChat, assistantPromptLibrary, fetchAiStatus, generateManagementInsights, naturalLanguageSearch, type AiBackendStatus, type InterpretedQuery, type ManagementInsight } from '@/services/ai'
+import { assistantChatStream, assistantPromptLibrary, fetchAiStatus, generateManagementInsights, naturalLanguageSearch, type AiBackendStatus, type InterpretedQuery, type ManagementInsight } from '@/services/ai'
 import type { Letter } from '@/services/letters'
 import { formatDateTime } from '@/lib/datetime'
 
@@ -31,19 +31,38 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
   const [messages, setMessages] = useState<ChatItem[]>([])
   const [aiBackend, setAiBackend] = useState<AiBackendStatus | null>(null)
   const prompts = assistantPromptLibrary()
+  const threadRef = useRef<HTMLDivElement>(null)
+  const generation = useRef(0)
+  const busy = useRef(false)
 
   useEffect(() => {
     fetchAiStatus().then(setAiBackend)
   }, [])
 
+  useEffect(() => {
+    const thread = threadRef.current
+    if (!thread) return
+    thread.scrollTop = thread.scrollHeight
+  }, [messages, status])
+
+  const patchMessage = (id: string, patch: Partial<ChatItem>) => {
+    setMessages((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+  }
+
   const ask = async (question: string) => {
     const q = question.trim()
-    if (!q) return
+    if (!q || busy.current) return
+    busy.current = true
     setInput('')
+    const token = generation.current + 1
+    generation.current = token
     const userMessage: ChatItem = { id: `u-${Date.now()}`, role: 'user', text: q, time: nowLabel() }
+    const assistantId = `a-${Date.now()}`
     const priorMessages = messages
-    setMessages((current) => [...current, userMessage])
+    setMessages((current) => [...current, userMessage, { id: assistantId, role: 'assistant', text: '', time: nowLabel() }])
     setStatus('generating')
+    let text = ''
+    let result: InterpretedQuery | undefined
     try {
       const contextLetterIds = [...priorMessages]
         .reverse()
@@ -52,12 +71,26 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
       const history = [...priorMessages, userMessage]
         .slice(-6)
         .map((item) => ({ role: item.role, content: item.text }))
-      const chat = await assistantChat(q, letters, { history, contextLetterIds })
-      let text = chat.text
-      let result = chat.result
+      const chat = await assistantChatStream(q, letters, {
+        history,
+        contextLetterIds,
+        onMeta: (next) => {
+          if (generation.current !== token || !next) return
+          result = next
+          patchMessage(assistantId, { result: next })
+        },
+        onDelta: (chunk) => {
+          if (generation.current !== token || !chunk) return
+          text += chunk
+          patchMessage(assistantId, { text })
+        },
+      })
+      if (generation.current !== token) return
+      text = chat.text || text
+      result = chat.result ?? result
       if (!result) {
         result = await naturalLanguageSearch(q, letters)
-        text = result.summary
+        text = text || result.summary
       }
       const workload = q.toLowerCase().includes('workload') || q.toLowerCase().includes('department')
       const extra = workload
@@ -66,10 +99,16 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
       if (extra && !aiBackend?.enabled) {
         text = `${text} ${extra.name} currently has the highest pending workload (${extra.pending}).`
       }
-      setMessages((current) => [...current, { id: `a-${Date.now()}`, role: 'assistant', text, time: nowLabel(), result }])
+      patchMessage(assistantId, { text, result, time: nowLabel() })
       setStatus('idle')
     } catch {
+      if (generation.current !== token) return
+      if (!text.trim()) {
+        setMessages((current) => current.filter((item) => item.id !== assistantId))
+      }
       setStatus('error')
+    } finally {
+      if (generation.current === token) busy.current = false
     }
   }
 
@@ -81,7 +120,7 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
             <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">{group}</p>
             <div className="flex flex-col gap-1">
               {items.map((item) => (
-                <button key={item} onClick={() => void ask(item)} className="rounded-md px-3 py-2 text-left text-xs text-slate-600 hover:bg-slate-50">{item}</button>
+                <button key={item} type="button" disabled={status === 'generating'} onClick={() => void ask(item)} className="rounded-md px-3 py-2 text-left text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50">{item}</button>
               ))}
             </div>
           </div>
@@ -92,12 +131,12 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
           <div>
             <h2 className="flex items-center gap-2 text-sm font-bold text-slate-700"><Sparkles className="size-4 text-[#1769aa]" /> AI Assistant</h2>
             <p className="text-[11px] text-slate-400">
-              {aiBackend?.enabled ? `Live reasoning · ${aiBackend.provider} / ${aiBackend.model}` : 'Rule-based fallback (configure LLM_API_KEY in backend .env for live model)'}
+              {aiBackend?.enabled ? 'Live reasoning' : 'Rule-based fallback (configure LLM_API_KEY in backend .env for live model)'}
             </p>
           </div>
-          <Button size="sm" variant="outline" onClick={() => setMessages([])}>Clear conversation</Button>
+          <Button size="sm" variant="outline" onClick={() => { generation.current += 1; busy.current = false; setMessages([]); setStatus('idle') }}>Clear conversation</Button>
         </div>
-        <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        <div ref={threadRef} className="flex-1 space-y-4 overflow-y-auto p-4">
           {messages.length === 0 && <p className="text-sm text-slate-500">Ask about overdue items, department workload, or a specific organization. Answers use the configured LLM when available, otherwise local rule-based fallback.</p>}
           {messages.map((message) => (
             <div key={message.id} className={`max-w-3xl rounded-lg p-3 ${message.role === 'user' ? 'ml-auto bg-[#0d3763] text-white' : 'bg-slate-50'}`}>
@@ -105,7 +144,12 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
                 <span className={`text-[10px] font-bold uppercase ${message.role === 'user' ? 'text-blue-100' : 'text-[#1769aa]'}`}>{message.role === 'user' ? 'You' : 'AI'}</span>
                 <span className={`text-[10px] ${message.role === 'user' ? 'text-blue-100' : 'text-slate-400'}`}>{message.time}</span>
               </div>
-              <p className={`text-xs leading-5 ${message.role === 'user' ? 'text-white' : 'text-slate-700'}`}>{message.text}</p>
+              <p className={`whitespace-pre-wrap text-xs leading-5 ${message.role === 'user' ? 'text-white' : 'text-slate-700'}`}>
+                {message.text}
+                {status === 'generating' && message.role === 'assistant' && message.id === messages[messages.length - 1]?.id && (
+                  <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-[#1769aa] align-middle" />
+                )}
+              </p>
               {message.result && (
                 <div className="mt-3 rounded-md bg-white p-3">
                   <p className="text-[11px] font-semibold text-slate-500">Interpreted query</p>
@@ -139,11 +183,11 @@ export function AIAssistant({ go }: { go: (page: string) => void }) {
               )}
             </div>
           ))}
-          <AIStatusIndicator status={status === 'generating' ? 'generating' : status === 'error' ? 'error' : 'idle'} />
+          {status === 'error' && <AIStatusIndicator status="error" />}
         </div>
         <form className="flex gap-2 border-t border-slate-100 p-3" onSubmit={(e) => { e.preventDefault(); void ask(input) }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about correspondence..." className="h-10 flex-1 rounded-md border border-slate-200 px-3 text-xs" />
-          <Button type="submit">Ask</Button>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about correspondence..." disabled={status === 'generating'} className="h-10 flex-1 rounded-md border border-slate-200 px-3 text-xs disabled:bg-slate-50" />
+          <Button type="submit" disabled={status === 'generating'}>Ask</Button>
         </form>
       </section>
     </div>
