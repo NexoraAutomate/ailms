@@ -15,7 +15,6 @@ from app.letter_access import assert_letter_access
 from app.marking_workflow_service import (
     add_attachments_to_marking,
     add_note,
-    available_marking_actions,
     batch_tracker,
     close_letter,
     create_mark_batch,
@@ -24,6 +23,7 @@ from app.marking_workflow_service import (
     list_attachments,
     list_notes,
     list_tracked,
+    marking_actions_payload,
     marking_tree,
     revoke_marking,
     serialize_attachment,
@@ -113,11 +113,7 @@ def get_actions(letter_id: int, db: Session = Depends(get_db)) -> dict:
     letter = _get_letter(db, letter_id)
     actor = current_user_name(db)
     assert_letter_access(db, letter, actor)
-    return {
-        "letterId": str(letter.id),
-        "currentStatus": letter.status,
-        "actions": available_marking_actions(db, letter, actor),
-    }
+    return marking_actions_payload(db, letter, actor)
 
 
 @router.get("/letters/{letter_id}/tree")

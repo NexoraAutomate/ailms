@@ -39,6 +39,33 @@ export type MarkingActions = {
   letterId: string
   currentStatus: string
   actions: string[]
+  activeHolds: MarkingNode[]
+  activeLeaves: MarkingNode[]
+  initiatorHold: boolean
+}
+
+export function flattenMarkings(nodes: MarkingNode[]): MarkingNode[] {
+  const out: MarkingNode[] = []
+  const walk = (node: MarkingNode) => {
+    out.push(node)
+    ;(node.children ?? []).forEach(walk)
+  }
+  nodes.forEach(walk)
+  return out.sort((a, b) => a.id - b.id)
+}
+
+/** Group flat markings by batchId (insertion order of first seen batch). */
+export function groupMarkingsByBatch(flat: MarkingNode[]): { batchId: number; markings: MarkingNode[] }[] {
+  const order: number[] = []
+  const map = new Map<number, MarkingNode[]>()
+  for (const m of flat) {
+    if (!map.has(m.batchId)) {
+      order.push(m.batchId)
+      map.set(m.batchId, [])
+    }
+    map.get(m.batchId)!.push(m)
+  }
+  return order.map((batchId) => ({ batchId, markings: map.get(batchId)! }))
 }
 
 export type MarkRecipientInput = {

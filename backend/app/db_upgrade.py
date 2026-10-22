@@ -911,6 +911,23 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                             "ON cms_letters (initiator_user_id)"
                         )
                     )
+        # Widen assigned_to for multi-holder comma-separated lists (UI truncates + popup).
+        assigned_col = next(
+            (col for col in inspector.get_columns("cms_letters") if col["name"] == "assigned_to"),
+            None,
+        )
+        if assigned_col is not None:
+            col_type = str(assigned_col.get("type") or "").upper()
+            if "500" not in col_type and "TEXT" not in col_type:
+                dialect = engine.dialect.name
+                with engine.begin() as conn:
+                    if dialect == "postgresql":
+                        conn.execute(
+                            text("ALTER TABLE cms_letters ALTER COLUMN assigned_to TYPE VARCHAR(500)")
+                        )
+                    elif dialect == "sqlite":
+                        # SQLite ignores length; no-op for type widen.
+                        pass
 
     if not inspector.has_table("cms_marking_batches"):
         with engine.begin() as conn:

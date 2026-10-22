@@ -27,6 +27,7 @@ import { AIAnalyzeDocument, AIIntelligencePanel } from '@/components/ai/letter-t
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/app-select'
 import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
+import { AssignedToDisplay } from '@/components/cms/assigned-to-display'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { ReplyDialog } from '@/components/cms/reply-dialog'
 import { CollapsibleCardMotionProvider } from '@/components/ui/collapsible-card'
@@ -614,17 +615,23 @@ function LetterOtherDetailsCard({
           </>
         ) : (
           [
-            { key: 'type', label: 'Type', icon: Send, value: type },
-            { key: 'department', label: 'Department', icon: ClipboardList, value: department },
-            { key: 'assigned', label: 'Assigned to', icon: CheckCircle2, value: assignedTo },
-            { key: 'last', label: 'Last action', icon: FileText, value: lastAction },
-          ].map(({ key, label, icon: Icon, value }) => (
+            { key: 'type', label: 'Type', icon: Send, value: type, assigned: false },
+            { key: 'department', label: 'Department', icon: ClipboardList, value: department, assigned: false },
+            { key: 'assigned', label: 'Assigned to', icon: CheckCircle2, value: assignedTo, assigned: true },
+            { key: 'last', label: 'Last action', icon: FileText, value: lastAction, assigned: false },
+          ].map(({ key, label, icon: Icon, value, assigned }) => (
             <div key={key} className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
               <div className="mb-1 flex items-center gap-1.5">
                 <Icon className="size-3.5 text-[#1769aa]" />
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
               </div>
-              <p className="text-xs font-semibold text-slate-700">{value || '—'}</p>
+              {assigned ? (
+                <div className="text-xs font-semibold text-slate-700">
+                  <AssignedToDisplay assignedTo={value} />
+                </div>
+              ) : (
+                <p className="text-xs font-semibold text-slate-700">{value || '—'}</p>
+              )}
             </div>
           ))
         )}

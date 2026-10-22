@@ -28,6 +28,7 @@ from app.marking_workflow_service import (
     list_attachments,
     list_notes,
     list_tracked,
+    marking_actions_payload,
     marking_has_children,
     marking_tree,
     note_is_editable,
@@ -300,6 +301,87 @@ class MarkingWorkflowTest(unittest.TestCase):
         tracker = batch_tracker(self.db, batch.id, self.initiator.name)
         self.assertEqual(tracker["pendingCount"], 1)
         self.assertFalse(tracker["allResponsesReceived"])
+
+        initiator_payload = marking_actions_payload(self.db, self.letter, self.initiator.name)
+        self.assertFalse(initiator_payload["initiatorHold"])
+        self.assertEqual(len(initiator_payload["activeHolds"]), 0)
+        leaf_users = {m["toUser"] for m in initiator_payload["activeLeaves"]}
+        self.assertEqual(leaf_users, {self.user_a.name, self.user_b.name})
+
+        hold_a = marking_actions_payload(self.db, self.letter, self.user_a.name)
+        self.assertEqual(len(hold_a["activeHolds"]), 1)
+        self.assertEqual(hold_a["activeHolds"][0]["toUser"], self.user_a.name)
+        self.assertIn("mark", hold_a["actions"])
+
+    def test_actions_payload_initiator_hold_and_multi_hold_parent_required(self) -> None:
+        root = marking_actions_payload(self.db, self.letter, self.initiator.name)
+        self.assertTrue(root["initiatorHold"])
+        self.assertEqual(root["activeLeaves"], [])
+        self.assertEqual(root["activeHolds"], [])
+        self.assertIn("mark", root["actions"])
+
+        # Mark both A and B from initiator, then mark both back to initiator so
+        # initiator has two leaf inbound holds (needs parentMarkingId to remake).
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[
+                {"toUser": self.user_a.name, "action": "for_info"},
+                {"toUser": self.user_b.name, "action": "for_info"},
+            ],
+        )
+        self.db.flush()
+        mark_a = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        mark_b = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_b.name)
+            .one()
+        )
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=mark_a.id,
+            recipients=[{"toUser": self.initiator.name, "action": "forward"}],
+        )
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_b.name,
+            parent_marking_id=mark_b.id,
+            recipients=[{"toUser": self.initiator.name, "action": "forward"}],
+        )
+        self.db.flush()
+
+        multi = marking_actions_payload(self.db, self.letter, self.initiator.name)
+        self.assertFalse(multi["initiatorHold"])
+        self.assertEqual(len(multi["activeHolds"]), 2)
+        self.assertEqual(len(multi["activeLeaves"]), 2)
+
+        with self.assertRaises(HTTPException) as ctx:
+            create_mark_batch(
+                self.db,
+                letter=self.letter,
+                actor_name=self.initiator.name,
+                recipients=[{"toUser": self.user_a.name, "action": "for_info"}],
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("parentMarkingId", str(ctx.exception.detail))
+
+        parent_id = multi["activeHolds"][0]["id"]
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            parent_marking_id=parent_id,
+            recipients=[{"toUser": self.user_a.name, "action": "for_info"}],
+        )
+        self.db.flush()
 
     def test_self_mark_rejected(self) -> None:
         with self.assertRaises(HTTPException) as ctx:
@@ -853,6 +935,73 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.assertEqual(self.letter.assigned_to, self.initiator.name)
         self.assertEqual(self.letter.assigned_by, self.initiator.name)
         self.assertEqual(self.letter.last_action, f"Revoked (from {self.user_a.name})")
+
+    def test_assigned_to_lists_multiple_holders_and_truncates(self) -> None:
+        user_c = User(
+            name=f"UserC {uuid.uuid4().hex[:6]}",
+            username=f"userc{uuid.uuid4().hex[:6]}",
+            password_hash="!",
+            role="Actionist",
+            status="Active",
+            department="Wing",
+        )
+        user_d = User(
+            name=f"UserD {uuid.uuid4().hex[:6]}",
+            username=f"userd{uuid.uuid4().hex[:6]}",
+            password_hash="!",
+            role="Actionist",
+            status="Active",
+            department="Wing",
+        )
+        self.db.add_all([user_c, user_d])
+        self.db.flush()
+
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[
+                {"toUser": self.user_a.name, "action": "for_info"},
+                {"toUser": self.user_b.name, "action": "response_required", "responseType": "comments"},
+            ],
+        )
+        self.db.flush()
+        self.assertEqual(
+            self.letter.assigned_to,
+            f"{self.user_a.name}, {self.user_b.name}",
+        )
+
+        letter2 = Letter(
+            number=_num(),
+            letter_date=date.today(),
+            received_date=date.today(),
+            type="Incoming",
+            subject="Multi assign",
+            status="Open",
+            priority="Routine",
+            created_by=self.initiator.name,
+            assigned_to=self.initiator.name,
+            assigned_by=self.initiator.name,
+        )
+        self.db.add(letter2)
+        self.db.flush()
+        create_mark_batch(
+            self.db,
+            letter=letter2,
+            actor_name=self.initiator.name,
+            recipients=[
+                {"toUser": self.user_a.name, "action": "for_info"},
+                {"toUser": self.user_b.name, "action": "for_info"},
+                {"toUser": user_c.name, "action": "for_info"},
+                {"toUser": user_d.name, "action": "for_info"},
+            ],
+        )
+        self.db.flush()
+        # Full list stored; UI truncates preview and shows … popup for the rest.
+        self.assertEqual(
+            letter2.assigned_to,
+            f"{self.user_a.name}, {self.user_b.name}, {user_c.name}, {user_d.name}",
+        )
 
 
 if __name__ == "__main__":

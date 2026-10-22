@@ -109,7 +109,7 @@ class Letter(Base):
     priority: Mapped[str] = mapped_column(String(40), default="Routine")
     status: Mapped[str] = mapped_column(String(40), default="Registered")
     due_date: Mapped[date | None] = mapped_column(Date)
-    assigned_to: Mapped[str] = mapped_column(String(120), default="")
+    assigned_to: Mapped[str] = mapped_column(String(500), default="")
     created_by: Mapped[str] = mapped_column(String(120), default="", index=True)
     assigned_by: Mapped[str] = mapped_column(String(120), default="", index=True)
     last_action: Mapped[str] = mapped_column(String(200), default="Registered")

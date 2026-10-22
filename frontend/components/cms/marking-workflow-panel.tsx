@@ -29,10 +29,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
-import {
-  AnimatedProgressStepper,
-  type AnimatedProgressStep,
-} from '@/components/ui/animated-progress-stepper'
+import { MarkingActiveHolds } from '@/components/cms/marking-active-holds'
+import { MarkingHistoryFlow } from '@/components/cms/marking-history-flow'
 import { useAppData } from '@/components/app-provider'
 import { Badge } from '@/components/cms/ui'
 import { formatDateTime } from '@/lib/datetime'
@@ -59,10 +57,12 @@ import {
   closeMarkedLetter,
   deleteMarkingAttachment,
   deleteMarkingNote,
+  fetchBatchTracker,
   fetchMarkingActions,
   fetchMarkingAttachments,
   fetchMarkingNotes,
   fetchMarkingTree,
+  flattenMarkings,
   markAttachmentReplaced,
   markLetter,
   markingActionLabel,
@@ -84,14 +84,12 @@ type PendingAttachment = {
 
 type WorkflowUser = { name: string; avatarUrl?: string; department?: string }
 
-function flattenMarkings(nodes: MarkingNode[]): MarkingNode[] {
-  const out: MarkingNode[] = []
-  const walk = (node: MarkingNode) => {
-    out.push(node)
-    node.children.forEach(walk)
-  }
-  nodes.forEach(walk)
-  return out.sort((a, b) => a.id - b.id)
+type BatchTrackerSummary = {
+  batchId: number
+  pendingCount: number
+  respondedCount: number
+  allResponsesReceived: boolean
+  markings: MarkingNode[]
 }
 
 function hasActiveChild(m: MarkingNode) {
@@ -182,8 +180,10 @@ type WorkflowVisibility = {
   highlightOwnComments: boolean
   /** Show date/time and IP on each comment. */
   showCommentMeta: boolean
-  /** Show the people pathway stepper. */
-  showStepper: boolean
+  /** Show active holders strip (parallel leaves). */
+  showActiveHolds: boolean
+  /** Show React Flow marking pathway graph. */
+  showFlowGraph: boolean
   /** Show centered mark chips (e.g. A. Rahman → N. Ahmed). */
   showMarkingCards: boolean
 }
@@ -191,7 +191,8 @@ type WorkflowVisibility = {
 const DEFAULT_WORKFLOW_VISIBILITY: WorkflowVisibility = {
   highlightOwnComments: true,
   showCommentMeta: true,
-  showStepper: true,
+  showActiveHolds: true,
+  showFlowGraph: true,
   showMarkingCards: true,
 }
 
@@ -200,8 +201,19 @@ function readWorkflowVisibility(): WorkflowVisibility {
   try {
     const raw = localStorage.getItem(WORKFLOW_VISIBILITY_KEY)
     if (!raw) return DEFAULT_WORKFLOW_VISIBILITY
-    const parsed = JSON.parse(raw) as Partial<WorkflowVisibility>
-    return { ...DEFAULT_WORKFLOW_VISIBILITY, ...parsed }
+    const parsed = JSON.parse(raw) as Partial<WorkflowVisibility> & { showStepper?: boolean }
+    const { showStepper, ...rest } = parsed
+    return {
+      ...DEFAULT_WORKFLOW_VISIBILITY,
+      ...rest,
+      // Migrate legacy showStepper → showActiveHolds
+      showActiveHolds:
+        typeof rest.showActiveHolds === 'boolean'
+          ? rest.showActiveHolds
+          : typeof showStepper === 'boolean'
+            ? showStepper
+            : DEFAULT_WORKFLOW_VISIBILITY.showActiveHolds,
+    }
   } catch {
     return DEFAULT_WORKFLOW_VISIBILITY
   }
@@ -223,6 +235,7 @@ type ContentIncident = {
 
 type TimelineItem =
   | { kind: 'mark'; marking: MarkingNode; sortAt: number }
+  | { kind: 'markBatch'; batchId: number; markings: MarkingNode[]; sortAt: number }
   | { kind: 'content'; incident: ContentIncident; sortAt: number }
 
 /** Group notes + attachments by marking incident; newest items first within each group. */
@@ -255,7 +268,7 @@ function latestIncidentActivity(incident: ContentIncident): number {
   return max
 }
 
-/** Timeline: content cards + centered marking chips (chips show even with no comments). */
+/** Timeline: content cards + mark chips grouped by batch when siblings share batchId. */
 function buildCommentsTimeline(
   markings: MarkingNode[],
   notes: CorrespondenceNote[],
@@ -263,12 +276,24 @@ function buildCommentsTimeline(
 ): TimelineItem[] {
   const items: TimelineItem[] = []
 
+  const byBatch = new Map<number, MarkingNode[]>()
+  const batchOrder: number[] = []
   for (const marking of markings) {
-    items.push({
-      kind: 'mark',
-      marking,
-      sortAt: activityTime(marking.createdAt, marking.id),
-    })
+    if (!byBatch.has(marking.batchId)) {
+      batchOrder.push(marking.batchId)
+      byBatch.set(marking.batchId, [])
+    }
+    byBatch.get(marking.batchId)!.push(marking)
+  }
+  for (const batchId of batchOrder) {
+    const group = byBatch.get(batchId) ?? []
+    if (group.length === 0) continue
+    const sortAt = Math.max(...group.map((m) => activityTime(m.createdAt, m.id)))
+    if (group.length === 1) {
+      items.push({ kind: 'mark', marking: group[0]!, sortAt })
+    } else {
+      items.push({ kind: 'markBatch', batchId, markings: group, sortAt })
+    }
   }
 
   for (const incident of groupByMarkingIncident(notes, attachments)) {
@@ -295,6 +320,9 @@ export function MarkingWorkflowPanel({
   const { me } = useAppData()
   const [actions, setActions] = useState<string[]>([])
   const [tree, setTree] = useState<MarkingNode[]>([])
+  const [activeHolds, setActiveHolds] = useState<MarkingNode[]>([])
+  const [activeLeaves, setActiveLeaves] = useState<MarkingNode[]>([])
+  const [initiatorHold, setInitiatorHold] = useState(false)
   const [notes, setNotes] = useState<CorrespondenceNote[]>([])
   const [attachments, setAttachments] = useState<CorrespondenceAttachment[]>([])
   const [loading, setLoading] = useState(true)
@@ -306,11 +334,15 @@ export function MarkingWorkflowPanel({
   const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
   /** Which recipient row the single User/Action card is editing. */
   const [activeRecipientIndex, setActiveRecipientIndex] = useState(0)
+  const [parentMarkingId, setParentMarkingId] = useState<number | null>(null)
+  const [contextMarkingId, setContextMarkingId] = useState<number | null>(null)
   const [noteBody, setNoteBody] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([])
   const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
   const [forceClose, setForceClose] = useState(false)
   const [respondMarkingId, setRespondMarkingId] = useState<number | null>(null)
+  const [expandedTrackerBatchId, setExpandedTrackerBatchId] = useState<number | null>(null)
+  const [trackerCache, setTrackerCache] = useState<Record<number, BatchTrackerSummary>>({})
   const [busy, setBusy] = useState(false)
   const [previewVersionId, setPreviewVersionId] = useState<number | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
@@ -326,6 +358,8 @@ export function MarkingWorkflowPanel({
     setRecipients([emptyRecipient()])
     setActiveRecipientIndex(0)
     setPathwayNotify(false)
+    setParentMarkingId(null)
+    setContextMarkingId(null)
   }
 
   const activeRecipient = recipients[activeRecipientIndex] ?? recipients[0] ?? emptyRecipient()
@@ -418,16 +452,23 @@ export function MarkingWorkflowPanel({
         fetchMarkingNotes(letter.id),
         fetchMarkingAttachments(letter.id),
       ])
-      setActions(available.actions)
+      setActions(available.actions ?? [])
+      setActiveHolds(available.activeHolds ?? [])
+      setActiveLeaves(available.activeLeaves ?? [])
+      setInitiatorHold(Boolean(available.initiatorHold))
       setTree(markingTree)
       setNotes(noteRows)
       setAttachments(attachmentRows)
-      const rr = markingTree
-        .flatMap(function walk(n: MarkingNode): MarkingNode[] {
-          return [n, ...n.children.flatMap(walk)]
-        })
-        .find((n) => n.status === 'active' && n.action === 'response_required')
-      setRespondMarkingId(rr?.id ?? null)
+      const holds = available.activeHolds ?? []
+      if (holds.length === 1) {
+        setParentMarkingId(holds[0]!.id)
+        setContextMarkingId(holds[0]!.id)
+      } else if (holds.length === 0) {
+        setParentMarkingId(null)
+        setContextMarkingId(null)
+      }
+      const rrHolds = holds.filter((n) => n.action === 'response_required' && n.status === 'active')
+      setRespondMarkingId(rrHolds.length === 1 ? rrHolds[0]!.id : rrHolds[0]?.id ?? null)
     } catch (err) {
       if (!silent) {
         setError(err instanceof Error ? err.message : 'Unable to load marking workflow')
@@ -498,90 +539,50 @@ export function MarkingWorkflowPanel({
     }
   }
 
-  const findActiveRrForMe = (nodes: MarkingNode[]): number | null => {
-    for (const n of nodes) {
-      if (n.status === 'active' && n.action === 'response_required') return n.id
-      const child = findActiveRrForMe(n.children)
-      if (child) return child
-    }
-    return null
-  }
-
   const allMarkings = useMemo(() => flattenMarkings(tree), [tree])
-  // Pathway stepper uses active marks only — revoked remakes drop out of the chain.
-  const activeMarkings = useMemo(
-    () => allMarkings.filter((m) => m.status === 'active'),
-    [allMarkings],
-  )
-  // Last three mark recipients only. Older marks collapse into the faded lead.
-  // The registrant is not a special first circle — they appear only if marked to.
-  const recentMarkings = useMemo(() => activeMarkings.slice(-3), [activeMarkings])
-  const priorCount = Math.max(0, activeMarkings.length - recentMarkings.length)
 
-  const { steps, currentStep } = useMemo(() => {
-    const byName = new Map(users.map((u) => [u.name, u]))
-    const initialsOf = (name: string) =>
-      name
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((part) => part[0]?.toUpperCase() ?? '')
-        .join('')
-
-    const markingSteps: AnimatedProgressStep[] = recentMarkings.map((marking) => {
-      const profile = byName.get(marking.toUser)
-      return {
-        id: String(marking.id),
-        title: marking.toUser,
-        department: profile?.department || markingActionLabel(marking.action),
-        task: markingActionLabel(marking.action),
-        taskDetail: {
-          action: marking.action,
-          actionLabel: markingActionLabel(marking.action),
-          fromStatus: marking.fromUser,
-          toStatus: marking.toUser,
-          remarks: marking.instructions,
-          performedBy: marking.fromUser,
-          assignedTo: marking.toUser,
-          createdAt: marking.createdAt,
-        },
-        avatarUrl: profile?.avatarUrl || '',
-        initials: initialsOf(marking.toUser),
-      }
-    })
-
-    // Before any active mark, show the registrant as the sole holder.
-    if (markingSteps.length === 0) {
-      const initiatorName = (letter.createdBy || '').trim()
-      if (!initiatorName) return { steps: [] as AnimatedProgressStep[], currentStep: 0 }
-      const profile = byName.get(initiatorName)
-      return {
-        steps: [
-          {
-            id: 'initiator',
-            title: initiatorName,
-            department: profile?.department || 'Registrant',
-            task: 'Registered',
-            taskDetail: {
-              action: 'registered',
-              actionLabel: 'Registered',
-              performedBy: initiatorName,
-              assignedTo: letter.assignedTo || initiatorName,
-              department: profile?.department,
-            },
-            avatarUrl: profile?.avatarUrl || '',
-            initials: initialsOf(initiatorName),
-          },
-        ],
-        currentStep: 0,
-      }
+  const myRrBatches = useMemo(() => {
+    const meName = (me.name || '').trim()
+    if (!meName) return [] as { batchId: number; markings: MarkingNode[] }[]
+    const mine = allMarkings.filter((m) => m.fromUser === meName)
+    const byBatch = new Map<number, MarkingNode[]>()
+    for (const m of mine) {
+      if (!byBatch.has(m.batchId)) byBatch.set(m.batchId, [])
+      byBatch.get(m.batchId)!.push(m)
     }
+    return [...byBatch.entries()]
+      .filter(([, rows]) => rows.some((r) => r.action === 'response_required'))
+      .map(([batchId, markings]) => ({ batchId, markings }))
+      .sort((a, b) => b.batchId - a.batchId)
+  }, [allMarkings, me.name])
 
-    // Current holder = active leaf (no active remake onward).
-    const leafIdx = recentMarkings.findIndex((m) => !hasActiveChild(m))
-    const current = leafIdx >= 0 ? leafIdx : markingSteps.length - 1
-    return { steps: markingSteps, currentStep: current }
-  }, [recentMarkings, users, letter.createdBy, letter.assignedTo])
+  const pendingRrLeaves = useMemo(
+    () => activeLeaves.filter((m) => m.action === 'response_required' && m.status === 'active'),
+    [activeLeaves],
+  )
+
+  const rrHoldsForMe = useMemo(
+    () => activeHolds.filter((m) => m.action === 'response_required' && m.status === 'active'),
+    [activeHolds],
+  )
+
+  const loadBatchTracker = async (batchId: number) => {
+    try {
+      const data = await fetchBatchTracker(batchId)
+      setTrackerCache((prev) => ({
+        ...prev,
+        [batchId]: {
+          batchId,
+          pendingCount: data.pendingCount,
+          respondedCount: data.respondedCount,
+          allResponsesReceived: data.allResponsesReceived,
+          markings: data.markings,
+        },
+      }))
+    } catch {
+      /* tracker is marker-only; ignore if unauthorized */
+    }
+  }
 
   // Last marker may revoke only if recipient has not remade or added comments/attachments.
   const revokableMarkings = useMemo(() => {
@@ -624,10 +625,16 @@ export function MarkingWorkflowPanel({
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuCheckboxItem
-                checked={visibility.showStepper}
-                onCheckedChange={(checked) => updateVisibility('showStepper', checked === true)}
+                checked={visibility.showActiveHolds}
+                onCheckedChange={(checked) => updateVisibility('showActiveHolds', checked === true)}
               >
-                Marking History
+                Active holders
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={visibility.showFlowGraph}
+                onCheckedChange={(checked) => updateVisibility('showFlowGraph', checked === true)}
+              >
+                Pathway graph
               </DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem
                 checked={visibility.showMarkingCards}
@@ -655,15 +662,20 @@ export function MarkingWorkflowPanel({
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
 
-      {!loading && visibility.showStepper && (
+      {!loading && visibility.showActiveHolds && (
         <div className="mb-5">
-          <AnimatedProgressStepper
-            steps={steps}
-            currentStep={currentStep}
-            priorCount={priorCount}
-            footerLabel={steps.length ? 'Current' : undefined}
-            viewerName={me.name}
+          <MarkingActiveHolds
+            activeLeaves={activeLeaves}
+            initiatorHold={initiatorHold}
+            initiatorName={letter.createdBy || ''}
+            users={users}
           />
+        </div>
+      )}
+
+      {!loading && visibility.showFlowGraph && (
+        <div className="mb-5">
+          <MarkingHistoryFlow tree={tree} initiatorName={letter.createdBy || ''} />
         </div>
       )}
 
@@ -675,6 +687,8 @@ export function MarkingWorkflowPanel({
               onClick={() => {
                 setRecipients([emptyRecipient()])
                 setActiveRecipientIndex(0)
+                if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+                else if (activeHolds.length === 0) setParentMarkingId(null)
                 setDialog('mark')
               }}
             >
@@ -682,7 +696,14 @@ export function MarkingWorkflowPanel({
             </Button>
           )}
           {actions.includes('add_note') && (
-            <Button size="sm" variant="outline" onClick={() => setDialog('note')}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
+                setDialog('note')
+              }}
+            >
               <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add Comment
             </Button>
           )}
@@ -709,6 +730,7 @@ export function MarkingWorkflowPanel({
               variant="outline"
               onClick={() => {
                 setPendingFiles([])
+                if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
                 setDialog('attach')
               }}
             >
@@ -720,7 +742,7 @@ export function MarkingWorkflowPanel({
               size="sm"
               variant="outline"
               onClick={() => {
-                setRespondMarkingId(findActiveRrForMe(tree) ?? respondMarkingId)
+                if (rrHoldsForMe.length === 1) setRespondMarkingId(rrHoldsForMe[0]!.id)
                 setDialog('respond')
               }}
             >
@@ -735,6 +757,65 @@ export function MarkingWorkflowPanel({
         </div>
       )}
 
+      {!loading && myRrBatches.length > 0 && (
+        <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            My batch trackers
+          </p>
+          <ul className="mt-2 space-y-2">
+            {myRrBatches.map(({ batchId, markings }) => {
+              const rrRows = markings.filter((m) => m.action === 'response_required')
+              const pending = rrRows.filter((m) => m.status === 'active')
+              const responded = rrRows.filter((m) => m.status === 'responded')
+              const cached = trackerCache[batchId]
+              const expanded = expandedTrackerBatchId === batchId
+              return (
+                <li key={batchId} className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-semibold text-slate-800">Batch #{batchId}</span>
+                      <span className="ml-2 text-slate-500">
+                        {cached
+                          ? `${cached.respondedCount}/${cached.respondedCount + cached.pendingCount} responses`
+                          : `${responded.length} responded · ${pending.length} pending`}
+                      </span>
+                      {(cached?.allResponsesReceived || (pending.length === 0 && responded.length > 0)) && (
+                        <Badge tone="green">All received</Badge>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        const next = expanded ? null : batchId
+                        setExpandedTrackerBatchId(next)
+                        if (next != null) void loadBatchTracker(next)
+                      }}
+                    >
+                      {expanded ? 'Hide' : 'Details'}
+                    </Button>
+                  </div>
+                  {expanded && (
+                    <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+                      {(cached?.markings ?? rrRows).map((m) => (
+                        <li key={m.id} className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                          <span className="font-medium text-slate-800">{m.toUser}</span>
+                          <Badge tone={m.status === 'responded' ? 'green' : m.status === 'active' ? 'amber' : 'slate'}>
+                            {m.status}
+                          </Badge>
+                          {m.dueAt ? <span>Due {m.dueAt}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
       <div>
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Comments & Attachments</h3>
         {timelineItems.filter(
@@ -744,34 +825,71 @@ export function MarkingWorkflowPanel({
         )}
         <ul className="space-y-3">
           {timelineItems.map((item) => {
-            if (item.kind === 'mark') {
+            if (item.kind === 'mark' || item.kind === 'markBatch') {
               if (!visibility.showMarkingCards) return null
-              const { marking } = item
-              const revoked = marking.status === 'revoked'
-              return (
-                <li key={`mark-${marking.id}`} className="flex justify-center py-0.5">
-                  <div
-                    className={cn(
-                      'inline-flex max-w-full flex-col items-center gap-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm',
-                      revoked && 'bg-slate-50 text-slate-400',
-                    )}
-                  >
-                    {marking.createdAt ? (
-                      <span className="text-[10px] leading-none text-slate-400">
-                        {formatDateTime(marking.createdAt)}
-                      </span>
-                    ) : null}
-                    <div className="flex flex-wrap items-center justify-center gap-1.5">
-                      <span className={cn('font-medium', revoked && 'line-through')}>
-                        {marking.fromUser} → {marking.toUser}
-                      </span>
-                      {revoked ? (
-                        <Badge tone="slate">Revoked</Badge>
-                      ) : (
-                        <Badge tone={marking.action === 'forward' ? 'amber' : 'slate'}>
-                          {markingActionLabel(marking.action)}
-                        </Badge>
+              if (item.kind === 'mark') {
+                const { marking } = item
+                const revoked = marking.status === 'revoked'
+                return (
+                  <li key={`mark-${marking.id}`} className="flex justify-center py-0.5">
+                    <div
+                      className={cn(
+                        'inline-flex max-w-full flex-col items-center gap-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm',
+                        revoked && 'bg-slate-50 text-slate-400',
                       )}
+                    >
+                      {marking.createdAt ? (
+                        <span className="text-[10px] leading-none text-slate-400">
+                          {formatDateTime(marking.createdAt)}
+                        </span>
+                      ) : null}
+                      <div className="flex flex-wrap items-center justify-center gap-1.5">
+                        <span className={cn('font-medium', revoked && 'line-through')}>
+                          {marking.fromUser} → {marking.toUser}
+                        </span>
+                        {revoked ? (
+                          <Badge tone="slate">Revoked</Badge>
+                        ) : (
+                          <Badge tone={marking.action === 'forward' ? 'amber' : 'slate'}>
+                            {markingActionLabel(marking.action)}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                )
+              }
+              const { batchId, markings: batchMarks } = item
+              return (
+                <li key={`batch-${batchId}`} className="flex justify-center py-0.5">
+                  <div className="inline-flex max-w-full flex-col items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      Marked to {batchMarks.length} users · Batch #{batchId}
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      {batchMarks.map((marking) => {
+                        const revoked = marking.status === 'revoked'
+                        return (
+                          <span
+                            key={marking.id}
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-md border border-slate-100 bg-slate-50 px-2 py-1',
+                              revoked && 'text-slate-400',
+                            )}
+                          >
+                            <span className={cn('font-medium', revoked && 'line-through')}>
+                              {marking.toUser}
+                            </span>
+                            {revoked ? (
+                              <Badge tone="slate">Revoked</Badge>
+                            ) : (
+                              <Badge tone={marking.action === 'forward' ? 'amber' : 'slate'}>
+                                {markingActionLabel(marking.action)}
+                              </Badge>
+                            )}
+                          </span>
+                        )
+                      })}
                     </div>
                   </div>
                 </li>
@@ -1175,6 +1293,26 @@ export function MarkingWorkflowPanel({
               Assign each recipient an action. Added recipients appear as badges above — edit one at a time.
             </p>
 
+            {activeHolds.length > 1 && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-slate-600">
+                  Marking under which hold?
+                </label>
+                <AppSelect
+                  value={parentMarkingId != null ? String(parentMarkingId) : ''}
+                  onValueChange={(v) => setParentMarkingId(v ? Number(v) : null)}
+                  options={[
+                    { value: '', label: 'Select hold…' },
+                    ...activeHolds.map((h) => ({
+                      value: String(h.id),
+                      label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
+                    })),
+                  ]}
+                  className="mt-1 w-full text-sm"
+                />
+              </div>
+            )}
+
             {recipients.some((r) => r.toUser.trim()) && (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {recipients.map((row, idx) => {
@@ -1261,6 +1399,14 @@ export function MarkingWorkflowPanel({
                   />
                 </>
               )}
+              <label className="mt-2 block text-xs font-medium text-slate-600">Instructions</label>
+              <textarea
+                className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                rows={2}
+                value={activeRecipient.instructions || ''}
+                onChange={(e) => updateActiveRecipient({ instructions: e.target.value })}
+                placeholder="Optional guidance for this recipient"
+              />
               <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
                 <input
                   type="checkbox"
@@ -1296,6 +1442,15 @@ export function MarkingWorkflowPanel({
                   void run(async () => {
                     const cleaned = recipients.filter((r) => r.toUser.trim())
                     if (!cleaned.length) throw new Error('Select at least one recipient')
+                    if (activeHolds.length > 1 && parentMarkingId == null) {
+                      throw new Error('Select which hold you are marking under')
+                    }
+                    const resolvedParent =
+                      activeHolds.length === 1
+                        ? activeHolds[0]!.id
+                        : activeHolds.length > 1
+                          ? parentMarkingId
+                          : undefined
                     await markLetter(letter.id, {
                       recipients: cleaned.map((r) => ({
                         ...r,
@@ -1304,6 +1459,7 @@ export function MarkingWorkflowPanel({
                       })),
                       remarks,
                       pathwayNotify,
+                      parentMarkingId: resolvedParent ?? undefined,
                     })
                   })
                 }
@@ -1319,6 +1475,40 @@ export function MarkingWorkflowPanel({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
             <h2 className="text-sm font-bold">{dialog === 'note' ? 'Add Comment' : 'Submit response'}</h2>
+            {dialog === 'note' && activeHolds.length > 1 && (
+              <div className="mt-2">
+                <label className="block text-xs font-medium text-slate-600">On which hold?</label>
+                <AppSelect
+                  value={contextMarkingId != null ? String(contextMarkingId) : ''}
+                  onValueChange={(v) => setContextMarkingId(v ? Number(v) : null)}
+                  options={[
+                    { value: '', label: 'Select hold…' },
+                    ...activeHolds.map((h) => ({
+                      value: String(h.id),
+                      label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
+                    })),
+                  ]}
+                  className="mt-1 w-full text-sm"
+                />
+              </div>
+            )}
+            {dialog === 'respond' && rrHoldsForMe.length > 1 && (
+              <div className="mt-2">
+                <label className="block text-xs font-medium text-slate-600">Respond to</label>
+                <AppSelect
+                  value={respondMarkingId != null ? String(respondMarkingId) : ''}
+                  onValueChange={(v) => setRespondMarkingId(v ? Number(v) : null)}
+                  options={[
+                    { value: '', label: 'Select Response Required…' },
+                    ...rrHoldsForMe.map((h) => ({
+                      value: String(h.id),
+                      label: `From ${h.fromUser}${h.dueAt ? ` · due ${h.dueAt}` : ''}`,
+                    })),
+                  ]}
+                  className="mt-1 w-full text-sm"
+                />
+              </div>
+            )}
             <textarea
               className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
               rows={4}
@@ -1345,7 +1535,19 @@ export function MarkingWorkflowPanel({
                   onClick={() =>
                     void run(async () => {
                       if (!noteBody.trim()) throw new Error('Note text is required')
-                      await addMarkingNote(letter.id, { bodyText: noteBody })
+                      if (activeHolds.length > 1 && contextMarkingId == null) {
+                        throw new Error('Select which hold this note belongs to')
+                      }
+                      const markingId =
+                        activeHolds.length === 1
+                          ? activeHolds[0]!.id
+                          : activeHolds.length > 1
+                            ? contextMarkingId ?? undefined
+                            : undefined
+                      await addMarkingNote(letter.id, {
+                        bodyText: noteBody,
+                        markingId,
+                      })
                     })
                   }
                 >
@@ -1377,6 +1579,23 @@ export function MarkingWorkflowPanel({
             <p className="mt-1 text-xs text-slate-500">
               Files are linked to your current marking hold, not to individual notes.
             </p>
+            {activeHolds.length > 1 && (
+              <div className="mt-2">
+                <label className="block text-xs font-medium text-slate-600">On which hold?</label>
+                <AppSelect
+                  value={contextMarkingId != null ? String(contextMarkingId) : ''}
+                  onValueChange={(v) => setContextMarkingId(v ? Number(v) : null)}
+                  options={[
+                    { value: '', label: 'Select hold…' },
+                    ...activeHolds.map((h) => ({
+                      value: String(h.id),
+                      label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
+                    })),
+                  ]}
+                  className="mt-1 w-full text-sm"
+                />
+              </div>
+            )}
             <div className="mt-3 rounded-lg border border-slate-200 p-3">
               <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-[8rem] flex-1">
@@ -1459,8 +1678,17 @@ export function MarkingWorkflowPanel({
                 onClick={() =>
                   void run(async () => {
                     if (!pendingFiles.length) throw new Error('Choose at least one file')
+                    if (activeHolds.length > 1 && contextMarkingId == null) {
+                      throw new Error('Select which hold these attachments belong to')
+                    }
+                    const markingId =
+                      activeHolds.length === 1
+                        ? activeHolds[0]!.id
+                        : activeHolds.length > 1
+                          ? contextMarkingId
+                          : undefined
                     const uploaded = await uploadPendingAttachments()
-                    await addAttachmentsToMarking(letter.id, uploaded)
+                    await addAttachmentsToMarking(letter.id, uploaded, markingId)
                   })
                 }
               >
@@ -1475,6 +1703,25 @@ export function MarkingWorkflowPanel({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
             <h2 className="text-sm font-bold">Close correspondence</h2>
+            {pendingRrLeaves.length > 0 && (
+              <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+                <p className="font-semibold">
+                  {pendingRrLeaves.length} open Response Required marking
+                  {pendingRrLeaves.length === 1 ? '' : 's'} across branches
+                </p>
+                <ul className="mt-1 list-inside list-disc space-y-0.5">
+                  {pendingRrLeaves.map((m) => (
+                    <li key={m.id}>
+                      {m.toUser}
+                      {m.dueAt ? ` · due ${m.dueAt}` : ''} (from {m.fromUser})
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-[11px] text-amber-800/80">
+                  Check force close below to close anyway, or wait for responses.
+                </p>
+              </div>
+            )}
             <textarea
               className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
               rows={2}
@@ -1491,7 +1738,7 @@ export function MarkingWorkflowPanel({
                 Cancel
               </Button>
               <Button
-                disabled={busy}
+                disabled={busy || (pendingRrLeaves.length > 0 && !forceClose)}
                 onClick={() =>
                   void run(async () => {
                     await closeMarkedLetter(letter.id, { remarks, force: forceClose })

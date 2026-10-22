@@ -3,6 +3,7 @@
 import { useMemo, type CSSProperties } from 'react'
 import { Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { AssignedToDisplay } from '@/components/cms/assigned-to-display'
 import { Badge } from '@/components/cms/ui'
 import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import { LetterRowActions } from '@/components/cms/letter-row-actions'
@@ -182,7 +183,7 @@ export function LetterTable({
         header: 'Assigned to',
         sortValue: (l) => l.assignedTo,
         className: 'text-slate-600',
-        cell: (l) => l.assignedTo,
+        cell: (l) => <AssignedToDisplay assignedTo={l.assignedTo} />,
       },
       {
         id: 'actions',

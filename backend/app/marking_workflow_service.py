@@ -82,6 +82,22 @@ def _pick_primary_marking(markings: list[Marking]) -> Marking | None:
     return max(markings, key=lambda m: m.id or 0)
 
 
+def format_assigned_to_holders(markings: list[Marking]) -> str:
+    """Full comma-separated current holders (UI truncates preview + … popup)."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in markings:
+        name = (row.to_user or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    if not names:
+        return ""
+    # cms_letters.assigned_to widened to VARCHAR(500)
+    return ", ".join(names)[:500]
+
+
 def active_leaf_markings(db: Session, letter_id: int) -> list[Marking]:
     """Active markings that have not been remade onward (current holders)."""
     actives = (
@@ -100,9 +116,10 @@ def sync_letter_from_markings(
     last_action: str | None = None,
 ) -> None:
     """Keep legacy Assigned To / Last Action in sync with the marking tree."""
-    primary = _pick_primary_marking(active_leaf_markings(db, letter.id))
+    leaves = active_leaf_markings(db, letter.id)
+    primary = _pick_primary_marking(leaves)
     if primary:
-        letter.assigned_to = primary.to_user
+        letter.assigned_to = format_assigned_to_holders(leaves)
         letter.assigned_by = primary.from_user
     else:
         holder = initiator_name(letter)
@@ -1235,6 +1252,21 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
         if any(marking_is_revokable(db, m) for m in outbound):
             actions.append("revoke")
     return actions
+
+
+def marking_actions_payload(db: Session, letter: Letter, actor_name: str) -> dict[str, Any]:
+    """Actions plus hold context for multi-recipient Workflow UI."""
+    active_holds = leaf_inbound_markings(db, letter.id, actor_name)
+    active_leaves = active_leaf_markings(db, letter.id)
+    initiator_hold = is_initiator(letter, actor_name) and not has_active_markings(db, letter.id)
+    return {
+        "letterId": str(letter.id),
+        "currentStatus": letter.status,
+        "actions": available_marking_actions(db, letter, actor_name),
+        "activeHolds": [serialize_marking(m) for m in active_holds],
+        "activeLeaves": [serialize_marking(m) for m in active_leaves],
+        "initiatorHold": initiator_hold,
+    }
 
 
 def _notify_pathway(

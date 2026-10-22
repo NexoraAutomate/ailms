@@ -5,6 +5,7 @@ import { Download, Printer } from 'lucide-react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
 import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
+import { AssignedToDisplay } from '@/components/cms/assigned-to-display'
 import { Badge, Card, Filters, PageTitle } from '@/components/cms/ui'
 import { DataTable, type DataTableColumn } from '@/components/cms/data-table'
 import { priorityTone, statusTone, type Letter } from '@/services/letters'
@@ -47,7 +48,7 @@ export function Reports() {
       { id: 'date', header: 'Date', sortValue: (r) => parseSortDate(r.letterDate), cell: (r) => r.letterDate },
       { id: 'subject', header: 'Subject', sortValue: (r) => r.subject, className: 'max-w-[190px] truncate text-slate-700', cell: (r) => r.subject },
       { id: 'department', header: 'Department', sortValue: (r) => r.department, cell: (r) => r.department },
-      { id: 'assignedTo', header: 'Assigned To', sortValue: (r) => r.assignedTo, cell: (r) => r.assignedTo },
+      { id: 'assignedTo', header: 'Assigned To', sortValue: (r) => r.assignedTo, cell: (r) => <AssignedToDisplay assignedTo={r.assignedTo} /> },
       { id: 'status', header: 'Status', sortValue: (r) => r.status, cell: (r) => <Badge tone={statusTone(r.status)}>{r.status}</Badge> },
       { id: 'priority', header: 'Priority', sortValue: (r) => PRIORITY_RANK[r.priority] ?? 0, cell: (r) => <Badge tone={priorityTone(r.priority)}>{r.priority}</Badge> },
       { id: 'dueDate', header: 'Due Date', sortValue: (r) => parseSortDate(r.dueDate), cell: (r) => r.dueDate },
