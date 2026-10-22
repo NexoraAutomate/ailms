@@ -28,6 +28,11 @@ RESPONSE_TYPES = frozenset(
 ATTACHMENT_KINDS = frozenset(
     {"Presentation", "Draft Response", "Supporting Doc", "Nomination List", "Other"}
 )
+ACTION_LABELS = {
+    "forward": "Forward",
+    "for_info": "For Information",
+    "response_required": "Response Required",
+}
 OPEN_LETTER = "Open"
 CLOSED_LETTER = "Closed"
 ARCHIVED_LETTER = "Archived"
@@ -61,6 +66,106 @@ def has_active_markings(db: Session, letter_id: int) -> bool:
         .first()
         is not None
     )
+
+
+def _action_label(action: str) -> str:
+    return ACTION_LABELS.get(action, (action or "").replace("_", " ").title())
+
+
+def _pick_primary_marking(markings: list[Marking]) -> Marking | None:
+    """Primary = first response_required, else most recently created."""
+    if not markings:
+        return None
+    for row in markings:
+        if row.action == "response_required":
+            return row
+    return max(markings, key=lambda m: m.id or 0)
+
+
+def active_leaf_markings(db: Session, letter_id: int) -> list[Marking]:
+    """Active markings that have not been remade onward (current holders)."""
+    actives = (
+        db.query(Marking)
+        .filter(Marking.letter_id == letter_id, Marking.status == "active")
+        .order_by(Marking.id.asc())
+        .all()
+    )
+    return [m for m in actives if not marking_has_children(db, m.id)]
+
+
+def sync_letter_from_markings(
+    db: Session,
+    letter: Letter,
+    *,
+    last_action: str | None = None,
+) -> None:
+    """Keep legacy Assigned To / Last Action in sync with the marking tree."""
+    primary = _pick_primary_marking(active_leaf_markings(db, letter.id))
+    if primary:
+        letter.assigned_to = primary.to_user
+        letter.assigned_by = primary.from_user
+    else:
+        holder = initiator_name(letter)
+        letter.assigned_to = holder
+        letter.assigned_by = holder
+    if last_action is not None:
+        letter.last_action = last_action
+
+
+def _mark_last_action(marking: Marking) -> str:
+    return f"Marked ({_action_label(marking.action)})"
+
+
+def _revoke_last_action(marking: Marking) -> str:
+    return f"Revoked (from {marking.to_user})"
+
+
+def derive_last_action_from_markings(db: Session, letter: Letter) -> str | None:
+    """Most recent marking event label for backfill / repair.
+
+    Emits one terminal event per marking (revoked > responded > marked) so
+    create/revoke clock skew (DB local now vs utcnow) cannot resurface a mark
+    after it was revoked.
+    """
+    events: list[tuple[datetime, int, str]] = []
+    if letter.status == CLOSED_LETTER and letter.closed_at:
+        events.append((letter.closed_at, letter.id or 0, "Closed"))
+    rows = db.query(Marking).filter(Marking.letter_id == letter.id).all()
+    for row in rows:
+        if row.status == "revoked" and row.revoked_at:
+            events.append((row.revoked_at, row.id or 0, _revoke_last_action(row)))
+        elif row.status == "responded" and row.responded_at:
+            events.append((row.responded_at, row.id or 0, "Responded"))
+        elif row.created_at:
+            events.append((row.created_at, row.id or 0, _mark_last_action(row)))
+        elif row.status == "revoked":
+            # Missing revoked_at: still prefer revoke over create for this row.
+            events.append((row.created_at or datetime.min, row.id or 0, _revoke_last_action(row)))
+    if not events:
+        return None
+    events.sort(key=lambda item: (item[0], item[1]))
+    return events[-1][2]
+
+
+def repair_letter_assignment_from_markings(db: Session, letter: Letter) -> bool:
+    """Recompute assigned_to / last_action from marking history. Returns True if changed."""
+    before = (letter.assigned_to, letter.assigned_by, letter.last_action)
+    derived = derive_last_action_from_markings(db, letter)
+    sync_letter_from_markings(db, letter, last_action=derived)
+    after = (letter.assigned_to, letter.assigned_by, letter.last_action)
+    return before != after
+
+
+def backfill_letter_assignments_from_markings(db: Session) -> int:
+    """Repair legacy Assigned To / Last Action for all letters that have markings."""
+    letter_ids = {row[0] for row in db.query(Marking.letter_id).distinct().all()}
+    if not letter_ids:
+        return 0
+    updated = 0
+    for letter in db.query(Letter).filter(Letter.id.in_(letter_ids)).all():
+        if repair_letter_assignment_from_markings(db, letter):
+            updated += 1
+    return updated
 
 
 def letter_ids_with_active_markings(db: Session, letter_ids: list[int]) -> set[int]:
@@ -429,12 +534,9 @@ def create_mark_batch(
         created.append(marking)
     db.flush()
 
-    # Compatibility fields for legacy list views
-    primary = next((m for m in created if m.action == "response_required"), created[0])
-    letter.assigned_to = primary.to_user
-    letter.assigned_by = actor_name
-    letter.last_action = f"Marked ({primary.action})"
+    primary = _pick_primary_marking(created) or created[0]
     letter.status = OPEN_LETTER
+    sync_letter_from_markings(db, letter, last_action=_mark_last_action(primary))
 
     for marking in created:
         add_notification(
@@ -500,9 +602,12 @@ def revoke_marking(
         )
 
     marking.status = "revoked"
-    marking.revoked_at = datetime.utcnow()
+    marking.revoked_at = datetime.now()
     marking.revoked_by = actor_name
     marking.revoke_ip = client_ip or ""
+    db.flush()
+
+    sync_letter_from_markings(db, letter, last_action=_revoke_last_action(marking))
 
     add_notification(
         db,
@@ -601,8 +706,10 @@ def add_note(
 
     if is_response and marking:
         marking.status = "responded"
-        marking.responded_at = datetime.utcnow()
+        marking.responded_at = datetime.now()
         marking.response_note_id = note.id
+        db.flush()
+        sync_letter_from_markings(db, letter, last_action="Responded")
         add_notification(
             db,
             title="Response Received",
@@ -681,8 +788,27 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable
     }
 
 
+def _belongs_to_current_hold(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    marking_id: int | None,
+) -> bool:
+    """True if this note/attachment is on the actor's current leaf hold (not a prior mark)."""
+    leaves = leaf_inbound_markings(db, letter.id, actor_name)
+    leaf_ids = {m.id for m in leaves}
+    if marking_id is not None:
+        return marking_id in leaf_ids
+    # Initiator root (no marking yet): only while initiator still holds with no active marks.
+    return is_initiator(letter, actor_name) and not has_active_markings(db, letter.id)
+
+
 def note_is_editable(db: Session, note: CorrespondenceNote, actor_name: str) -> bool:
-    """Author (or Admin) may edit only while they still hold the letter."""
+    """Author may edit/delete only notes from their *current* marking hold.
+
+    If the letter is marked to them again later, older notes from a previous hold stay locked.
+    """
     if _is_viewer(db, actor_name):
         return False
     letter = db.get(Letter, note.letter_id)
@@ -692,12 +818,15 @@ def note_is_editable(db: Session, note: CorrespondenceNote, actor_name: str) -> 
         return True
     if note.author_user != actor_name:
         return False
-    return user_holds_letter(db, letter, actor_name)
+    return _belongs_to_current_hold(
+        db, letter=letter, actor_name=actor_name, marking_id=note.marking_id
+    )
 
 
 def attachment_is_editable(
     db: Session, attachment: CorrespondenceAttachment, actor_name: str
 ) -> bool:
+    """Uploader may edit/delete only attachments from their *current* marking hold."""
     if _is_viewer(db, actor_name):
         return False
     letter = db.get(Letter, attachment.letter_id)
@@ -707,7 +836,9 @@ def attachment_is_editable(
         return True
     if (attachment.created_by or "").strip() != actor_name:
         return False
-    return user_holds_letter(db, letter, actor_name)
+    return _belongs_to_current_hold(
+        db, letter=letter, actor_name=actor_name, marking_id=attachment.marking_id
+    )
 
 
 def assert_note_editable(db: Session, note: CorrespondenceNote, actor_name: str) -> Letter:
@@ -717,7 +848,7 @@ def assert_note_editable(db: Session, note: CorrespondenceNote, actor_name: str)
     if not note_is_editable(db, note, actor_name):
         raise HTTPException(
             status_code=403,
-            detail="Notes are locked after you mark the correspondence onward",
+            detail="Only notes from your current hold can be edited or deleted",
         )
     return letter
 
@@ -731,7 +862,7 @@ def assert_attachment_editable(
     if not attachment_is_editable(db, attachment, actor_name):
         raise HTTPException(
             status_code=403,
-            detail="Attachments are locked after you mark the correspondence onward",
+            detail="Only attachments from your current hold can be edited or deleted",
         )
     return letter
 
@@ -1030,10 +1161,9 @@ def close_letter(
         )
 
     letter.status = CLOSED_LETTER
-    letter.closed_at = datetime.utcnow()
+    letter.closed_at = datetime.now()
     letter.closed_by = actor_name
     letter.close_ip = client_ip or ""
-    letter.last_action = "Closed"
     if remarks:
         letter.remarks = ((letter.remarks or "") + f"\n[Close] {remarks}").strip()
 
@@ -1044,6 +1174,8 @@ def close_letter(
     )
     for m in actives:
         m.status = "superseded"
+    db.flush()
+    sync_letter_from_markings(db, letter, last_action="Closed")
 
     participants = {m.from_user for m in db.query(Marking).filter(Marking.letter_id == letter.id).all()}
     participants |= {m.to_user for m in db.query(Marking).filter(Marking.letter_id == letter.id).all()}
@@ -1139,18 +1271,80 @@ def _notify_pathway(
 
 
 def letter_ids_marked_to_user(db: Session, user_name: str) -> set[int]:
-    rows = (
-        db.query(Marking.letter_id)
-        .filter(Marking.to_user == user_name, Marking.status == "active")
-        .distinct()
+    """Letters currently held via an inbound marking (not remade onward)."""
+    name = (user_name or "").strip()
+    if not name:
+        return set()
+    inbound = (
+        db.query(Marking)
+        .filter(Marking.to_user == name, Marking.status == "active")
         .all()
     )
-    return {r[0] for r in rows}
+    if not inbound:
+        return set()
+    parent_ids = [m.id for m in inbound]
+    remade = {
+        int(row[0])
+        for row in db.query(Marking.parent_marking_id)
+        .filter(
+            Marking.parent_marking_id.in_(parent_ids),
+            Marking.status == "active",
+        )
+        .distinct()
+        .all()
+        if row[0] is not None
+    }
+    return {m.letter_id for m in inbound if m.id not in remade}
+
+
+def letter_ids_held_by_user(db: Session, user_name: str) -> set[int]:
+    """Inbox: current holds — leaf inbound markings, or initiator with no active markings."""
+    name = (user_name or "").strip()
+    if not name:
+        return set()
+    held = set(letter_ids_marked_to_user(db, name))
+    # Initiator hold while nothing is marked out (including after a full revoke).
+    owned_ids = [
+        int(row[0])
+        for row in db.query(Letter.id)
+        .filter(
+            Letter.created_by == name,
+            Letter.is_archived.is_(False),
+            Letter.status.notin_([CLOSED_LETTER, ARCHIVED_LETTER]),
+        )
+        .all()
+    ]
+    if owned_ids:
+        active_owned = {
+            int(row[0])
+            for row in db.query(Marking.letter_id)
+            .filter(Marking.letter_id.in_(owned_ids), Marking.status == "active")
+            .distinct()
+            .all()
+        }
+        held.update(lid for lid in owned_ids if lid not in active_owned)
+    return held
 
 
 def letter_ids_marked_by_user(db: Session, user_name: str) -> set[int]:
-    rows = db.query(Marking.letter_id).filter(Marking.from_user == user_name).distinct().all()
-    return {r[0] for r in rows}
+    """Sent: letters you marked at least once with a non-revoked marking.
+
+    A mark that was created and fully revoked (only revoked rows from you) does
+    not keep the letter in Sent — it returns to Inbox for the current holder.
+    """
+    name = (user_name or "").strip()
+    if not name:
+        return set()
+    rows = (
+        db.query(Marking.letter_id)
+        .filter(
+            Marking.from_user == name,
+            Marking.status != "revoked",
+        )
+        .distinct()
+        .all()
+    )
+    return {int(row[0]) for row in rows}
 
 
 def user_on_marking(db: Session, letter_id: int, user_name: str) -> bool:

@@ -24,11 +24,15 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const [archivedLetters, setArchivedLetters] = useState<Letter[]>([])
   const [catalogLetters, setCatalogLetters] = useState<Letter[]>([])
   const [myActionLetters, setMyActionLetters] = useState<Letter[]>([])
+  const [inboxLetters, setInboxLetters] = useState<Letter[]>([])
+  const [sentLetters, setSentLetters] = useState<Letter[]>([])
   const [pendingDelete, setPendingDelete] = useState<Letter[] | null>(null)
   const isAdmin = isAdministrator(me.role)
   const isCatalog = page === 'Catalog'
   const isSoftArchive = page === 'Archived'
   const isMyActions = page === 'My Actions'
+  const isInboxPage = page === 'Inbox'
+  const isSentPage = page === 'Sent'
 
   useEffect(() => {
     if (isSoftArchive) {
@@ -50,27 +54,42 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
     )
   }, [isMyActions, letters])
 
+  useEffect(() => {
+    if (!isInboxPage) return
+    import('@/services/letters').then(({ listLetters }) =>
+      listLetters({ view: 'inbox' }).then(setInboxLetters),
+    )
+  }, [isInboxPage, letters])
+
+  useEffect(() => {
+    if (!isSentPage) return
+    import('@/services/letters').then(({ listLetters }) =>
+      listLetters({ view: 'sent' }).then(setSentLetters),
+    )
+  }, [isSentPage, letters])
+
   const source = isCatalog
     ? catalogLetters
     : isSoftArchive
       ? archivedLetters
       : isMyActions
         ? myActionLetters
-      : aiSearch
-        ? aiSearch.letters
-        : letters
+        : isInboxPage
+          ? inboxLetters
+          : isSentPage
+            ? sentLetters
+            : aiSearch
+              ? aiSearch.letters
+              : letters
 
   const data = source.filter((l) => {
     const q = aiSearch || !query || Object.values(l).some((v) => String(v).toLowerCase().includes(query.toLowerCase()))
     const archiveOk = isSoftArchive ? !!l.isArchived : isCatalog ? true : !l.isArchived
-    const isInbox =
-      l.assignedTo === me.name && (l.assignedBy || '') !== me.name
-    const isSent = l.createdBy === me.name || l.assignedBy === me.name
     const matchesPage =
       page === 'All Letters' ||
       page === 'Catalog' ||
-      (page === 'Inbox' && isInbox) ||
-      (page === 'Sent' && isSent) ||
+      page === 'Inbox' ||
+      page === 'Sent' ||
       (page === 'Incoming' && l.type === 'Incoming') ||
       (page === 'Outgoing' && l.type === 'Outgoing') ||
       (page === 'Overdue' && l.status === 'Overdue') ||
@@ -86,9 +105,9 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const description = isCatalog
     ? 'Search the full correspondence register. Letters not marked to you are locked.'
     : page === 'Inbox'
-      ? 'Letters marked to you from any tier that still need your response.'
+      ? 'Letters currently marked to you, or returned to you after a revoke.'
       : page === 'Sent'
-        ? 'Letters you registered, replied to, or marked onward.'
+        ? 'Letters you have marked to others (revoked-only marks are excluded).'
         : page === 'My Actions'
           ? 'Open action items and FYI routes addressed to you.'
         : 'Search, filter and manage correspondence assigned or created by you.'
@@ -101,14 +120,12 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
 
   const reload = async () => {
     await refresh()
-    if (isSoftArchive) {
-      const { listLetters } = await import('@/services/letters')
-      setArchivedLetters(await listLetters({ view: 'archived' }))
-    }
-    if (isCatalog) {
-      const { listLetters } = await import('@/services/letters')
-      setCatalogLetters(await listLetters({ scope: 'catalog' }))
-    }
+    const { listLetters } = await import('@/services/letters')
+    if (isSoftArchive) setArchivedLetters(await listLetters({ view: 'archived' }))
+    if (isCatalog) setCatalogLetters(await listLetters({ scope: 'catalog' }))
+    if (isMyActions) setMyActionLetters(await listLetters({ view: 'mine' }))
+    if (isInboxPage) setInboxLetters(await listLetters({ view: 'inbox' }))
+    if (isSentPage) setSentLetters(await listLetters({ view: 'sent' }))
   }
 
   const runBulk = async () => {

@@ -34,8 +34,8 @@ Update `letter_access.py` / `owned_letter_filter` to include marking participati
 
 | View | Definition |
 |------|------------|
-| Inbox | Letters with ≥1 `active` marking where `to_user = me` |
-| Sent / marked by me | Letters with ≥1 marking where `from_user = me` |
+| Inbox | Letters you currently hold: leaf inbound `active` marking to you, or you are initiator with no active markings (e.g. after full revoke) |
+| Sent / marked by me | Letters with ≥1 non-revoked marking where `from_user = me` (revoked-only marks do not keep the letter in Sent) |
 | Track | Spec 04 tracked list |
 
 ## E. Outputs — API surface

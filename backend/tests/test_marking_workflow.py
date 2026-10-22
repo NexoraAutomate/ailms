@@ -22,6 +22,9 @@ from app.marking_workflow_service import (
     can_edit_letter_details,
     close_letter,
     create_mark_batch,
+    letter_ids_held_by_user,
+    letter_ids_marked_by_user,
+    letter_ids_marked_to_user,
     list_attachments,
     list_notes,
     list_tracked,
@@ -54,9 +57,12 @@ class MarkingWorkflowTest(unittest.TestCase):
     def setUp(self) -> None:
         self.db = SessionLocal()
         suffix = uuid.uuid4().hex[:6]
+        # Non-empty password_hash so server startup auth bootstrap does not dirty
+        # these rows (avoids StaleDataError if teardown races with --reload).
         self.initiator = User(
             name=f"Init {suffix}",
             username=f"init{suffix}",
+            password_hash="!",
             role="Coordinator",
             status="Active",
             department="Secretariat",
@@ -64,6 +70,7 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.user_a = User(
             name=f"UserA {suffix}",
             username=f"usera{suffix}",
+            password_hash="!",
             role="Actionist",
             status="Active",
             department="Wing",
@@ -71,6 +78,7 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.user_b = User(
             name=f"UserB {suffix}",
             username=f"userb{suffix}",
+            password_hash="!",
             role="Actionist",
             status="Active",
             department="Wing",
@@ -78,6 +86,7 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.viewer = User(
             name=f"Viewer {suffix}",
             username=f"view{suffix}",
+            password_hash="!",
             role="Viewer",
             status="Active",
             department="Wing",
@@ -174,6 +183,68 @@ class MarkingWorkflowTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             update_note(self.db, note=note, actor_name=self.initiator.name, body_text="Nope")
         self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_older_notes_locked_when_remarked_to_same_user(self) -> None:
+        """When remade to a user again, only notes from the new hold are editable."""
+        batch1 = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        first_mark = self.db.query(Marking).filter(Marking.batch_id == batch1.id).one()
+        old_note = add_note(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            body_text="Comment on first hold",
+            marking_id=first_mark.id,
+        )
+        self.db.flush()
+        self.assertTrue(note_is_editable(self.db, old_note, self.user_a.name))
+
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=first_mark.id,
+            recipients=[{"toUser": self.user_b.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertFalse(note_is_editable(self.db, old_note, self.user_a.name))
+
+        mark_to_b = (
+            self.db.query(Marking)
+            .filter(Marking.parent_marking_id == first_mark.id, Marking.to_user == self.user_b.name)
+            .one()
+        )
+        batch2 = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_b.name,
+            parent_marking_id=mark_to_b.id,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        second_mark = self.db.query(Marking).filter(Marking.batch_id == batch2.id).one()
+
+        # Prior hold notes stay locked even though A holds again.
+        self.assertFalse(note_is_editable(self.db, old_note, self.user_a.name))
+        with self.assertRaises(HTTPException) as ctx:
+            update_note(self.db, note=old_note, actor_name=self.user_a.name, body_text="Nope")
+        self.assertEqual(ctx.exception.status_code, 403)
+
+        new_note = add_note(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            body_text="Comment on second hold",
+            marking_id=second_mark.id,
+        )
+        self.db.flush()
+        self.assertTrue(note_is_editable(self.db, new_note, self.user_a.name))
+        self.assertFalse(note_is_editable(self.db, old_note, self.user_a.name))
 
     def test_marker_is_revoke_only_after_marking_onward(self) -> None:
         self.assertTrue(user_holds_letter(self.db, self.letter, self.initiator.name))
@@ -467,7 +538,10 @@ class MarkingWorkflowTest(unittest.TestCase):
         )
         self.db.commit()
         self.db.refresh(marking)
+        self.db.refresh(self.letter)
         self.assertEqual(marking.status, "responded")
+        self.assertEqual(self.letter.last_action, "Responded")
+        self.assertEqual(self.letter.assigned_to, self.initiator.name)
         tracker = batch_tracker(self.db, batch.id, self.initiator.name)
         self.assertEqual(tracker["pendingCount"], 0)
         self.assertTrue(tracker["allResponsesReceived"])
@@ -644,6 +718,141 @@ class MarkingWorkflowTest(unittest.TestCase):
         for row in created:
             self.db.refresh(row)
             self.assertFalse(attachment_is_editable(self.db, row, self.user_a.name))
+
+    def test_active_markings_appear_in_recipient_inbox(self) -> None:
+        """Inbox is only letters currently marked to the user (leaf holds), not remade onward."""
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[
+                {"toUser": self.user_a.name, "action": "response_required", "responseType": "comments"},
+                {"toUser": self.user_b.name, "action": "for_info"},
+            ],
+        )
+        self.db.flush()
+
+        self.assertIn(self.letter.id, letter_ids_marked_to_user(self.db, self.user_a.name))
+        self.assertIn(self.letter.id, letter_ids_marked_to_user(self.db, self.user_b.name))
+        self.assertNotIn(self.letter.id, letter_ids_marked_to_user(self.db, self.initiator.name))
+        self.assertIn(self.letter.id, letter_ids_marked_by_user(self.db, self.initiator.name))
+
+        parent = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=parent.id,
+            recipients=[{"toUser": self.viewer.name, "action": "forward"}],
+        )
+        self.db.flush()
+
+        # After remaking onward, the letter leaves user_a's Inbox; current holder is viewer.
+        self.assertEqual(self.letter.assigned_to, self.viewer.name)
+        self.assertNotIn(self.letter.id, letter_ids_marked_to_user(self.db, self.user_a.name))
+        self.assertIn(self.letter.id, letter_ids_marked_to_user(self.db, self.user_b.name))
+        self.assertIn(self.letter.id, letter_ids_marked_to_user(self.db, self.viewer.name))
+
+        info_mark = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_b.name)
+            .one()
+        )
+        revoke_marking(self.db, marking=info_mark, actor_name=self.initiator.name)
+        self.db.flush()
+        self.assertNotIn(self.letter.id, letter_ids_marked_to_user(self.db, self.user_b.name))
+        self.assertNotIn(self.letter.id, letter_ids_marked_to_user(self.db, self.user_a.name))
+        self.assertIn(self.letter.id, letter_ids_marked_to_user(self.db, self.viewer.name))
+
+    def test_sent_excludes_revoked_only_marks_and_inbox_regains_hold(self) -> None:
+        """First mark + revoke: letter leaves Sent and returns to initiator Inbox."""
+        self.assertIn(self.letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        self.assertNotIn(self.letter.id, letter_ids_marked_by_user(self.db, self.initiator.name))
+
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertIn(self.letter.id, letter_ids_marked_by_user(self.db, self.initiator.name))
+        self.assertNotIn(self.letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        self.assertIn(self.letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
+
+        marking = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        revoke_marking(self.db, marking=marking, actor_name=self.initiator.name)
+        self.db.flush()
+
+        self.assertNotIn(self.letter.id, letter_ids_marked_by_user(self.db, self.initiator.name))
+        self.assertIn(self.letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        self.assertNotIn(self.letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
+
+        # Remark keeps it in Sent even after a later revoke of a different recipient? —
+        # remark then leave active: stays in Sent.
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_b.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertIn(self.letter.id, letter_ids_marked_by_user(self.db, self.initiator.name))
+
+    def test_assigned_to_and_last_action_follow_markings(self) -> None:
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertEqual(self.letter.assigned_to, self.user_a.name)
+        self.assertEqual(self.letter.assigned_by, self.initiator.name)
+        self.assertEqual(self.letter.last_action, "Marked (Forward)")
+
+        parent = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=parent.id,
+            recipients=[{"toUser": self.user_b.name, "action": "for_info"}],
+        )
+        self.db.flush()
+        self.assertEqual(self.letter.assigned_to, self.user_b.name)
+        self.assertEqual(self.letter.assigned_by, self.user_a.name)
+        self.assertEqual(self.letter.last_action, "Marked (For Information)")
+
+        leaf = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_b.name)
+            .one()
+        )
+        revoke_marking(self.db, marking=leaf, actor_name=self.user_a.name)
+        self.db.flush()
+        # After revoke of the leaf, hold returns to user_a (still has active inbound with no children).
+        self.assertEqual(self.letter.assigned_to, self.user_a.name)
+        self.assertEqual(self.letter.assigned_by, self.initiator.name)
+        self.assertEqual(self.letter.last_action, f"Revoked (from {self.user_b.name})")
+
+        revoke_marking(self.db, marking=parent, actor_name=self.initiator.name)
+        self.db.flush()
+        self.assertEqual(self.letter.assigned_to, self.initiator.name)
+        self.assertEqual(self.letter.assigned_by, self.initiator.name)
+        self.assertEqual(self.letter.last_action, f"Revoked (from {self.user_a.name})")
 
 
 if __name__ == "__main__":

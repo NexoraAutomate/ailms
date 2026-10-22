@@ -303,5 +303,10 @@ def ensure_auth_bootstrap(db: Session) -> None:
     elif not admin.password_hash:
         admin.password_hash = default_hash
 
-    for user in db.query(User).filter((User.password_hash == "") | (User.password_hash.is_(None))).all():
-        user.password_hash = default_hash
+    # Bulk update avoids leaving ORM-dirty User rows that can StaleDataError if
+    # another session deletes them before commit (e.g. test teardown during reload).
+    db.query(User).filter((User.password_hash == "") | (User.password_hash.is_(None))).update(
+        {User.password_hash: default_hash},
+        synchronize_session=False,
+    )
+    db.expire_all()

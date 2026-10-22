@@ -821,19 +821,29 @@ def _render_seed_avatar_png(name: str, username: str) -> bytes:
 
 def ensure_seed_avatars(db: Session) -> int:
     """Assign generated profile photos to users that do not have one yet."""
+    from sqlalchemy.orm.exc import StaleDataError
+
     from app.storage_service import ensure_storage_dirs, save_avatar_bytes
 
     ensure_storage_dirs()
     updated = 0
-    users = db.query(User).order_by(User.id).all()
-    for user in users:
-        if (user.avatar_key or "").strip():
+    user_ids = [row[0] for row in db.query(User.id).order_by(User.id).all()]
+    for user_id in user_ids:
+        user = db.get(User, user_id)
+        if not user or (user.avatar_key or "").strip():
             continue
         png = _render_seed_avatar_png(user.name or user.username, user.username)
-        user.avatar_key = save_avatar_bytes(
-            user_id=user.id,
-            content=png,
-            filename=f"{user.username or user.id}-avatar.png",
-        )
+        try:
+            with db.begin_nested():
+                user.avatar_key = save_avatar_bytes(
+                    user_id=user.id,
+                    content=png,
+                    filename=f"{user.username or user.id}-avatar.png",
+                )
+                db.flush()
+        except StaleDataError:
+            # User was deleted concurrently (tests / parallel reload).
+            db.expire(user)
+            continue
         updated += 1
     return updated

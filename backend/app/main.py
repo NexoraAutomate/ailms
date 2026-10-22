@@ -139,6 +139,8 @@ def on_startup() -> None:
     try:
         seed_if_empty(db)
         ensure_department_org_layout(db)
+        from sqlalchemy.orm.exc import StaleDataError
+
         from app.notification_service import backfill_notification_metadata
         from app.ai.registration_commit import backfill_letter_body_text
         from app.db_upgrade import (
@@ -148,6 +150,7 @@ def on_startup() -> None:
             migrate_enterprise_roles,
             migrate_letters_to_simple_marking_statuses,
         )
+        from app.marking_workflow_service import backfill_letter_assignments_from_markings
 
         # Migrate legacy role names before seeding canonical roles to avoid unique collisions.
         migrate_enterprise_roles(db)
@@ -167,8 +170,20 @@ def on_startup() -> None:
         infer_department_tiers(db)
         backfill_enterprise_route_actions(db)
         migrate_letters_to_simple_marking_statuses(db)
+        backfill_letter_assignments_from_markings(db)
         touch_session(db, username="admin", display="Administrator")
-        db.commit()
+        try:
+            db.commit()
+        except StaleDataError:
+            # Concurrent writers (test teardown / parallel --reload) may delete User
+            # rows that were pending update. Retry once on a clean session.
+            db.rollback()
+            db.close()
+            db = SessionLocal()
+            ensure_auth_bootstrap(db)
+            touch_session(db, username="admin", display="Administrator")
+            backfill_letter_assignments_from_markings(db)
+            db.commit()
         run_reminder_cycle()
     finally:
         db.close()

@@ -304,6 +304,8 @@ export function MarkingWorkflowPanel({
   const [remarks, setRemarks] = useState('')
   const [pathwayNotify, setPathwayNotify] = useState(false)
   const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
+  /** Which recipient row the single User/Action card is editing. */
+  const [activeRecipientIndex, setActiveRecipientIndex] = useState(0)
   const [noteBody, setNoteBody] = useState('')
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([])
   const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
@@ -322,7 +324,39 @@ export function MarkingWorkflowPanel({
     setPendingFiles([])
     setForceClose(false)
     setRecipients([emptyRecipient()])
+    setActiveRecipientIndex(0)
     setPathwayNotify(false)
+  }
+
+  const activeRecipient = recipients[activeRecipientIndex] ?? recipients[0] ?? emptyRecipient()
+
+  const updateActiveRecipient = (patch: Partial<MarkRecipientInput>) => {
+    setRecipients((prev) => {
+      const idx = Math.min(activeRecipientIndex, Math.max(0, prev.length - 1))
+      return prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    })
+  }
+
+  const addRecipientSlot = () => {
+    const current = recipients[activeRecipientIndex]
+    if (current && !current.toUser.trim()) return
+    setRecipients((prev) => [...prev, emptyRecipient()])
+    setActiveRecipientIndex(recipients.length)
+  }
+
+  const removeRecipientAt = (idx: number) => {
+    if (recipients.length <= 1) {
+      setRecipients([emptyRecipient()])
+      setActiveRecipientIndex(0)
+      return
+    }
+    const next = recipients.filter((_, i) => i !== idx)
+    setRecipients(next)
+    setActiveRecipientIndex((cur) => {
+      if (cur === idx) return Math.min(idx, next.length - 1)
+      if (cur > idx) return cur - 1
+      return Math.min(cur, next.length - 1)
+    })
   }
 
   const canAddAttachment = actions.includes('add_note')
@@ -636,7 +670,14 @@ export function MarkingWorkflowPanel({
       {!loading && (
         <div className="mb-4 flex flex-wrap gap-2">
           {actions.includes('mark') && (
-            <Button size="sm" onClick={() => setDialog('mark')}>
+            <Button
+              size="sm"
+              onClick={() => {
+                setRecipients([emptyRecipient()])
+                setActiveRecipientIndex(0)
+                setDialog('mark')
+              }}
+            >
               <Send className="mr-1 h-3.5 w-3.5" /> Mark
             </Button>
           )}
@@ -1130,83 +1171,107 @@ export function MarkingWorkflowPanel({
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center">
           <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
             <h2 className="text-sm font-bold text-slate-800">Mark correspondence</h2>
-            <p className="mt-1 text-xs text-slate-500">Assign each recipient an action. Track is on by default.</p>
-            <div className="mt-3 space-y-3">
-              {recipients.map((row, idx) => (
-                <div key={idx} className="rounded-lg border border-slate-200 p-3">
-                  <label className="block text-xs font-medium text-slate-600">User</label>
+            <p className="mt-1 text-xs text-slate-500">
+              Assign each recipient an action. Added recipients appear as badges above — edit one at a time.
+            </p>
+
+            {recipients.some((r) => r.toUser.trim()) && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {recipients.map((row, idx) => {
+                  if (!row.toUser.trim()) return null
+                  const isActive = idx === activeRecipientIndex
+                  return (
+                    <span
+                      key={`recipient-badge-${idx}-${row.toUser}`}
+                      className={cn(
+                        'inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold',
+                        isActive
+                          ? 'border-[#1769aa]/40 bg-sky-50 text-slate-800'
+                          : 'border-slate-200 bg-slate-100 text-slate-700',
+                      )}
+                    >
+                      <span className="truncate">{row.toUser}</span>
+                      <span
+                        className={cn(
+                          'inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                          row.action === 'response_required'
+                            ? 'bg-amber-100 text-amber-800'
+                            : row.action === 'for_info'
+                              ? 'bg-slate-200 text-slate-600'
+                              : 'bg-emerald-100 text-emerald-800',
+                        )}
+                      >
+                        {ACTION_LABELS[row.action] ?? markingActionLabel(row.action)}
+                      </span>
+                      <button
+                        type="button"
+                        className="inline-flex shrink-0 rounded p-0.5 text-slate-500 hover:bg-white/80 hover:text-[#1769aa]"
+                        aria-label={`Edit ${row.toUser}`}
+                        onClick={() => setActiveRecipientIndex(idx)}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/80 hover:text-rose-600"
+                        aria-label={`Remove ${row.toUser}`}
+                        onClick={() => removeRecipientAt(idx)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="mt-3 rounded-lg border border-slate-200 p-3">
+              <label className="block text-xs font-medium text-slate-600">User</label>
+              <AppSelect
+                value={activeRecipient.toUser}
+                onValueChange={(v) => updateActiveRecipient({ toUser: v })}
+                options={[
+                  { value: '', label: 'Select user…' },
+                  ...users.map((u) => ({ value: u.name, label: u.name })),
+                ]}
+                className="mt-1 w-full text-sm"
+              />
+              <label className="mt-2 block text-xs font-medium text-slate-600">Action</label>
+              <AppSelect
+                value={activeRecipient.action}
+                onValueChange={(v) => updateActiveRecipient({ action: v as MarkingAction })}
+                options={MARKING_ACTIONS.map((a) => ({ value: a, label: ACTION_LABELS[a] }))}
+                className="mt-1 w-full text-sm"
+              />
+              {activeRecipient.action === 'response_required' && (
+                <>
+                  <label className="mt-2 block text-xs font-medium text-slate-600">Response type</label>
                   <AppSelect
-                    value={row.toUser}
-                    onValueChange={(v) => {
-                      const next = [...recipients]
-                      next[idx] = { ...row, toUser: v }
-                      setRecipients(next)
-                    }}
-                    options={[
-                      { value: '', label: 'Select user…' },
-                      ...users.map((u) => ({ value: u.name, label: u.name })),
-                    ]}
+                    value={activeRecipient.responseType || 'draft_letter'}
+                    onValueChange={(v) => updateActiveRecipient({ responseType: v as ResponseType })}
+                    options={RESPONSE_TYPES.map((t) => ({ value: t, label: RESPONSE_TYPE_LABELS[t] }))}
                     className="mt-1 w-full text-sm"
                   />
-                  <label className="mt-2 block text-xs font-medium text-slate-600">Action</label>
-                  <AppSelect
-                    value={row.action}
-                    onValueChange={(v) => {
-                      const next = [...recipients]
-                      next[idx] = { ...row, action: v as MarkingAction }
-                      setRecipients(next)
-                    }}
-                    options={MARKING_ACTIONS.map((a) => ({ value: a, label: ACTION_LABELS[a] }))}
-                    className="mt-1 w-full text-sm"
+                  <label className="mt-2 block text-xs font-medium text-slate-600">Due date</label>
+                  <input
+                    type="date"
+                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
+                    value={activeRecipient.dueAt || ''}
+                    onChange={(e) => updateActiveRecipient({ dueAt: e.target.value })}
                   />
-                  {row.action === 'response_required' && (
-                    <>
-                      <label className="mt-2 block text-xs font-medium text-slate-600">Response type</label>
-                      <AppSelect
-                        value={row.responseType || 'draft_letter'}
-                        onValueChange={(v) => {
-                          const next = [...recipients]
-                          next[idx] = { ...row, responseType: v as ResponseType }
-                          setRecipients(next)
-                        }}
-                        options={RESPONSE_TYPES.map((t) => ({ value: t, label: RESPONSE_TYPE_LABELS[t] }))}
-                        className="mt-1 w-full text-sm"
-                      />
-                      <label className="mt-2 block text-xs font-medium text-slate-600">Due date</label>
-                      <input
-                        type="date"
-                        className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                        value={row.dueAt || ''}
-                        onChange={(e) => {
-                          const next = [...recipients]
-                          next[idx] = { ...row, dueAt: e.target.value }
-                          setRecipients(next)
-                        }}
-                      />
-                    </>
-                  )}
-                  <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={row.track !== false}
-                      onChange={(e) => {
-                        const next = [...recipients]
-                        next[idx] = { ...row, track: e.target.checked }
-                        setRecipients(next)
-                      }}
-                    />
-                    Track this marking
-                  </label>
-                </div>
-              ))}
+                </>
+              )}
+              <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={activeRecipient.track !== false}
+                  onChange={(e) => updateActiveRecipient({ track: e.target.checked })}
+                />
+                Track this marking
+              </label>
             </div>
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              className="mt-2"
-              onClick={() => setRecipients([...recipients, emptyRecipient()])}
-            >
+
+            <Button type="button" size="xs" variant="outline" className="mt-2" onClick={addRecipientSlot}>
               + Add recipient
             </Button>
             <label className="mt-3 block text-xs font-medium text-slate-600">Remarks</label>

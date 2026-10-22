@@ -100,24 +100,15 @@ def list_letters(
     ]
 
     if view == "inbox":
-        from app.marking_workflow_service import letter_ids_marked_to_user
+        from app.marking_workflow_service import letter_ids_held_by_user
 
-        marked_to = {str(i) for i in letter_ids_marked_to_user(db, actor)}
-        items = [
-            item
-            for item in items
-            if item.id in marked_to
-            or (item.assignedTo == actor and (item.assignedBy or "") != actor)
-        ]
+        held = {str(i) for i in letter_ids_held_by_user(db, actor)}
+        items = [item for item in items if item.id in held]
     elif view == "sent":
         from app.marking_workflow_service import letter_ids_marked_by_user
 
         marked_by = {str(i) for i in letter_ids_marked_by_user(db, actor)}
-        items = [
-            item
-            for item in items
-            if item.id in marked_by or item.createdBy == actor or item.assignedBy == actor
-        ]
+        items = [item for item in items if item.id in marked_by]
     elif view == "incoming":
         items = [item for item in items if item.type == "Incoming"]
     elif view == "outgoing":

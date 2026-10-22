@@ -797,6 +797,7 @@ def migrate_enterprise_roles(db) -> None:
             # Canonical role already exists — drop the legacy duplicate row.
             db.delete(old_role)
     db.flush()
+    db.expire_all()
 
 
 def backfill_enterprise_route_actions(db) -> None:
