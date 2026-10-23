@@ -105,9 +105,9 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
   const description = isCatalog
     ? 'Search the full correspondence register. Letters not marked to you are locked.'
     : page === 'Inbox'
-      ? 'Letters currently marked to you, or returned to you after a revoke.'
+      ? 'Letters currently marked to you, or returned after a Response Required is fulfilled.'
       : page === 'Sent'
-        ? 'Letters you have marked to others (revoked-only marks are excluded).'
+        ? 'One row per outstanding Forward or Response Required you sent. For Information items appear under Track only.'
         : page === 'My Actions'
           ? 'Open action items and FYI routes addressed to you.'
         : 'Search, filter and manage correspondence assigned or created by you.'
@@ -280,6 +280,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
         departments={departments}
         onChanged={reload}
         onDelete={(letter) => setPendingDelete([letter])}
+        showSender={isInboxPage}
       />
       {pendingDelete && pendingDelete.length > 0 && (
         <LetterDeleteDialog

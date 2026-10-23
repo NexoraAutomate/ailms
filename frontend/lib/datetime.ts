@@ -11,6 +11,16 @@ export function formatHeaderDate(date = new Date()): string {
   }).format(date)
 }
 
+export function formatDate(value: string | Date): string {
+  const date = typeof value === 'string' ? new Date(value) : value
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: DISPLAY_TZ,
+  }).format(date)
+}
+
 export function formatDateTime(value: string | Date): string {
   const date = typeof value === 'string' ? new Date(value) : value
   return new Intl.DateTimeFormat('en-GB', {

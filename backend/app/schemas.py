@@ -43,6 +43,14 @@ class LetterOut(BaseModel):
     classifiedAt: str = ""
     # True when the current viewer may edit registration details (initiator, not yet marked onward).
     canEditDetails: bool = False
+    # Sent view: one list row per outstanding Response Required marking.
+    sentMarkingId: int | None = None
+    sentToUser: str = ""
+    sentPathId: str = ""
+    sentDueAt: str = ""
+    sentAction: str = ""
+    # Inbox view: user who marked this letter into the viewer's hold.
+    markedBy: str = ""
 
 
 class LetterCreate(BaseModel):

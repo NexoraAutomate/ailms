@@ -14,26 +14,42 @@ from app.database import get_db
 from app.letter_access import assert_letter_access
 from app.marking_workflow_service import (
     add_attachments_to_marking,
+    add_draft_attachments,
+    add_draft_note,
     add_note,
     batch_tracker,
     close_letter,
     create_mark_batch,
     delete_attachment,
+    delete_draft_attachment,
+    delete_draft_note,
     delete_note,
+    update_draft_note,
     list_attachments,
+    list_drafts,
     list_notes,
     list_tracked,
     marking_actions_payload,
     marking_tree,
+    markings_for_path,
     revoke_marking,
     serialize_attachment,
     serialize_batch,
+    serialize_draft_attachment,
+    serialize_draft_note,
     serialize_marking,
     sync_attachment_after_replace,
     update_attachment_meta,
     update_note,
 )
-from app.models import CorrespondenceAttachment, CorrespondenceNote, Letter, Marking
+from app.models import (
+    CorrespondenceAttachment,
+    CorrespondenceDraftAttachment,
+    CorrespondenceDraftNote,
+    CorrespondenceNote,
+    Letter,
+    Marking,
+)
 from app.services import current_user_name, serialize_letter
 
 router = APIRouter(prefix="/markings", tags=["markings"])
@@ -51,6 +67,17 @@ def _get_letter(db: Session, letter_id: int) -> Letter:
     return letter
 
 
+class StagedNoteIn(BaseModel):
+    bodyText: str
+
+
+class StagedAttachmentIn(BaseModel):
+    attachmentKind: str = "Other"
+    documentId: int | None = None
+    storageKey: str = ""
+    originalFilename: str = ""
+
+
 class MarkRecipientIn(BaseModel):
     toUser: str
     action: str = "forward"
@@ -61,6 +88,9 @@ class MarkRecipientIn(BaseModel):
     priority: str | None = None
     track: bool = True
     remindersEnabled: bool | None = None
+    # Drafted per-recipient content published when Forward/Reply is submitted.
+    notes: list[StagedNoteIn] = Field(default_factory=list)
+    attachments: list[StagedAttachmentIn] = Field(default_factory=list)
 
 
 class MarkBatchIn(BaseModel):
@@ -68,6 +98,13 @@ class MarkBatchIn(BaseModel):
     remarks: str = ""
     pathwayNotify: bool = False
     parentMarkingId: int | None = None
+    # forward = onward (any recipients); reply = back to immediate previous marker only
+    direction: str = "forward"
+    # Shared drafts copied onto every recipient marking in this batch.
+    commonNotes: list[StagedNoteIn] = Field(default_factory=list)
+    commonAttachments: list[StagedAttachmentIn] = Field(default_factory=list)
+    # When true, publish Add Comment / Add Attachment drafts for each recipient.
+    consumeDrafts: bool = True
 
 
 class RevokeIn(BaseModel):
@@ -78,6 +115,20 @@ class NoteIn(BaseModel):
     bodyText: str
     markingId: int | None = None
     isResponse: bool = False
+
+
+class DraftNoteIn(BaseModel):
+    bodyText: str
+    # Empty = common draft for all recipients on Forward.
+    targetUser: str = ""
+    # forward | reply
+    intent: str = "forward"
+
+
+class DraftAttachmentsIn(BaseModel):
+    targetUser: str = ""
+    intent: str = "forward"
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RespondIn(BaseModel):
@@ -120,8 +171,9 @@ def get_actions(letter_id: int, db: Session = Depends(get_db)) -> dict:
 def get_tree(letter_id: int, db: Session = Depends(get_db)) -> list[dict]:
     _require_enabled()
     letter = _get_letter(db, letter_id)
-    assert_letter_access(db, letter, current_user_name(db))
-    return marking_tree(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    return marking_tree(db, letter_id, actor_name=actor)
 
 
 @router.post("/letters/{letter_id}/mark")
@@ -144,6 +196,10 @@ def mark_letter(
         pathway_notify=payload.pathwayNotify,
         parent_marking_id=payload.parentMarkingId,
         client_ip=client_ip_from_request(request),
+        direction=payload.direction,
+        common_notes=[n.model_dump() for n in payload.commonNotes],
+        common_attachments=[a.model_dump() for a in payload.commonAttachments],
+        consume_drafts=payload.consumeDrafts,
     )
     db.commit()
     db.refresh(batch)
@@ -152,6 +208,23 @@ def mark_letter(
         "batch": serialize_batch(batch),
         "markings": [serialize_marking(m) for m in markings],
         "letter": serialize_letter(letter, db=db, viewer=actor),
+    }
+
+
+@router.get("/paths/{path_id}")
+def get_path(path_id: str, db: Session = Depends(get_db)) -> dict:
+    """Return all markings on a workflow path (branch), ordered by creation."""
+    _require_enabled()
+    rows = markings_for_path(db, path_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Path not found")
+    letter = _get_letter(db, rows[0].letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    return {
+        "pathId": path_id,
+        "letterId": str(letter.id),
+        "markings": [serialize_marking(m) for m in rows],
     }
 
 
@@ -179,6 +252,112 @@ def revoke(
     db.commit()
     db.refresh(marking)
     return {"marking": serialize_marking(marking), "letter": serialize_letter(letter, db=db, viewer=actor)}
+
+
+@router.get("/letters/{letter_id}/drafts")
+def get_drafts(letter_id: int, db: Session = Depends(get_db)) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    return list_drafts(db, letter_id, actor)
+
+
+@router.post("/letters/{letter_id}/drafts/notes")
+def post_draft_note(
+    letter_id: int,
+    payload: DraftNoteIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    row = add_draft_note(
+        db,
+        letter=letter,
+        actor_name=actor,
+        body_text=payload.bodyText,
+        target_user=payload.targetUser,
+        intent=payload.intent,
+        client_ip=client_ip_from_request(request),
+    )
+    db.commit()
+    db.refresh(row)
+    return {"note": serialize_draft_note(row), "drafts": list_drafts(db, letter_id, actor)}
+
+
+@router.post("/letters/{letter_id}/drafts/attachments")
+def post_draft_attachments(
+    letter_id: int,
+    payload: DraftAttachmentsIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    created = add_draft_attachments(
+        db,
+        letter=letter,
+        actor_name=actor,
+        target_user=payload.targetUser,
+        intent=payload.intent,
+        attachments=payload.attachments,
+        client_ip=client_ip_from_request(request),
+    )
+    db.commit()
+    for row in created:
+        db.refresh(row)
+    return {
+        "attachments": [serialize_draft_attachment(r) for r in created],
+        "drafts": list_drafts(db, letter_id, actor),
+    }
+
+
+@router.patch("/drafts/notes/{note_id}")
+def patch_draft_note(note_id: int, payload: NoteUpdateIn, db: Session = Depends(get_db)) -> dict:
+    _require_enabled()
+    row = db.get(CorrespondenceDraftNote, note_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Draft note not found")
+    letter = _get_letter(db, row.letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    updated = update_draft_note(db, note=row, actor_name=actor, body_text=payload.bodyText)
+    db.commit()
+    db.refresh(updated)
+    return {"note": serialize_draft_note(updated), "drafts": list_drafts(db, letter.id, actor)}
+
+
+@router.delete("/drafts/notes/{note_id}")
+def remove_draft_note(note_id: int, db: Session = Depends(get_db)) -> dict:
+    _require_enabled()
+    row = db.get(CorrespondenceDraftNote, note_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Draft note not found")
+    letter = _get_letter(db, row.letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    delete_draft_note(db, note=row, actor_name=actor)
+    db.commit()
+    return {"ok": True, "drafts": list_drafts(db, letter.id, actor)}
+
+
+@router.delete("/drafts/attachments/{attachment_id}")
+def remove_draft_attachment(attachment_id: int, db: Session = Depends(get_db)) -> dict:
+    _require_enabled()
+    row = db.get(CorrespondenceDraftAttachment, attachment_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Draft attachment not found")
+    letter = _get_letter(db, row.letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    delete_draft_attachment(db, attachment=row, actor_name=actor)
+    db.commit()
+    return {"ok": True, "drafts": list_drafts(db, letter.id, actor)}
 
 
 @router.get("/letters/{letter_id}/notes")

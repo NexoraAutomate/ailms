@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime
 from typing import Any
 
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     CorrespondenceAttachment,
+    CorrespondenceDraftAttachment,
+    CorrespondenceDraftNote,
     CorrespondenceNote,
     DocumentVersion,
     Letter,
@@ -22,6 +25,7 @@ from app.services import add_audit, add_notification, normalize_role, resolve_us
 from app.storage_service import can_preview
 
 MARKING_ACTIONS = frozenset({"forward", "for_info", "response_required"})
+MARKING_DIRECTIONS = frozenset({"forward", "reply"})
 RESPONSE_TYPES = frozenset(
     {"draft_letter", "presentation", "nominations", "comments", "other"}
 )
@@ -36,6 +40,32 @@ ACTION_LABELS = {
 OPEN_LETTER = "Open"
 CLOSED_LETTER = "Closed"
 ARCHIVED_LETTER = "Archived"
+
+
+def new_path_id() -> str:
+    return str(uuid.uuid4())
+
+
+def assign_path_id(
+    *,
+    parent: Marking | None,
+    fan_out: bool,
+    direction: str,
+) -> str:
+    """
+    Branch rules:
+    - Fan-out (2+ recipients): each marking gets a new path_id.
+    - Single-recipient forward/reply with a parent path: inherit that path_id.
+    - Root / missing parent path: new path_id.
+    """
+    parent_path = (parent.path_id or "").strip() if parent else ""
+    if direction == "reply":
+        return parent_path or new_path_id()
+    if fan_out:
+        return new_path_id()
+    if parent_path:
+        return parent_path
+    return new_path_id()
 
 
 def _user_by_name(db: Session, name: str) -> User | None:
@@ -82,20 +112,20 @@ def _pick_primary_marking(markings: list[Marking]) -> Marking | None:
     return max(markings, key=lambda m: m.id or 0)
 
 
-def format_assigned_to_holders(markings: list[Marking]) -> str:
+def format_assigned_to_holders(names: list[str]) -> str:
     """Full comma-separated current holders (UI truncates preview + … popup)."""
-    names: list[str] = []
+    out: list[str] = []
     seen: set[str] = set()
-    for row in markings:
-        name = (row.to_user or "").strip()
+    for raw in names:
+        name = (raw or "").strip()
         if not name or name in seen:
             continue
         seen.add(name)
-        names.append(name)
-    if not names:
+        out.append(name)
+    if not out:
         return ""
     # cms_letters.assigned_to widened to VARCHAR(500)
-    return ", ".join(names)[:500]
+    return ", ".join(out)[:500]
 
 
 def active_leaf_markings(db: Session, letter_id: int) -> list[Marking]:
@@ -109,6 +139,38 @@ def active_leaf_markings(db: Session, letter_id: int) -> list[Marking]:
     return [m for m in actives if not marking_has_children(db, m.id)]
 
 
+def response_returned_markings(
+    db: Session,
+    letter_id: int,
+    user_name: str | None = None,
+) -> list[Marking]:
+    """
+    Response Required markings that were fulfilled and not yet remade onward.
+
+    The original marker regains a hold on this path so the letter returns to
+    their Inbox after the response is received.
+    """
+    q = db.query(Marking).filter(
+        Marking.letter_id == letter_id,
+        Marking.action == "response_required",
+        Marking.status == "responded",
+    )
+    if user_name:
+        q = q.filter(Marking.from_user == (user_name or "").strip())
+    rows = q.order_by(Marking.id.asc()).all()
+    return [m for m in rows if not marking_has_children(db, m.id)]
+
+
+def current_holder_names(db: Session, letter_id: int) -> list[str]:
+    """Display names of users who currently hold the letter."""
+    names: list[str] = []
+    for leaf in active_leaf_markings(db, letter_id):
+        names.append(leaf.to_user)
+    for returned in response_returned_markings(db, letter_id):
+        names.append(returned.from_user)
+    return names
+
+
 def sync_letter_from_markings(
     db: Session,
     letter: Letter,
@@ -117,10 +179,19 @@ def sync_letter_from_markings(
 ) -> None:
     """Keep legacy Assigned To / Last Action in sync with the marking tree."""
     leaves = active_leaf_markings(db, letter.id)
-    primary = _pick_primary_marking(leaves)
-    if primary:
-        letter.assigned_to = format_assigned_to_holders(leaves)
-        letter.assigned_by = primary.from_user
+    returned = response_returned_markings(db, letter.id)
+    holders = current_holder_names(db, letter.id)
+    primary = _pick_primary_marking(leaves) or (returned[-1] if returned else None)
+    if holders:
+        letter.assigned_to = format_assigned_to_holders(holders)
+        if primary:
+            # For returned RR, assigned_by is the person who responded (to_user).
+            if primary.status == "responded":
+                letter.assigned_by = primary.to_user
+            else:
+                letter.assigned_by = primary.from_user
+        else:
+            letter.assigned_by = holders[0]
     else:
         holder = initiator_name(letter)
         letter.assigned_to = holder
@@ -304,17 +375,47 @@ def leaf_inbound_markings(db: Session, letter_id: int, user_name: str) -> list[M
     return [m for m in inbound if not marking_has_children(db, m.id)]
 
 
+def marked_by_for_holder(db: Session, letter_id: int, user_name: str) -> str:
+    """
+    Display name of the user who put this letter into the holder's Inbox.
+
+    - Inbound leaf hold → marking.from_user
+    - Returned Response Required → marking.to_user (who responded)
+    - Initiator self-hold (nothing marked out) → empty
+    """
+    leaves = leaf_inbound_markings(db, letter_id, user_name)
+    if leaves:
+        names: list[str] = []
+        for marking in leaves:
+            name = (marking.from_user or "").strip()
+            if name and name not in names:
+                names.append(name)
+        return ", ".join(names)
+    returned = response_returned_markings(db, letter_id, user_name)
+    if returned:
+        names = []
+        for marking in returned:
+            name = (marking.to_user or "").strip()
+            if name and name not in names:
+                names.append(name)
+        return ", ".join(names)
+    return ""
+
+
 def user_holds_letter(db: Session, letter: Letter, actor_name: str) -> bool:
     """
     Holder may mark / note / close.
-    After marking onward, the marker is no longer a holder (revoke-only until remade).
+    After marking onward, the marker is no longer a holder (revoke-only until remade
+    or a Response Required they sent is fulfilled — then the letter returns to Inbox).
     """
     name = (actor_name or "").strip()
     if not name:
         return False
     if is_initiator(letter, name) and not has_active_markings(db, letter.id):
         return True
-    return len(leaf_inbound_markings(db, letter.id, name)) > 0
+    if leaf_inbound_markings(db, letter.id, name):
+        return True
+    return bool(response_returned_markings(db, letter.id, name))
 
 
 def assert_can_mutate(db: Session, letter: Letter, actor_name: str) -> None:
@@ -338,6 +439,8 @@ def serialize_marking(row: Marking, children: list[dict] | None = None) -> dict:
         "batchId": row.batch_id,
         "letterId": str(row.letter_id),
         "parentMarkingId": row.parent_marking_id,
+        "pathId": row.path_id or "",
+        "direction": row.direction or "forward",
         "fromUser": row.from_user,
         "toUser": row.to_user,
         "action": row.action,
@@ -371,21 +474,391 @@ def serialize_batch(row: MarkingBatch) -> dict:
     }
 
 
-def marking_tree(db: Session, letter_id: int) -> list[dict]:
+def path_ids_visible_to_user(db: Session, letter_id: int, actor_name: str) -> set[str] | None:
+    """
+    Path ids the actor may see on this letter.
+
+    Returns None for Admin (unrestricted). A user sees a path if they appear as
+    from_user or to_user on any marking with that path_id.
+    """
+    name = (actor_name or "").strip()
+    if not name:
+        return set()
+    if _is_admin(db, name):
+        return None
+    rows = (
+        db.query(Marking.path_id)
+        .filter(
+            Marking.letter_id == letter_id,
+            (Marking.from_user == name) | (Marking.to_user == name),
+        )
+        .distinct()
+        .all()
+    )
+    return {(row[0] or "").strip() for row in rows if (row[0] or "").strip()}
+
+
+def marking_visible_on_paths(marking: Marking | None, visible_paths: set[str] | None) -> bool:
+    """True if the marking's path is allowed (None visible_paths = all)."""
+    if visible_paths is None:
+        return True
+    if marking is None:
+        return False
+    pid = (marking.path_id or "").strip()
+    if not pid:
+        # Legacy / missing path: only visible to direct participants.
+        return False
+    return pid in visible_paths
+
+
+def marking_tree(
+    db: Session,
+    letter_id: int,
+    *,
+    actor_name: str | None = None,
+) -> list[dict]:
     rows = (
         db.query(Marking)
         .filter(Marking.letter_id == letter_id)
         .order_by(Marking.id.asc())
         .all()
     )
+    if actor_name:
+        visible_paths = path_ids_visible_to_user(db, letter_id, actor_name)
+        if visible_paths is not None:
+            rows = [r for r in rows if marking_visible_on_paths(r, visible_paths)]
+
+    visible_ids = {r.id for r in rows}
     by_parent: dict[int | None, list[Marking]] = {}
     for row in rows:
-        by_parent.setdefault(row.parent_marking_id, []).append(row)
+        parent_id = row.parent_marking_id
+        # If the parent edge is on another path (filtered out), show this node as a root.
+        if parent_id is not None and parent_id not in visible_ids:
+            parent_id = None
+        by_parent.setdefault(parent_id, []).append(row)
 
     def build(parent_id: int | None) -> list[dict]:
         return [serialize_marking(m, build(m.id)) for m in by_parent.get(parent_id, [])]
 
     return build(None)
+
+
+def _normalize_staged_notes(raw_notes: Any) -> list[str]:
+    bodies: list[str] = []
+    if not raw_notes:
+        return bodies
+    for entry in raw_notes:
+        if isinstance(entry, str):
+            body = entry.strip()
+        elif isinstance(entry, dict):
+            body = str(entry.get("bodyText") or entry.get("body_text") or "").strip()
+        else:
+            body = ""
+        if body:
+            bodies.append(body)
+    return bodies
+
+
+def _normalize_staged_attachments(raw_atts: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not raw_atts:
+        return out
+    for att in raw_atts:
+        if not isinstance(att, dict):
+            continue
+        kind = str(att.get("attachmentKind") or att.get("attachment_kind") or "Other")
+        if kind not in ATTACHMENT_KINDS:
+            raise HTTPException(status_code=400, detail=f"Invalid attachmentKind '{kind}'")
+        out.append(
+            {
+                "attachment_kind": kind,
+                "document_id": att.get("documentId") or att.get("document_id"),
+                "storage_key": str(att.get("storageKey") or att.get("storage_key") or ""),
+                "original_filename": str(
+                    att.get("originalFilename") or att.get("original_filename") or ""
+                ),
+            }
+        )
+    return out
+
+
+def _publish_staged_on_marking(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    marking: Marking,
+    notes: list[str],
+    attachments: list[dict[str, Any]],
+    client_ip: str = "",
+) -> None:
+    """Attach drafted comments/files to a newly created outbound marking."""
+    for body in notes:
+        db.add(
+            CorrespondenceNote(
+                letter_id=letter.id,
+                marking_id=marking.id,
+                author_user=actor_name,
+                body_text=body,
+                is_response=False,
+                client_ip=client_ip or "",
+            )
+        )
+    for att in attachments:
+        db.add(
+            CorrespondenceAttachment(
+                letter_id=letter.id,
+                marking_id=marking.id,
+                note_id=None,
+                created_by=actor_name,
+                document_id=att.get("document_id"),
+                attachment_kind=att["attachment_kind"],
+                storage_key=att.get("storage_key") or "",
+                original_filename=att.get("original_filename") or "",
+                client_ip=client_ip or "",
+            )
+        )
+
+
+_DRAFT_INTENTS = frozenset({"forward", "reply"})
+
+
+def _normalize_draft_intent(raw: str | None) -> str:
+    intent = (raw or "forward").strip().lower()
+    if intent not in _DRAFT_INTENTS:
+        raise HTTPException(status_code=400, detail="intent must be 'forward' or 'reply'")
+    return intent
+
+
+def serialize_draft_note(row: CorrespondenceDraftNote) -> dict:
+    return {
+        "id": row.id,
+        "letterId": str(row.letter_id),
+        "authorUser": row.author_user,
+        "targetUser": row.target_user or "",
+        "intent": (row.intent or "forward").strip().lower() or "forward",
+        "bodyText": row.body_text,
+        "clientIp": row.client_ip,
+        "createdAt": row.created_at.isoformat() if row.created_at else "",
+    }
+
+
+def serialize_draft_attachment(row: CorrespondenceDraftAttachment) -> dict:
+    return {
+        "id": row.id,
+        "letterId": str(row.letter_id),
+        "createdBy": row.created_by,
+        "targetUser": row.target_user or "",
+        "intent": (row.intent or "forward").strip().lower() or "forward",
+        "documentId": row.document_id,
+        "attachmentKind": row.attachment_kind,
+        "storageKey": row.storage_key,
+        "originalFilename": row.original_filename,
+        "clientIp": row.client_ip,
+        "createdAt": row.created_at.isoformat() if row.created_at else "",
+    }
+
+
+def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
+    """Draft comments/attachments authored by the actor, grouped for Forward/Reply confirm."""
+    name = (actor_name or "").strip()
+    notes = (
+        db.query(CorrespondenceDraftNote)
+        .filter(
+            CorrespondenceDraftNote.letter_id == letter_id,
+            CorrespondenceDraftNote.author_user == name,
+        )
+        .order_by(CorrespondenceDraftNote.id.asc())
+        .all()
+    )
+    atts = (
+        db.query(CorrespondenceDraftAttachment)
+        .filter(
+            CorrespondenceDraftAttachment.letter_id == letter_id,
+            CorrespondenceDraftAttachment.created_by == name,
+        )
+        .order_by(CorrespondenceDraftAttachment.id.asc())
+        .all()
+    )
+    forward_targets: set[str] = set()
+    reply_targets: set[str] = set()
+    for n in notes:
+        t = (n.target_user or "").strip()
+        intent = (n.intent or "forward").strip().lower() or "forward"
+        if t and intent == "reply":
+            reply_targets.add(t)
+        elif t:
+            forward_targets.add(t)
+    for a in atts:
+        t = (a.target_user or "").strip()
+        intent = (a.intent or "forward").strip().lower() or "forward"
+        if t and intent == "reply":
+            reply_targets.add(t)
+        elif t:
+            forward_targets.add(t)
+    has_reply = any(
+        ((n.intent or "forward").strip().lower() or "forward") == "reply" for n in notes
+    ) or any(
+        ((a.intent or "forward").strip().lower() or "forward") == "reply" for a in atts
+    )
+    has_forward = any(
+        ((n.intent or "forward").strip().lower() or "forward") == "forward" for n in notes
+    ) or any(
+        ((a.intent or "forward").strip().lower() or "forward") == "forward" for a in atts
+    )
+    targets = forward_targets | reply_targets
+    return {
+        "notes": [serialize_draft_note(n) for n in notes],
+        "attachments": [serialize_draft_attachment(a) for a in atts],
+        "targetUsers": sorted(targets),
+        "forwardTargetUsers": sorted(forward_targets),
+        "replyTargetUsers": sorted(reply_targets),
+        "hasForwardDrafts": has_forward,
+        "hasReplyDrafts": has_reply,
+        "commonNoteCount": sum(
+            1
+            for n in notes
+            if not (n.target_user or "").strip()
+            and ((n.intent or "forward").strip().lower() or "forward") == "forward"
+        ),
+        "commonAttachmentCount": sum(
+            1
+            for a in atts
+            if not (a.target_user or "").strip()
+            and ((a.intent or "forward").strip().lower() or "forward") == "forward"
+        ),
+    }
+
+
+def add_draft_note(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    body_text: str,
+    target_user: str,
+    intent: str = "forward",
+    client_ip: str = "",
+) -> CorrespondenceDraftNote:
+    assert_can_mutate(db, letter, actor_name)
+    body = (body_text or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="bodyText is required")
+    draft_intent = _normalize_draft_intent(intent)
+    target = (target_user or "").strip()
+    if draft_intent == "reply" and not target:
+        raise HTTPException(status_code=400, detail="Reply drafts require a targetUser")
+    if target and not _user_by_name(db, target):
+        raise HTTPException(status_code=400, detail=f"Unknown user '{target}'")
+    if target == actor_name:
+        raise HTTPException(status_code=400, detail="Cannot draft for yourself")
+    # Reply and forward drafts cannot be mixed for the same letter/author.
+    existing = list_drafts(db, letter.id, actor_name)
+    if draft_intent == "reply" and existing["hasForwardDrafts"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Delete forwarding drafts before adding a reply draft",
+        )
+    if draft_intent == "forward" and existing["hasReplyDrafts"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Delete reply drafts before adding a forwarding draft",
+        )
+    row = CorrespondenceDraftNote(
+        letter_id=letter.id,
+        author_user=actor_name,
+        target_user=target,
+        intent=draft_intent,
+        body_text=body,
+        client_ip=client_ip or "",
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def add_draft_attachments(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    target_user: str,
+    attachments: list[dict],
+    intent: str = "forward",
+    client_ip: str = "",
+) -> list[CorrespondenceDraftAttachment]:
+    assert_can_mutate(db, letter, actor_name)
+    draft_intent = _normalize_draft_intent(intent)
+    target = (target_user or "").strip()
+    if draft_intent == "reply" and not target:
+        raise HTTPException(status_code=400, detail="Reply drafts require a targetUser")
+    if target and not _user_by_name(db, target):
+        raise HTTPException(status_code=400, detail=f"Unknown user '{target}'")
+    if target == actor_name:
+        raise HTTPException(status_code=400, detail="Cannot draft for yourself")
+    if not attachments:
+        raise HTTPException(status_code=400, detail="At least one attachment is required")
+    existing = list_drafts(db, letter.id, actor_name)
+    if draft_intent == "reply" and existing["hasForwardDrafts"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Delete forwarding drafts before adding a reply draft",
+        )
+    if draft_intent == "forward" and existing["hasReplyDrafts"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Delete reply drafts before adding a forwarding draft",
+        )
+    created: list[CorrespondenceDraftAttachment] = []
+    for att in _normalize_staged_attachments(attachments):
+        row = CorrespondenceDraftAttachment(
+            letter_id=letter.id,
+            created_by=actor_name,
+            target_user=target,
+            intent=draft_intent,
+            document_id=att.get("document_id"),
+            attachment_kind=att["attachment_kind"],
+            storage_key=att.get("storage_key") or "",
+            original_filename=att.get("original_filename") or "",
+            client_ip=client_ip or "",
+        )
+        db.add(row)
+        created.append(row)
+    db.flush()
+    return created
+
+
+def update_draft_note(
+    db: Session,
+    *,
+    note: CorrespondenceDraftNote,
+    actor_name: str,
+    body_text: str,
+) -> CorrespondenceDraftNote:
+    if note.author_user != actor_name and not _is_admin(db, actor_name):
+        raise HTTPException(status_code=403, detail="Only the author can edit this draft")
+    body = (body_text or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="bodyText is required")
+    note.body_text = body
+    db.flush()
+    return note
+
+
+def delete_draft_note(db: Session, *, note: CorrespondenceDraftNote, actor_name: str) -> None:
+    if note.author_user != actor_name and not _is_admin(db, actor_name):
+        raise HTTPException(status_code=403, detail="Only the author can delete this draft")
+    db.delete(note)
+    db.flush()
+
+
+def delete_draft_attachment(
+    db: Session, *, attachment: CorrespondenceDraftAttachment, actor_name: str
+) -> None:
+    if attachment.created_by != actor_name and not _is_admin(db, actor_name):
+        raise HTTPException(status_code=403, detail="Only the author can delete this draft")
+    db.delete(attachment)
+    db.flush()
 
 
 def create_mark_batch(
@@ -398,12 +871,20 @@ def create_mark_batch(
     pathway_notify: bool = False,
     parent_marking_id: int | None = None,
     client_ip: str = "",
+    direction: str = "forward",
+    common_notes: list[Any] | None = None,
+    common_attachments: list[Any] | None = None,
+    consume_drafts: bool = False,
 ) -> MarkingBatch:
     assert_can_mutate(db, letter, actor_name)
     if letter.status not in {CLOSED_LETTER, ARCHIVED_LETTER} and letter.status != OPEN_LETTER:
         # Normalize in-place for new activity
         if letter.status not in {OPEN_LETTER}:
             letter.status = OPEN_LETTER
+
+    direction = (direction or "forward").strip().lower()
+    if direction not in MARKING_DIRECTIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid direction '{direction}'")
 
     if not recipients:
         raise HTTPException(status_code=400, detail="At least one recipient is required")
@@ -413,22 +894,54 @@ def create_mark_batch(
         parent = db.get(Marking, parent_marking_id)
         if not parent or parent.letter_id != letter.id:
             raise HTTPException(status_code=400, detail="Invalid parentMarkingId")
-        if parent.status != "active":
-            raise HTTPException(status_code=400, detail="Parent marking is not active")
-        if parent.to_user != actor_name and not _is_admin(db, actor_name):
-            raise HTTPException(status_code=403, detail="Parent marking is not addressed to you")
         if marking_has_children(db, parent.id):
             raise HTTPException(status_code=400, detail="Parent marking was already remade onward")
+        # Normal hold: active inbound addressed to actor.
+        inbound_ok = parent.status == "active" and (
+            parent.to_user == actor_name or _is_admin(db, actor_name)
+        )
+        # After RR response: marker remakes under their own responded marking.
+        returned_ok = (
+            parent.status == "responded"
+            and parent.action == "response_required"
+            and parent.from_user == actor_name
+        )
+        if not inbound_ok and not returned_ok:
+            if parent.status not in {"active", "responded"}:
+                raise HTTPException(status_code=400, detail="Parent marking is not active")
+            raise HTTPException(status_code=403, detail="Parent marking is not addressed to you")
     else:
-        # Auto-link to the sole leaf inbound so remake blocks prior marker's revoke.
+        # Auto-link to the sole hold (inbound leaf or returned RR).
         leaves = leaf_inbound_markings(db, letter.id, actor_name)
-        if len(leaves) == 1:
-            parent = leaves[0]
-        elif len(leaves) > 1:
+        returned = response_returned_markings(db, letter.id, actor_name)
+        holds = [*leaves, *returned]
+        if len(holds) == 1:
+            parent = holds[0]
+        elif len(holds) > 1:
             raise HTTPException(
                 status_code=400,
                 detail="parentMarkingId is required when you hold multiple active markings",
             )
+
+    if direction == "reply":
+        if not parent:
+            raise HTTPException(
+                status_code=400,
+                detail="Reply requires an inbound marking; initiator root cannot reply",
+            )
+        if len(recipients) != 1:
+            raise HTTPException(status_code=400, detail="Reply allows exactly one recipient")
+        # Inbound hold → previous marker; returned RR → person who submitted the response.
+        if parent.status == "responded" and parent.from_user == actor_name:
+            reply_to = (parent.to_user or "").strip()
+        else:
+            reply_to = (parent.from_user or "").strip()
+        if not reply_to:
+            raise HTTPException(status_code=400, detail="Cannot determine reply recipient")
+        forced = dict(recipients[0])
+        forced["toUser"] = reply_to
+        forced["to_user"] = reply_to
+        recipients = [forced]
 
     seen: set[str] = set()
     normalized: list[dict[str, Any]] = []
@@ -503,8 +1016,105 @@ def create_mark_batch(
                 "priority": str(raw.get("priority") or letter.priority or "Routine"),
                 "track": track,
                 "reminders_enabled": reminders_enabled,
+                "notes": _normalize_staged_notes(raw.get("notes")),
+                "attachments": _normalize_staged_attachments(raw.get("attachments")),
             }
         )
+
+    shared_notes = _normalize_staged_notes(common_notes)
+    shared_attachments = _normalize_staged_attachments(common_attachments)
+
+    draft_note_rows: list[CorrespondenceDraftNote] = []
+    draft_att_rows: list[CorrespondenceDraftAttachment] = []
+    draft_notes_by_target: dict[str, list[str]] = {}
+    draft_atts_by_target: dict[str, list[dict[str, Any]]] = {}
+    draft_common_notes: list[str] = []
+    draft_common_atts: list[dict[str, Any]] = []
+    if consume_drafts:
+        draft_intent = "reply" if direction == "reply" else "forward"
+        all_draft_notes = (
+            db.query(CorrespondenceDraftNote)
+            .filter(
+                CorrespondenceDraftNote.letter_id == letter.id,
+                CorrespondenceDraftNote.author_user == actor_name,
+            )
+            .order_by(CorrespondenceDraftNote.id.asc())
+            .all()
+        )
+        all_draft_atts = (
+            db.query(CorrespondenceDraftAttachment)
+            .filter(
+                CorrespondenceDraftAttachment.letter_id == letter.id,
+                CorrespondenceDraftAttachment.created_by == actor_name,
+            )
+            .order_by(CorrespondenceDraftAttachment.id.asc())
+            .all()
+        )
+        other_intent = "forward" if draft_intent == "reply" else "reply"
+        if any(
+            ((n.intent or "forward").strip().lower() or "forward") == other_intent
+            for n in all_draft_notes
+        ) or any(
+            ((a.intent or "forward").strip().lower() or "forward") == other_intent
+            for a in all_draft_atts
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot {draft_intent} while {other_intent} drafts exist. "
+                    f"Delete all {other_intent} drafts first."
+                ),
+            )
+        draft_note_rows = [
+            n
+            for n in all_draft_notes
+            if ((n.intent or "forward").strip().lower() or "forward") == draft_intent
+        ]
+        draft_att_rows = [
+            a
+            for a in all_draft_atts
+            if ((a.intent or "forward").strip().lower() or "forward") == draft_intent
+        ]
+        for n in draft_note_rows:
+            body = (n.body_text or "").strip()
+            if not body:
+                continue
+            target = (n.target_user or "").strip()
+            if not target:
+                if draft_intent == "forward":
+                    draft_common_notes.append(body)
+            else:
+                draft_notes_by_target.setdefault(target, []).append(body)
+        for a in draft_att_rows:
+            payload = {
+                "attachment_kind": a.attachment_kind,
+                "document_id": a.document_id,
+                "storage_key": a.storage_key or "",
+                "original_filename": a.original_filename or "",
+            }
+            target = (a.target_user or "").strip()
+            if not target:
+                if draft_intent == "forward":
+                    draft_common_atts.append(payload)
+            else:
+                draft_atts_by_target.setdefault(target, []).append(payload)
+
+        for item in normalized:
+            target = item["to_user"]
+            has_personal = bool(
+                item["notes"]
+                or item["attachments"]
+                or draft_notes_by_target.get(target)
+                or draft_atts_by_target.get(target)
+            )
+            if not has_personal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"No draft comments or attachments for '{target}'. "
+                        "Use Add Reply/Forwarding Comment or Attachment first."
+                    ),
+                )
 
     actor = _user_by_name(db, actor_name)
     batch = MarkingBatch(
@@ -528,12 +1138,15 @@ def create_mark_batch(
             )
         )
 
+    fan_out = len(normalized) > 1
     created: list[Marking] = []
     for item in normalized:
         marking = Marking(
             batch_id=batch.id,
             letter_id=letter.id,
             parent_marking_id=parent.id if parent else None,
+            path_id=assign_path_id(parent=parent, fan_out=fan_out, direction=direction),
+            direction=direction,
             from_user=actor_name,
             to_user=item["to_user"],
             action=item["action"],
@@ -551,29 +1164,77 @@ def create_mark_batch(
         created.append(marking)
     db.flush()
 
+    for marking, item in zip(created, normalized):
+        target = marking.to_user
+        _publish_staged_on_marking(
+            db,
+            letter=letter,
+            actor_name=actor_name,
+            marking=marking,
+            notes=[
+                *item["notes"],
+                *shared_notes,
+                *draft_notes_by_target.get(target, []),
+                *draft_common_notes,
+            ],
+            attachments=[
+                *item["attachments"],
+                *shared_attachments,
+                *draft_atts_by_target.get(target, []),
+                *draft_common_atts,
+            ],
+            client_ip=client_ip or "",
+        )
+
+    if consume_drafts and created:
+        consumed_targets = {m.to_user for m in created}
+        for n in draft_note_rows:
+            target = (n.target_user or "").strip()
+            if not target or target in consumed_targets:
+                db.delete(n)
+        for a in draft_att_rows:
+            target = (a.target_user or "").strip()
+            if not target or target in consumed_targets:
+                db.delete(a)
+
+    db.flush()
+
     primary = _pick_primary_marking(created) or created[0]
     letter.status = OPEN_LETTER
     sync_letter_from_markings(db, letter, last_action=_mark_last_action(primary))
 
+    verb = "replied to you" if direction == "reply" else "marked to you"
+    notif_type = "Correspondence Reply" if direction == "reply" else "Correspondence Marked"
     for marking in created:
         add_notification(
             db,
-            title="Correspondence Marked",
-            description=f"{letter.number}: marked to you ({marking.action.replace('_', ' ')}) by {actor_name}.",
+            title=notif_type,
+            description=(
+                f"{letter.number}: {verb} ({marking.action.replace('_', ' ')}) by {actor_name}."
+            ),
             priority=marking.priority or "Medium",
             letter_id=letter.id,
-            notification_type="Correspondence Marked",
+            notification_type=notif_type,
             recipient_name=marking.to_user,
             related_entity_type="marking",
             related_entity_id=str(marking.id),
         )
 
+    path_note = (
+        f" ({len({m.path_id for m in created})} path(s))"
+        if fan_out
+        else f" (path {(created[0].path_id or '')[:8]})"
+    )
     _notify_pathway(
         db,
         letter=letter,
         actor_name=actor_name,
         title="Pathway Update",
-        description=f"{letter.number}: {actor_name} marked {len(created)} recipient(s).",
+        description=(
+            f"{letter.number}: {actor_name} "
+            f"{'replied to' if direction == 'reply' else 'forwarded to'} "
+            f"{len(created)} recipient(s){path_note}."
+        ),
         skip_user=actor_name,
     )
 
@@ -581,9 +1242,13 @@ def create_mark_batch(
         db,
         user=actor_name,
         module="Marking",
-        action="Mark",
+        action="Reply" if direction == "reply" else "Forward",
         record=letter.number,
-        description=f"Marked to {len(created)} recipient(s).",
+        description=(
+            f"{'Replied to' if direction == 'reply' else 'Forwarded to'} "
+            f"{len(created)} recipient(s); paths: "
+            + ", ".join(sorted({(m.path_id or '')[:8] for m in created}))
+        ),
         source=f"Web · {client_ip or 'unknown'}",
     )
     db.flush()
@@ -662,17 +1327,23 @@ def resolve_hold_marking_id(
         marking = db.get(Marking, marking_id)
         if not marking or marking.letter_id != letter.id:
             raise HTTPException(status_code=400, detail="Invalid markingId")
-        if marking.to_user != actor_name and not _is_admin(db, actor_name):
+        inbound_ok = marking.to_user == actor_name and marking.status == "active"
+        returned_ok = (
+            marking.from_user == actor_name
+            and marking.action == "response_required"
+            and marking.status == "responded"
+        )
+        if not inbound_ok and not returned_ok and not _is_admin(db, actor_name):
             raise HTTPException(status_code=403, detail="Marking is not addressed to you")
-        if marking.status != "active" and not _is_admin(db, actor_name):
-            raise HTTPException(status_code=400, detail="Marking is not active")
         if marking_has_children(db, marking.id) and not _is_admin(db, actor_name):
             raise HTTPException(status_code=400, detail="Marking was already remade onward")
         return marking.id
     leaves = leaf_inbound_markings(db, letter.id, actor_name)
-    if len(leaves) == 1:
-        return leaves[0].id
-    if len(leaves) > 1:
+    returned = response_returned_markings(db, letter.id, actor_name)
+    holds = [*leaves, *returned]
+    if len(holds) == 1:
+        return holds[0].id
+    if len(holds) > 1:
         raise HTTPException(
             status_code=400,
             detail="markingId is required when you hold multiple active markings",
@@ -891,8 +1562,28 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
         .order_by(CorrespondenceNote.id.desc())
         .all()
     )
+    letter = db.get(Letter, letter_id)
+    visible_paths: set[str] | None = None
+    if actor_name:
+        visible_paths = path_ids_visible_to_user(db, letter_id, actor_name)
+
+    marking_cache: dict[int, Marking | None] = {}
     out: list[dict] = []
     for note in notes:
+        if visible_paths is not None:
+            if note.marking_id is None:
+                # Root / initiator-hold notes: author, initiator, or no path yet.
+                if not (
+                    note.author_user == actor_name
+                    or (letter is not None and is_initiator(letter, actor_name or ""))
+                ):
+                    continue
+            else:
+                mid = int(note.marking_id)
+                if mid not in marking_cache:
+                    marking_cache[mid] = db.get(Marking, mid)
+                if not marking_visible_on_paths(marking_cache[mid], visible_paths):
+                    continue
         editable = note_is_editable(db, note, actor_name) if actor_name else False
         out.append(
             {
@@ -917,13 +1608,36 @@ def list_attachments(db: Session, letter_id: int, actor_name: str | None = None)
         .order_by(CorrespondenceAttachment.id.desc())
         .all()
     )
+    letter = db.get(Letter, letter_id)
+    visible_paths: set[str] | None = None
+    if actor_name:
+        visible_paths = path_ids_visible_to_user(db, letter_id, actor_name)
+
+    marking_cache: dict[int, Marking | None] = {}
+    visible_rows: list[CorrespondenceAttachment] = []
+    for row in rows:
+        if visible_paths is not None:
+            if row.marking_id is None:
+                if not (
+                    row.created_by == actor_name
+                    or (letter is not None and is_initiator(letter, actor_name or ""))
+                ):
+                    continue
+            else:
+                mid = int(row.marking_id)
+                if mid not in marking_cache:
+                    marking_cache[mid] = db.get(Marking, mid)
+                if not marking_visible_on_paths(marking_cache[mid], visible_paths):
+                    continue
+        visible_rows.append(row)
+
     return [
         serialize_attachment(
             db,
             row,
             editable=attachment_is_editable(db, row, actor_name) if actor_name else False,
         )
-        for row in rows
+        for row in visible_rows
     ]
 
 
@@ -1106,12 +1820,14 @@ def sync_attachment_after_replace(
 
 
 def list_tracked(db: Session, actor_name: str) -> list[dict]:
+    """For Information only — Forward / Response Required appear in Sent instead."""
     rows = (
         db.query(Marking)
         .filter(
             Marking.from_user == actor_name,
             Marking.track.is_(True),
             Marking.status == "active",
+            Marking.action == "for_info",
         )
         .order_by(Marking.id.desc())
         .all()
@@ -1233,8 +1949,12 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
         holds = user_holds_letter(db, letter, actor_name)
         # After marking onward, marker is revoke-only (Admin may still mutate).
         if holds or _is_admin(db, actor_name):
-            actions.extend(["mark", "add_note"])
+            # "forward" is the onward path (formerly "mark"); "reply" is back to previous marker.
+            actions.extend(["forward", "add_note"])
             leaves = leaf_inbound_markings(db, letter.id, actor_name)
+            returned = response_returned_markings(db, letter.id, actor_name)
+            if leaves or returned:
+                actions.append("reply")
             if any(m.action == "response_required" for m in leaves):
                 actions.append("respond")
         if is_initiator(letter, actor_name) and holds:
@@ -1257,16 +1977,31 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
 def marking_actions_payload(db: Session, letter: Letter, actor_name: str) -> dict[str, Any]:
     """Actions plus hold context for multi-recipient Workflow UI."""
     active_holds = leaf_inbound_markings(db, letter.id, actor_name)
+    returned_holds = response_returned_markings(db, letter.id, actor_name)
+    # Returned RR holds are selectable parents for Forward/Reply after a response.
+    hold_rows = [*active_holds, *returned_holds]
     active_leaves = active_leaf_markings(db, letter.id)
     initiator_hold = is_initiator(letter, actor_name) and not has_active_markings(db, letter.id)
     return {
         "letterId": str(letter.id),
         "currentStatus": letter.status,
         "actions": available_marking_actions(db, letter, actor_name),
-        "activeHolds": [serialize_marking(m) for m in active_holds],
+        "activeHolds": [serialize_marking(m) for m in hold_rows],
         "activeLeaves": [serialize_marking(m) for m in active_leaves],
         "initiatorHold": initiator_hold,
     }
+
+
+def markings_for_path(db: Session, path_id: str) -> list[Marking]:
+    pid = (path_id or "").strip()
+    if not pid:
+        return []
+    return (
+        db.query(Marking)
+        .filter(Marking.path_id == pid)
+        .order_by(Marking.id.asc())
+        .all()
+    )
 
 
 def _notify_pathway(
@@ -1330,11 +2065,24 @@ def letter_ids_marked_to_user(db: Session, user_name: str) -> set[int]:
 
 
 def letter_ids_held_by_user(db: Session, user_name: str) -> set[int]:
-    """Inbox: current holds — leaf inbound markings, or initiator with no active markings."""
+    """Inbox: leaf inbound holds, returned RR responses, or initiator with no active markings."""
     name = (user_name or "").strip()
     if not name:
         return set()
     held = set(letter_ids_marked_to_user(db, name))
+    # Response Required fulfilled → letter returns to the marker's Inbox.
+    returned_letter_ids = (
+        db.query(Marking.letter_id, Marking.id)
+        .filter(
+            Marking.from_user == name,
+            Marking.action == "response_required",
+            Marking.status == "responded",
+        )
+        .all()
+    )
+    for letter_id, marking_id in returned_letter_ids:
+        if not marking_has_children(db, int(marking_id)):
+            held.add(int(letter_id))
     # Initiator hold while nothing is marked out (including after a full revoke).
     owned_ids = [
         int(row[0])
@@ -1358,25 +2106,39 @@ def letter_ids_held_by_user(db: Session, user_name: str) -> set[int]:
     return held
 
 
-def letter_ids_marked_by_user(db: Session, user_name: str) -> set[int]:
-    """Sent: letters you marked at least once with a non-revoked marking.
+def sent_markings_for_user(db: Session, user_name: str) -> list[Marking]:
+    """
+    Sent items: one row per outstanding Forward or Response Required the user sent.
 
-    A mark that was created and fully revoked (only revoked rows from you) does
-    not keep the letter in Sent — it returns to Inbox for the current holder.
+    - Response Required: stays while status=active (until the recipient responds).
+    - Forward: stays while active and the recipient has not remade/replied onward.
+    - For Information: Track only (never Sent).
     """
     name = (user_name or "").strip()
     if not name:
-        return set()
+        return []
     rows = (
-        db.query(Marking.letter_id)
+        db.query(Marking)
         .filter(
             Marking.from_user == name,
-            Marking.status != "revoked",
+            Marking.status == "active",
+            Marking.action.in_(("response_required", "forward")),
         )
-        .distinct()
+        .order_by(Marking.id.desc())
         .all()
     )
-    return {int(row[0]) for row in rows}
+    out: list[Marking] = []
+    for marking in rows:
+        if marking.action == "response_required":
+            out.append(marking)
+        elif marking.action == "forward" and not marking_has_children(db, marking.id):
+            out.append(marking)
+    return out
+
+
+def letter_ids_marked_by_user(db: Session, user_name: str) -> set[int]:
+    """Sent letter ids: letters with at least one outstanding Forward / RR from the user."""
+    return {int(m.letter_id) for m in sent_markings_for_user(db, user_name)}
 
 
 def user_on_marking(db: Session, letter_id: int, user_name: str) -> bool:

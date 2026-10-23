@@ -35,6 +35,7 @@ export function LetterTable({
   departments,
   onChanged,
   onDelete,
+  showSender,
   className,
   style,
 }: {
@@ -52,6 +53,8 @@ export function LetterTable({
   departments: { name: string }[]
   onChanged: () => Promise<void>
   onDelete: (letter: Letter) => void
+  /** Dedicated “Marked by” column (Inbox: who marked the letter to you). */
+  showSender?: boolean
   className?: string
   style?: CSSProperties
 }) {
@@ -115,6 +118,9 @@ export function LetterTable({
                 </Button>
               )}
               <p className="mt-1 text-[11px] text-slate-400">{l.letterDate}</p>
+              {l.sentToUser ? (
+                <p className="mt-0.5 text-[10px] font-medium text-slate-500">→ {l.sentToUser}</p>
+              ) : null}
             </>
           )
         },
@@ -143,6 +149,11 @@ export function LetterTable({
                 </button>
               )}
               <p className="mt-1 text-[11px] text-slate-400">{l.from}</p>
+              {l.sentPathId ? (
+                <p className="mt-0.5 font-mono text-[10px] text-slate-400">
+                  Path {l.sentPathId.replace(/-/g, '').slice(0, 8).toUpperCase()}
+                </p>
+              ) : null}
               {locked && (
                 <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">
                   Locked · not assigned to you
@@ -152,6 +163,17 @@ export function LetterTable({
           )
         },
       },
+      ...(showSender
+        ? ([
+            {
+              id: 'markedBy',
+              header: 'Marked by',
+              sortValue: (l) => l.markedBy || '',
+              className: 'text-slate-600',
+              cell: (l) => l.markedBy || '—',
+            },
+          ] satisfies DataTableColumn<Letter>[])
+        : []),
       {
         id: 'department',
         header: 'Department',
@@ -221,6 +243,7 @@ export function LetterTable({
     selectedIds,
     onToggle,
     onOpen,
+    showSender,
     role,
     users,
     departments,
@@ -232,9 +255,9 @@ export function LetterTable({
     <DataTable
       columns={columns}
       data={data}
-      rowKey={(l) => l.id}
-      storageKey="letter-register"
-      minWidth="1100px"
+      rowKey={(l) => (l.sentMarkingId != null ? `${l.id}-m${l.sentMarkingId}` : l.id)}
+      storageKey={showSender ? 'letter-register-inbox' : 'letter-register'}
+      minWidth={showSender ? '1200px' : '1100px'}
       maxHeight="min(480px, 58vh)"
       className={className}
       style={style}

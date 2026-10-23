@@ -71,6 +71,14 @@ export type Letter = {
   classifiedAt?: string
   /** Initiator may edit registration details only until marked onward. */
   canEditDetails?: boolean
+  /** Sent view: one row per outstanding Response Required marking. */
+  sentMarkingId?: number | null
+  sentToUser?: string
+  sentPathId?: string
+  sentDueAt?: string
+  sentAction?: string
+  /** Inbox view: user who marked this letter to the viewer. */
+  markedBy?: string
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }

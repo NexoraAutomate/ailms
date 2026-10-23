@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
   Handle,
   Position,
   ReactFlow,
@@ -11,12 +13,13 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  type EdgeProps,
   type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Badge } from '@/components/cms/ui'
 import { Button } from '@/components/ui/button'
-import { formatDateTime } from '@/lib/datetime'
+import { formatDate } from '@/lib/datetime'
 import { cn } from '@/lib/utils'
 import {
   buildMarkingFlowGraph,
@@ -65,7 +68,7 @@ function MarkingPersonNode({ data, selected }: NodeProps<MarkingFlowNode>) {
   const horizontal = data.orientation === 'horizontal'
   return (
     <div
-      className={`min-w-[160px] max-w-[200px] rounded-lg border bg-white px-3 py-2 shadow-sm transition ${
+      className={`min-w-[160px] max-w-[200px] cursor-pointer rounded-lg border bg-white px-3 py-2 shadow-sm transition ${
         selected ? 'border-[#1769aa] ring-2 ring-[#1769aa]/20' : 'border-slate-200'
       }`}
     >
@@ -77,8 +80,12 @@ function MarkingPersonNode({ data, selected }: NodeProps<MarkingFlowNode>) {
       <p className="truncate text-xs font-bold text-[#102a43]">{data.label}</p>
       {data.subtitle ? <p className="truncate text-[10px] text-slate-500">{data.subtitle}</p> : null}
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        {data.actionLabel ? <Badge tone="blue">{data.actionLabel}</Badge> : null}
-        {data.status && data.status !== 'root' ? (
+        {data.actionLabel ? (
+          <Badge tone={data.direction === 'reply' ? 'violet' : 'blue'}>{data.actionLabel}</Badge>
+        ) : null}
+        {data.status === 'active' && data.createdAt ? (
+          <Badge tone="green">{formatDate(data.createdAt)}</Badge>
+        ) : data.status && data.status !== 'root' && data.status !== 'active' ? (
           <Badge tone={statusTone(data.status)}>{data.status}</Badge>
         ) : null}
       </div>
@@ -94,6 +101,64 @@ function MarkingPersonNode({ data, selected }: NodeProps<MarkingFlowNode>) {
 
 const nodeTypes = { markingPerson: MarkingPersonNode }
 
+/**
+ * U-turn edge for reply markings placed beside their source at the same depth.
+ * Vertical: loops below the pair. Horizontal: loops to the side.
+ */
+function ReplyUTurnEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  markerEnd,
+  style,
+  label,
+  labelStyle,
+}: EdgeProps) {
+  const dx = Math.abs(sourceX - targetX)
+  const dy = Math.abs(sourceY - targetY)
+  const bulge = 52
+  let path: string
+  let labelX: number
+  let labelY: number
+
+  if (dx >= dy) {
+    // Side-by-side (vertical layout) — U-turn under both nodes.
+    const bottom = Math.max(sourceY, targetY) + bulge
+    path = `M ${sourceX},${sourceY} C ${sourceX},${bottom} ${targetX},${bottom} ${targetX},${targetY}`
+    labelX = (sourceX + targetX) / 2
+    labelY = bottom
+  } else {
+    // Stacked (horizontal layout) — U-turn to the outer side.
+    const side = Math.max(sourceX, targetX) + bulge
+    path = `M ${sourceX},${sourceY} C ${side},${sourceY} ${side},${targetY} ${targetX},${targetY}`
+    labelX = side
+    labelY = (sourceY + targetY) / 2
+  }
+
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
+      {label ? (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan pointer-events-none absolute text-[9px] font-semibold"
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              color: (labelStyle as { fill?: string } | undefined)?.fill ?? '#7c3aed',
+            }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  )
+}
+
+const edgeTypes = { replyUTurn: ReplyUTurnEdge }
+
 function FitViewOnChange({ orientation }: { orientation: MarkingFlowOrientation }) {
   const { fitView } = useReactFlow()
   useEffect(() => {
@@ -108,9 +173,11 @@ function FitViewOnChange({ orientation }: { orientation: MarkingFlowOrientation 
 function MarkingHistoryFlowInner({
   tree,
   initiatorName,
+  onMarkingClick,
 }: {
   tree: MarkingNode[]
   initiatorName: string
+  onMarkingClick?: (data: MarkingFlowNodeData) => void
 }) {
   const [orientation, setOrientation] = useState<MarkingFlowOrientation>('vertical')
 
@@ -124,12 +191,10 @@ function MarkingHistoryFlowInner({
   )
   const [nodes, setNodes, onNodesChange] = useNodesState<MarkingFlowNode>(graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges)
-  const [selected, setSelected] = useState<MarkingFlowNodeData | null>(null)
 
   useEffect(() => {
     setNodes(graph.nodes)
     setEdges(graph.edges)
-    setSelected(null)
   }, [graph, setNodes, setEdges])
 
   const setOrient = (next: MarkingFlowOrientation) => {
@@ -177,75 +242,28 @@ function MarkingHistoryFlowInner({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable
+          zoomOnScroll={false}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.35}
           maxZoom={1.5}
           proOptions={{ hideAttribution: true }}
-          onNodeClick={(_, node) => setSelected(node.data)}
-          onPaneClick={() => setSelected(null)}
+          onNodeClick={(_, node) => {
+            if (node.data.kind === 'marking') onMarkingClick?.(node.data)
+          }}
         >
           <Background gap={16} size={1} color="#e2e8f0" />
           <Controls showInteractive={false} />
           <FitViewOnChange orientation={orientation} />
         </ReactFlow>
       </div>
-      {selected ? (
-        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-          <p className="font-semibold text-slate-800">{selected.label}</p>
-          {selected.kind === 'marking' ? (
-            <dl className="mt-1 grid gap-0.5 sm:grid-cols-2">
-              <div>
-                <dt className="text-[10px] uppercase text-slate-400">From</dt>
-                <dd>{selected.fromUser}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-slate-400">To</dt>
-                <dd>{selected.toUser}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-slate-400">Action</dt>
-                <dd>{selected.actionLabel}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] uppercase text-slate-400">Status</dt>
-                <dd>{selected.status}</dd>
-              </div>
-              {selected.batchId != null ? (
-                <div>
-                  <dt className="text-[10px] uppercase text-slate-400">Batch</dt>
-                  <dd>#{selected.batchId}</dd>
-                </div>
-              ) : null}
-              {selected.createdAt ? (
-                <div>
-                  <dt className="text-[10px] uppercase text-slate-400">Marked</dt>
-                  <dd>{formatDateTime(selected.createdAt)}</dd>
-                </div>
-              ) : null}
-              {selected.clientIp ? (
-                <div>
-                  <dt className="text-[10px] uppercase text-slate-400">IP</dt>
-                  <dd>{selected.clientIp}</dd>
-                </div>
-              ) : null}
-              {selected.instructions ? (
-                <div className="sm:col-span-2">
-                  <dt className="text-[10px] uppercase text-slate-400">Instructions</dt>
-                  <dd className="whitespace-pre-wrap">{selected.instructions}</dd>
-                </div>
-              ) : null}
-            </dl>
-          ) : (
-            <p className="mt-1 text-slate-500">Correspondence initiator (root hold).</p>
-          )}
-        </div>
-      ) : (
-        <p className="text-[10px] text-slate-400">Click a person to see marking details.</p>
-      )}
+      <p className="text-[10px] text-slate-400">
+        Click a person to jump to that forward/reply in Comments & Attachments.
+      </p>
     </div>
   )
 }
@@ -253,13 +271,19 @@ function MarkingHistoryFlowInner({
 export function MarkingHistoryFlow({
   tree,
   initiatorName,
+  onMarkingClick,
 }: {
   tree: MarkingNode[]
   initiatorName: string
+  onMarkingClick?: (data: MarkingFlowNodeData) => void
 }) {
   return (
     <ReactFlowProvider>
-      <MarkingHistoryFlowInner tree={tree} initiatorName={initiatorName} />
+      <MarkingHistoryFlowInner
+        tree={tree}
+        initiatorName={initiatorName}
+        onMarkingClick={onMarkingClick}
+      />
     </ReactFlowProvider>
   )
 }

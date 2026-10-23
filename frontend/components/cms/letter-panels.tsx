@@ -752,6 +752,8 @@ export function RelatedMeetingsPanel({ letter, go }: { letter: Letter; go: (p: s
 
 export function DocumentsPanel({ letter }: { letter: Letter }) {
   const { masterData, refresh } = useAppData()
+  // Same lock as registration details: initiator only, until the letter is marked onward.
+  const canMutate = letter.canEditDetails === true
   // Initiator / original-letter library only — workflow file types stay on the Workflow tab.
   const allTypes = masterData['Document Types'] ?? [
     'Original Letter',
@@ -797,7 +799,17 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
     void load()
   }, [letter.id])
 
+  useEffect(() => {
+    if (!canMutate) {
+      setEditingId(null)
+      setFile(null)
+      setChangeDescription('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }, [canMutate])
+
   const upload = async () => {
+    if (!canMutate) return
     if (!file) {
       setError('Select a file to upload.')
       return
@@ -805,7 +817,7 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
     setBusy(true)
     setError('')
     try {
-      await uploadLetterDocument(letter.id, file, documentType, changeDescription)
+      await uploadLetterDocument(letter.id, file, documentType, changeDescription, 'letter')
       setFile(null)
       setChangeDescription('')
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -819,6 +831,7 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
   }
 
   const replaceDocument = async (documentId: string, revisionFile: File) => {
+    if (!canMutate) return
     setBusy(true)
     setError('')
     try {
@@ -833,6 +846,7 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
   }
 
   const saveDocumentType = async (documentId: string, nextType: string) => {
+    if (!canMutate) return
     setBusy(true)
     setError('')
     try {
@@ -848,6 +862,7 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
   }
 
   const removeDocument = async (documentId: string) => {
+    if (!canMutate) return
     if (!window.confirm('Delete this attachment?')) return
     setBusy(true)
     setError('')
@@ -867,10 +882,18 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
     <CollapsibleCard collapsible={false}>
       <p className="mb-4 text-xs text-slate-400">
         Original letter copy and related references attached at registration. Files added during workflow stay on the Workflow tab.
+        {!canMutate
+          ? ' After the letter is marked onward, these files can only be previewed or opened.'
+          : ''}
       </p>
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
-      <div className="grid gap-5 lg:grid-cols-3 lg:items-start">
-        <div className="space-y-2 lg:col-span-2">
+      <div
+        className={cn(
+          'grid gap-5 lg:items-start',
+          canMutate ? 'lg:grid-cols-3' : 'lg:grid-cols-1',
+        )}
+      >
+        <div className={cn('space-y-2', canMutate && 'lg:col-span-2')}>
           {loading && <p className="text-xs text-slate-500">Loading documents…</p>}
           {!loading && documents.length === 0 && (
             <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-xs text-slate-500">
@@ -897,7 +920,7 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
                           {current.uploadedBy ? ` · ${current.uploadedBy}` : ''}
                         </p>
                       ) : null}
-                      {editingId === doc.id ? (
+                      {canMutate && editingId === doc.id ? (
                         <AppSelect
                           value={doc.documentType}
                           disabled={busy}
@@ -930,42 +953,48 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
                             <ExternalLink data-icon="inline-start" className="size-3" /> Open
                           </a>
                         ) : null}
-                        <label
-                          className={cn(
-                            buttonVariants({ size: 'xs', variant: 'outline' }),
-                            busy ? 'pointer-events-none opacity-50' : 'cursor-pointer',
-                          )}
-                        >
-                          <Replace data-icon="inline-start" className="size-3" /> Replace
-                          <input
-                            type="file"
-                            className="hidden"
-                            disabled={busy}
-                            onChange={(e) => {
-                              const next = e.target.files?.[0]
-                              e.target.value = ''
-                              if (next) void replaceDocument(doc.id, next)
-                            }}
-                          />
-                        </label>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() => setEditingId((currentId) => (currentId === doc.id ? null : doc.id))}
-                        >
-                          <Pencil data-icon="inline-start" /> Edit
-                        </Button>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="destructive"
-                          disabled={busy}
-                          onClick={() => void removeDocument(doc.id)}
-                        >
-                          <Trash2 data-icon="inline-start" /> Delete
-                        </Button>
+                        {canMutate ? (
+                          <>
+                            <label
+                              className={cn(
+                                buttonVariants({ size: 'xs', variant: 'outline' }),
+                                busy ? 'pointer-events-none opacity-50' : 'cursor-pointer',
+                              )}
+                            >
+                              <Replace data-icon="inline-start" className="size-3" /> Replace
+                              <input
+                                type="file"
+                                className="hidden"
+                                disabled={busy}
+                                onChange={(e) => {
+                                  const next = e.target.files?.[0]
+                                  e.target.value = ''
+                                  if (next) void replaceDocument(doc.id, next)
+                                }}
+                              />
+                            </label>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() =>
+                                setEditingId((currentId) => (currentId === doc.id ? null : doc.id))
+                              }
+                            >
+                              <Pencil data-icon="inline-start" /> Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="destructive"
+                              disabled={busy}
+                              onClick={() => void removeDocument(doc.id)}
+                            >
+                              <Trash2 data-icon="inline-start" /> Delete
+                            </Button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -975,60 +1004,62 @@ export function DocumentsPanel({ letter }: { letter: Letter }) {
           </ul>
         </div>
 
-        <aside className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 lg:col-span-1">
-          <h3 className="mb-3 text-sm font-bold text-slate-700">Add attachment</h3>
-          <div className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-xs">
-              <span className="font-semibold text-slate-600">Document type</span>
-              <AppSelect
-                value={documentType}
-                onValueChange={setDocumentType}
-                options={types}
-                className="h-10"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-xs">
-              <span className="font-semibold text-slate-600">Description</span>
+        {canMutate ? (
+          <aside className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 lg:col-span-1">
+            <h3 className="mb-3 text-sm font-bold text-slate-700">Add attachment</h3>
+            <div className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="font-semibold text-slate-600">Document type</span>
+                <AppSelect
+                  value={documentType}
+                  onValueChange={setDocumentType}
+                  options={types}
+                  className="h-10"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="font-semibold text-slate-600">Description</span>
+                <input
+                  value={changeDescription}
+                  onChange={(e) => setChangeDescription(e.target.value)}
+                  className="h-10 rounded-md border border-slate-200 bg-white px-3"
+                  placeholder="Optional notes for this upload"
+                />
+              </label>
+              {file ? (
+                <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
+                  <p className="truncate font-semibold text-slate-700" title={file.name}>{file.name}</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    {file.type || 'Unknown type'} · {formatFileSize(file.size)}
+                  </p>
+                </div>
+              ) : null}
               <input
-                value={changeDescription}
-                onChange={(e) => setChangeDescription(e.target.value)}
-                className="h-10 rounded-md border border-slate-200 bg-white px-3"
-                placeholder="Optional notes for this upload"
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.ppt,.pptx,.odt,.ods,.odp,.eml,.msg,.zip"
+                className="hidden"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
-            </label>
-            {file ? (
-              <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
-                <p className="truncate font-semibold text-slate-700" title={file.name}>{file.name}</p>
-                <p className="mt-0.5 text-[11px] text-slate-500">
-                  {file.type || 'Unknown type'} · {formatFileSize(file.size)}
-                </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  aria-label="Choose attachment"
+                  title="Choose attachment"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip className="size-3.5" />
+                </Button>
+                <Button size="sm" disabled={busy || !file} onClick={() => void upload()}>
+                  {busy ? 'Uploading…' : 'Upload Attachment'}
+                </Button>
               </div>
-            ) : null}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.ppt,.pptx,.odt,.ods,.odp,.eml,.msg,.zip"
-              className="hidden"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                aria-label="Choose attachment"
-                title="Choose attachment"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Paperclip className="size-3.5" />
-              </Button>
-              <Button size="sm" disabled={busy || !file} onClick={() => void upload()}>
-                {busy ? 'Uploading…' : 'Upload Attachment'}
-              </Button>
             </div>
-          </div>
-        </aside>
+          </aside>
+        ) : null}
       </div>
       {previewId !== null && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4">

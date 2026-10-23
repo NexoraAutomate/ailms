@@ -53,11 +53,18 @@ export async function listDocumentVersions(documentId: string) {
   return response.json() as Promise<DocumentVersion[]>
 }
 
-export async function uploadLetterDocument(letterId: string, file: File, documentType: string, changeDescription = '') {
+export async function uploadLetterDocument(
+  letterId: string,
+  file: File,
+  documentType: string,
+  changeDescription = '',
+  scope: 'letter' | 'workflow' = 'letter',
+) {
   const form = new FormData()
   form.append('file', file)
   form.append('document_type', documentType)
   form.append('change_description', changeDescription)
+  form.append('scope', scope)
   const response = await fetch(`${API_BASE}/api/letters/${letterId}/documents/upload`, {
     method: 'POST',
     body: form,

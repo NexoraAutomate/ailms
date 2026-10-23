@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.models import Document, DocumentVersion, Letter
+from app.models import CorrespondenceAttachment, Document, DocumentVersion, Letter
 from app.services import CLOSED_STATUSES, add_audit, add_notification, current_user_name
 from app.storage_service import (
     MIME_BY_EXT,
@@ -45,6 +45,31 @@ def _get_letter(db: Session, letter_id: int) -> Letter:
 def assert_letter_mutable(letter: Letter) -> None:
     if getattr(letter, "is_archived", False) or letter.status in CLOSED_STATUSES | {"Archived"}:
         raise HTTPException(status_code=400, detail="Archived or closed correspondence cannot be modified")
+
+
+def document_is_workflow_linked(db: Session, document_id: int) -> bool:
+    """True when the file was attached via marking workflow (not the Attachments tab)."""
+    return (
+        db.query(CorrespondenceAttachment.id)
+        .filter(CorrespondenceAttachment.document_id == document_id)
+        .first()
+        is not None
+    )
+
+
+def assert_can_mutate_registration_document(
+    db: Session,
+    letter: Letter,
+    *,
+    actor: str | None = None,
+) -> None:
+    """
+    Letter copy / accompanying docs on the Attachments tab share the registration-details lock:
+    only the initiator, and only until the letter has active markings.
+    """
+    from app.marking_workflow_service import assert_can_edit_letter_details
+
+    assert_can_edit_letter_details(db, letter, actor or current_user_name(db))
 
 
 def next_version_number(existing: list[str]) -> str:
@@ -129,13 +154,15 @@ async def create_document_with_upload(
     upload: UploadFile,
     change_description: str = "",
     actor: str | None = None,
+    require_registration_edit: bool = True,
 ) -> Document:
     letter = _get_letter(db, letter_id)
     assert_letter_mutable(letter)
+    actor = actor or current_user_name(db)
+    if require_registration_edit:
+        assert_can_mutate_registration_document(db, letter, actor=actor)
     if document_type not in DOCUMENT_TYPES:
         raise HTTPException(status_code=422, detail="Validation failed: invalid document type")
-
-    actor = actor or current_user_name(db)
     document = Document(letter_id=letter.id, document_type=document_type)
     db.add(document)
     db.flush()
@@ -214,10 +241,11 @@ def create_document_from_staged_file(
     """
     letter = _get_letter(db, letter_id)
     assert_letter_mutable(letter)
+    actor = actor or current_user_name(db)
+    assert_can_mutate_registration_document(db, letter, actor=actor)
     if document_type not in DOCUMENT_TYPES:
         document_type = "Original Letter"
 
-    actor = actor or current_user_name(db)
     document = Document(letter_id=letter.id, document_type=document_type)
     db.add(document)
     db.flush()
@@ -295,6 +323,8 @@ async def add_document_version(
     assert_letter_mutable(letter)
 
     actor = actor or current_user_name(db)
+    if not document_is_workflow_linked(db, document.id):
+        assert_can_mutate_registration_document(db, letter, actor=actor)
     prior = (
         db.query(DocumentVersion)
         .filter(DocumentVersion.document_id == document.id)
@@ -388,6 +418,8 @@ def update_document_meta(
     letter = _get_letter(db, document.letter_id)
     assert_letter_mutable(letter)
     actor = actor or current_user_name(db)
+    if not document_is_workflow_linked(db, document.id):
+        assert_can_mutate_registration_document(db, letter, actor=actor)
     if document_type is not None:
         if document_type not in DOCUMENT_TYPES:
             raise HTTPException(status_code=422, detail="Validation failed: invalid document type")
@@ -416,6 +448,8 @@ def delete_document(
     letter = _get_letter(db, document.letter_id)
     assert_letter_mutable(letter)
     actor = actor or current_user_name(db)
+    if not document_is_workflow_linked(db, document.id):
+        assert_can_mutate_registration_document(db, letter, actor=actor)
     versions = (
         db.query(DocumentVersion)
         .filter(DocumentVersion.document_id == document.id)

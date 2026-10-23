@@ -100,15 +100,28 @@ def list_letters(
     ]
 
     if view == "inbox":
-        from app.marking_workflow_service import letter_ids_held_by_user
+        from app.marking_workflow_service import letter_ids_held_by_user, marked_by_for_holder
+        from app.services import attach_inbox_marked_by
 
         held = {str(i) for i in letter_ids_held_by_user(db, actor)}
-        items = [item for item in items if item.id in held]
+        items = [
+            attach_inbox_marked_by(item, marked_by_for_holder(db, int(item.id), actor))
+            for item in items
+            if item.id in held
+        ]
     elif view == "sent":
-        from app.marking_workflow_service import letter_ids_marked_by_user
+        # One row per outstanding Response Required the actor sent (not For Information).
+        from app.marking_workflow_service import sent_markings_for_user
+        from app.services import attach_sent_marking
 
-        marked_by = {str(i) for i in letter_ids_marked_by_user(db, actor)}
-        items = [item for item in items if item.id in marked_by]
+        by_id = {item.id: item for item in items}
+        sent_items: list = []
+        for marking in sent_markings_for_user(db, actor):
+            base = by_id.get(str(marking.letter_id))
+            if base is None:
+                continue
+            sent_items.append(attach_sent_marking(base, marking))
+        items = sent_items
     elif view == "incoming":
         items = [item for item in items if item.type == "Incoming"]
     elif view == "outgoing":

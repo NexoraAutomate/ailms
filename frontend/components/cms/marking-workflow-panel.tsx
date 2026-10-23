@@ -11,6 +11,7 @@ import {
   Paperclip,
   Pencil,
   Replace,
+  Reply,
   Send,
   Trash2,
   X,
@@ -52,14 +53,18 @@ import {
   type ResponseType,
 } from '@/services/marking-types'
 import {
-  addAttachmentsToMarking,
-  addMarkingNote,
+  addDraftAttachments,
+  addDraftNote,
   closeMarkedLetter,
+  deleteDraftAttachment,
+  deleteDraftNote,
   deleteMarkingAttachment,
   deleteMarkingNote,
+  updateDraftNote,
   fetchBatchTracker,
   fetchMarkingActions,
   fetchMarkingAttachments,
+  fetchMarkingDrafts,
   fetchMarkingNotes,
   fetchMarkingTree,
   flattenMarkings,
@@ -68,11 +73,17 @@ import {
   markingActionLabel,
   respondToMarking,
   revokeMarking,
+  shortPathId,
   updateMarkingAttachment,
   updateMarkingNote,
   type CorrespondenceAttachment,
   type CorrespondenceNote,
+  type DraftAttachment,
+  type DraftIntent,
+  type DraftNote,
   type MarkRecipientInput,
+  type MarkingDirection,
+  type MarkingDrafts,
   type MarkingNode,
 } from '@/services/markings'
 
@@ -132,8 +143,56 @@ function onwardMarkedAt(
   return pickLatest(remakes)
 }
 
-function emptyRecipient(): MarkRecipientInput {
-  return { toUser: '', action: 'forward', track: true, remindersEnabled: true }
+/**
+ * Subtitle under an author on a content card.
+ * Outbound published notes: "For {recipient} · Marked onward {date}".
+ * Notes still on an inbound hold that was remade: "Marked onward {date}".
+ */
+function contentAuthorSubtitle(
+  incidentKey: MarkingIncidentKey,
+  author: string,
+  markings: MarkingNode[],
+): string | undefined {
+  const authorNorm = (author || '').trim().toLowerCase()
+  if (!authorNorm) return undefined
+
+  if (incidentKey !== 'root') {
+    const marking = markings.find((m) => m.id === incidentKey)
+    if (
+      marking &&
+      (marking.fromUser || '').trim().toLowerCase() === authorNorm &&
+      (marking.toUser || '').trim()
+    ) {
+      const forPart = `For ${(marking.toUser || '').trim()}`
+      const markedAt = marking.createdAt ? formatDateTime(marking.createdAt) : ''
+      return markedAt ? `${forPart} · Marked onward ${markedAt}` : forPart
+    }
+  }
+
+  const remadeAt = onwardMarkedAt(incidentKey, author, markings)
+  if (remadeAt) return `Marked onward ${formatDateTime(remadeAt)}`
+  return undefined
+}
+
+/** Batch / single-mark cluster time for keeping content next to its mark chip. */
+function timelineClusterKey(item: TimelineItem, markingsById: Map<number, MarkingNode>): string {
+  if (item.kind === 'markBatch') return `batch:${item.batchId}`
+  if (item.kind === 'mark') return `batch:${item.marking.batchId}`
+  if (item.kind === 'content' && item.incident.key !== 'root') {
+    const marking = markingsById.get(item.incident.key)
+    if (marking) return `batch:${marking.batchId}`
+  }
+  return `content:${item.kind === 'content' ? item.incident.key : 'x'}`
+}
+
+function emptyRecipient(toUser = ''): MarkRecipientInput {
+  return { toUser, action: 'forward', track: true, remindersEnabled: true }
+}
+
+/** Who Reply / Draft Reply targets for a given hold (usually the sender). */
+function replyTargetForHold(hold: MarkingNode, meName: string): string {
+  if (hold.status === 'responded' && hold.fromUser === meName) return hold.toUser
+  return hold.fromUser
 }
 
 /** Consecutive notes from the same author share one card. */
@@ -275,6 +334,7 @@ function buildCommentsTimeline(
   attachments: CorrespondenceAttachment[],
 ): TimelineItem[] {
   const items: TimelineItem[] = []
+  const markingsById = new Map(markings.map((m) => [m.id, m]))
 
   const byBatch = new Map<number, MarkingNode[]>()
   const batchOrder: number[] = []
@@ -305,7 +365,30 @@ function buildCommentsTimeline(
     })
   }
 
-  return items.sort((a, b) => b.sortAt - a.sortAt)
+  const clusterTime = new Map<string, number>()
+  for (const item of items) {
+    const key = timelineClusterKey(item, markingsById)
+    clusterTime.set(key, Math.max(clusterTime.get(key) ?? 0, item.sortAt))
+  }
+
+  // Newest clusters first; within a forward/reply batch, mark card first, then its comments.
+  const kindRank = (item: TimelineItem) => {
+    if (item.kind === 'mark' || item.kind === 'markBatch') return 0
+    if (item.kind === 'content') return 1
+    return 2
+  }
+
+  return items.sort((a, b) => {
+    const keyA = timelineClusterKey(a, markingsById)
+    const keyB = timelineClusterKey(b, markingsById)
+    const clusterDiff = (clusterTime.get(keyB) ?? 0) - (clusterTime.get(keyA) ?? 0)
+    if (clusterDiff !== 0) return clusterDiff
+    if (keyA === keyB) {
+      const rankDiff = kindRank(a) - kindRank(b)
+      if (rankDiff !== 0) return rankDiff
+    }
+    return b.sortAt - a.sortAt
+  })
 }
 
 export function MarkingWorkflowPanel({
@@ -328,12 +411,18 @@ export function MarkingWorkflowPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [visibility, setVisibility] = useState<WorkflowVisibility>(DEFAULT_WORKFLOW_VISIBILITY)
-  const [dialog, setDialog] = useState<'mark' | 'note' | 'respond' | 'attach' | 'close' | null>(null)
+  const [dialog, setDialog] = useState<
+    'forward' | 'reply' | 'note' | 'respond' | 'attach' | 'close' | 'revoke' | null
+  >(null)
   const [remarks, setRemarks] = useState('')
-  const [pathwayNotify, setPathwayNotify] = useState(false)
   const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
   /** Which recipient row the single User/Action card is editing. */
   const [activeRecipientIndex, setActiveRecipientIndex] = useState(0)
+  const [drafts, setDrafts] = useState<MarkingDrafts | null>(null)
+  /** '' = common draft (forward only); else target user name. */
+  const [draftTargetUser, setDraftTargetUser] = useState<string>('')
+  /** Which draft flow the open note/attach dialog is using. */
+  const [draftIntent, setDraftIntent] = useState<DraftIntent>('forward')
   const [parentMarkingId, setParentMarkingId] = useState<number | null>(null)
   const [contextMarkingId, setContextMarkingId] = useState<number | null>(null)
   const [noteBody, setNoteBody] = useState('')
@@ -347,8 +436,42 @@ export function MarkingWorkflowPanel({
   const [previewVersionId, setPreviewVersionId] = useState<number | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
   const [editingNoteBody, setEditingNoteBody] = useState('')
+  const [editingDraftNoteId, setEditingDraftNoteId] = useState<number | null>(null)
+  const [editingDraftNoteBody, setEditingDraftNoteBody] = useState('')
+  /** DOM id of timeline row highlighted after a pathway node click. */
+  const [highlightedTimelineId, setHighlightedTimelineId] = useState<string | null>(null)
+  const highlightClearRef = useRef<number | null>(null)
   const loadInFlightRef = useRef(false)
   const busyRef = useRef(false)
+
+  const scrollToTimelineAnchor = useCallback((elementId: string) => {
+    const el = document.getElementById(elementId)
+    if (!el) return false
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (highlightClearRef.current != null) window.clearTimeout(highlightClearRef.current)
+    setHighlightedTimelineId(elementId)
+    highlightClearRef.current = window.setTimeout(() => {
+      setHighlightedTimelineId(null)
+      highlightClearRef.current = null
+    }, 2200)
+    return true
+  }, [])
+
+  const jumpToMarkingInTimeline = useCallback(
+    (markingId: number, batchId?: number) => {
+      // Prefer the comments published with that mark; fall back to the mark/batch chip.
+      if (scrollToTimelineAnchor(`workflow-incident-${markingId}`)) return
+      if (batchId != null && scrollToTimelineAnchor(`workflow-batch-${batchId}`)) return
+      scrollToTimelineAnchor(`workflow-mark-${markingId}`)
+    },
+    [scrollToTimelineAnchor],
+  )
+
+  useEffect(() => {
+    return () => {
+      if (highlightClearRef.current != null) window.clearTimeout(highlightClearRef.current)
+    }
+  }, [])
 
   const resetComposer = () => {
     setRemarks('')
@@ -357,9 +480,12 @@ export function MarkingWorkflowPanel({
     setForceClose(false)
     setRecipients([emptyRecipient()])
     setActiveRecipientIndex(0)
-    setPathwayNotify(false)
     setParentMarkingId(null)
     setContextMarkingId(null)
+    setDraftTargetUser('')
+    setDraftIntent('forward')
+    setEditingDraftNoteId(null)
+    setEditingDraftNoteBody('')
   }
 
   const activeRecipient = recipients[activeRecipientIndex] ?? recipients[0] ?? emptyRecipient()
@@ -371,28 +497,6 @@ export function MarkingWorkflowPanel({
     })
   }
 
-  const addRecipientSlot = () => {
-    const current = recipients[activeRecipientIndex]
-    if (current && !current.toUser.trim()) return
-    setRecipients((prev) => [...prev, emptyRecipient()])
-    setActiveRecipientIndex(recipients.length)
-  }
-
-  const removeRecipientAt = (idx: number) => {
-    if (recipients.length <= 1) {
-      setRecipients([emptyRecipient()])
-      setActiveRecipientIndex(0)
-      return
-    }
-    const next = recipients.filter((_, i) => i !== idx)
-    setRecipients(next)
-    setActiveRecipientIndex((cur) => {
-      if (cur === idx) return Math.min(idx, next.length - 1)
-      if (cur > idx) return cur - 1
-      return Math.min(cur, next.length - 1)
-    })
-  }
-
   const canAddAttachment = actions.includes('add_note')
 
   const flatMarkings = useMemo(() => flattenMarkings(tree), [tree])
@@ -401,6 +505,75 @@ export function MarkingWorkflowPanel({
     () => buildCommentsTimeline(flatMarkings, notes, attachments),
     [attachments, flatMarkings, notes],
   )
+
+  /** Pending drafts shown like content cards under Comments & Attachments. */
+  const draftGroups = useMemo(() => {
+    if (!drafts) {
+      return [] as {
+        key: string
+        intent: DraftIntent
+        targetLabel: string
+        notes: DraftNote[]
+        attachments: DraftAttachment[]
+      }[]
+    }
+    const groups: {
+      key: string
+      intent: DraftIntent
+      targetLabel: string
+      notes: DraftNote[]
+      attachments: DraftAttachment[]
+    }[] = []
+    const intentOf = (raw: string | undefined): DraftIntent =>
+      (raw || 'forward').toLowerCase() === 'reply' ? 'reply' : 'forward'
+
+    const commonNotes = drafts.notes.filter((n) => !n.targetUser && intentOf(n.intent) === 'forward')
+    const commonAtts = drafts.attachments.filter(
+      (a) => !a.targetUser && intentOf(a.intent) === 'forward',
+    )
+    if (commonNotes.length > 0 || commonAtts.length > 0) {
+      groups.push({
+        key: 'forward:common',
+        intent: 'forward',
+        targetLabel: 'Common to all recipients',
+        notes: commonNotes,
+        attachments: commonAtts,
+      })
+    }
+    for (const user of drafts.forwardTargetUsers ?? drafts.targetUsers) {
+      const notes = drafts.notes.filter(
+        (n) => n.targetUser === user && intentOf(n.intent) === 'forward',
+      )
+      const attachments = drafts.attachments.filter(
+        (a) => a.targetUser === user && intentOf(a.intent) === 'forward',
+      )
+      if (!notes.length && !attachments.length) continue
+      groups.push({
+        key: `forward:${user}`,
+        intent: 'forward',
+        targetLabel: `For ${user}`,
+        notes,
+        attachments,
+      })
+    }
+    for (const user of drafts.replyTargetUsers ?? []) {
+      const notes = drafts.notes.filter(
+        (n) => n.targetUser === user && intentOf(n.intent) === 'reply',
+      )
+      const attachments = drafts.attachments.filter(
+        (a) => a.targetUser === user && intentOf(a.intent) === 'reply',
+      )
+      if (!notes.length && !attachments.length) continue
+      groups.push({
+        key: `reply:${user}`,
+        intent: 'reply',
+        targetLabel: `For ${user}`,
+        notes,
+        attachments,
+      })
+    }
+    return groups
+  }, [drafts])
 
   /** Stable serials: oldest comment = 1, newest = N. */
   const noteSerialById = useMemo(() => {
@@ -427,7 +600,13 @@ export function MarkingWorkflowPanel({
   const uploadPendingAttachments = async () => {
     const uploaded: { attachmentKind: string; documentId: number; originalFilename: string }[] = []
     for (const item of pendingFiles) {
-      const doc = await uploadLetterDocument(letter.id, item.file, item.kind, `Workflow attachment (${item.kind})`)
+      const doc = await uploadLetterDocument(
+        letter.id,
+        item.file,
+        item.kind,
+        `Workflow attachment (${item.kind})`,
+        'workflow',
+      )
       uploaded.push({
         attachmentKind: item.kind,
         documentId: Number(doc.id),
@@ -446,11 +625,12 @@ export function MarkingWorkflowPanel({
       setError('')
     }
     try {
-      const [available, markingTree, noteRows, attachmentRows] = await Promise.all([
+      const [available, markingTree, noteRows, attachmentRows, draftBundle] = await Promise.all([
         fetchMarkingActions(letter.id),
         fetchMarkingTree(letter.id),
         fetchMarkingNotes(letter.id),
         fetchMarkingAttachments(letter.id),
+        fetchMarkingDrafts(letter.id),
       ])
       setActions(available.actions ?? [])
       setActiveHolds(available.activeHolds ?? [])
@@ -459,6 +639,7 @@ export function MarkingWorkflowPanel({
       setTree(markingTree)
       setNotes(noteRows)
       setAttachments(attachmentRows)
+      setDrafts(draftBundle)
       const holds = available.activeHolds ?? []
       if (holds.length === 1) {
         setParentMarkingId(holds[0]!.id)
@@ -604,6 +785,70 @@ export function MarkingWorkflowPanel({
     })
   }, [actions, allMarkings, attachments, me.name, notes])
 
+  useEffect(() => {
+    if (dialog === 'revoke' && revokableMarkings.length === 0 && !busy) {
+      setDialog(null)
+    }
+  }, [busy, dialog, revokableMarkings.length])
+
+  const forwardTargetUsers = drafts?.forwardTargetUsers ?? []
+  const hasReplyDrafts = Boolean(drafts?.hasReplyDrafts)
+  const hasForwardDrafts = Boolean(drafts?.hasForwardDrafts)
+  const canForwardWithDrafts =
+    forwardTargetUsers.length > 0 && !hasReplyDrafts
+  const replyHoldForActions =
+    activeHolds.length === 1
+      ? activeHolds[0]!
+      : activeHolds.find((h) => h.id === parentMarkingId) ?? activeHolds[0]
+  const replyTargetName = replyHoldForActions
+    ? replyTargetForHold(replyHoldForActions, me.name)
+    : ''
+  const canReplyWithDraft =
+    Boolean(replyTargetName) &&
+    !hasForwardDrafts &&
+    (drafts?.replyTargetUsers ?? []).includes(replyTargetName)
+
+  const openDraftNote = (intent: DraftIntent) => {
+    if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
+    setDraftIntent(intent)
+    if (intent === 'reply') {
+      const hold =
+        activeHolds.length === 1
+          ? activeHolds[0]!
+          : activeHolds.find((h) => h.id === contextMarkingId) ?? activeHolds[0]
+      if (hold) {
+        setContextMarkingId(hold.id)
+        setDraftTargetUser(replyTargetForHold(hold, me.name))
+      } else {
+        setDraftTargetUser('')
+      }
+    } else {
+      setDraftTargetUser('')
+    }
+    setDialog('note')
+  }
+
+  const openDraftAttach = (intent: DraftIntent) => {
+    setPendingFiles([])
+    if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
+    setDraftIntent(intent)
+    if (intent === 'reply') {
+      const hold =
+        activeHolds.length === 1
+          ? activeHolds[0]!
+          : activeHolds.find((h) => h.id === contextMarkingId) ?? activeHolds[0]
+      if (hold) {
+        setContextMarkingId(hold.id)
+        setDraftTargetUser(replyTargetForHold(hold, me.name))
+      } else {
+        setDraftTargetUser('')
+      }
+    } else {
+      setDraftTargetUser('')
+    }
+    setDialog('attach')
+  }
+
   return (
     <CollapsibleCard collapsible={false} contentClassName="relative">
       <div className="absolute top-3 right-3 z-20 sm:top-4 sm:right-4">
@@ -675,85 +920,153 @@ export function MarkingWorkflowPanel({
 
       {!loading && visibility.showFlowGraph && (
         <div className="mb-5">
-          <MarkingHistoryFlow tree={tree} initiatorName={letter.createdBy || ''} />
+          <MarkingHistoryFlow
+            tree={tree}
+            initiatorName={letter.createdBy || ''}
+            onMarkingClick={(data) => {
+              if (data.markingId == null) return
+              jumpToMarkingInTimeline(data.markingId, data.batchId)
+            }}
+          />
         </div>
       )}
 
       {!loading && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          {actions.includes('mark') && (
-            <Button
-              size="sm"
-              onClick={() => {
-                setRecipients([emptyRecipient()])
-                setActiveRecipientIndex(0)
-                if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
-                else if (activeHolds.length === 0) setParentMarkingId(null)
-                setDialog('mark')
-              }}
-            >
-              <Send className="mr-1 h-3.5 w-3.5" /> Mark
-            </Button>
-          )}
-          {actions.includes('add_note') && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
-                setDialog('note')
-              }}
-            >
-              <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add Comment
-            </Button>
-          )}
-          {revokableMarkings.map((m) => (
-            <Button
-              key={m.id}
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  await revokeMarking(m.id)
-                })
-              }
-            >
-              <CornerUpLeft className="mr-1 h-3.5 w-3.5" />
-              Revoke mark to {m.toUser}
-            </Button>
-          ))}
-          {canAddAttachment && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setPendingFiles([])
-                if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
-                setDialog('attach')
-              }}
-            >
-              <Paperclip className="mr-1 h-3.5 w-3.5" /> Add Attachment
-            </Button>
-          )}
-          {actions.includes('respond') && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                if (rrHoldsForMe.length === 1) setRespondMarkingId(rrHoldsForMe[0]!.id)
-                setDialog('respond')
-              }}
-            >
-              <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Respond
-            </Button>
-          )}
-          {actions.includes('close') && (
-            <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
-              <XCircle className="mr-1 h-3.5 w-3.5" /> Close
-            </Button>
-          )}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-2">
+            {actions.includes('add_note') && actions.includes('reply') && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={hasForwardDrafts}
+                title={
+                  hasForwardDrafts
+                    ? 'Delete forwarding drafts before adding a reply comment'
+                    : undefined
+                }
+                onClick={() => openDraftNote('reply')}
+              >
+                <Reply className="mr-1 h-3.5 w-3.5" /> Add Reply Comment
+              </Button>
+            )}
+            {actions.includes('add_note') && actions.includes('forward') && (
+              <Button
+                size="sm"
+                disabled={hasReplyDrafts}
+                title={
+                  hasReplyDrafts
+                    ? 'Delete reply drafts before adding a forwarding comment'
+                    : undefined
+                }
+                onClick={() => openDraftNote('forward')}
+              >
+                <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add Forwarding Comment
+              </Button>
+            )}
+            {canAddAttachment && actions.includes('reply') && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={hasForwardDrafts}
+                title={
+                  hasForwardDrafts
+                    ? 'Delete forwarding drafts before adding a reply attachment'
+                    : undefined
+                }
+                onClick={() => openDraftAttach('reply')}
+              >
+                <Paperclip className="mr-1 h-3.5 w-3.5" /> Add Reply Attachment
+              </Button>
+            )}
+            {canAddAttachment && actions.includes('forward') && (
+              <Button
+                size="sm"
+                disabled={hasReplyDrafts}
+                title={
+                  hasReplyDrafts
+                    ? 'Delete reply drafts before adding a forwarding attachment'
+                    : undefined
+                }
+                onClick={() => openDraftAttach('forward')}
+              >
+                <Paperclip className="mr-1 h-3.5 w-3.5" /> Add Forwarding Attachment
+              </Button>
+            )}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {actions.includes('forward') && (
+              <Button
+                size="sm"
+                disabled={!canForwardWithDrafts}
+                title={
+                  hasReplyDrafts
+                    ? 'Delete all reply drafts before Forward'
+                    : canForwardWithDrafts
+                      ? undefined
+                      : 'Add a forwarding comment or attachment for a recipient first'
+                }
+                onClick={() => {
+                  if (!canForwardWithDrafts) return
+                  setError('')
+                  setRecipients(forwardTargetUsers.map((name) => emptyRecipient(name)))
+                  setActiveRecipientIndex(0)
+                  if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+                  else if (activeHolds.length === 0) setParentMarkingId(null)
+                  setDialog('forward')
+                }}
+              >
+                <Send className="mr-1 h-3.5 w-3.5" /> Forward
+              </Button>
+            )}
+            {actions.includes('reply') && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canReplyWithDraft}
+                title={
+                  hasForwardDrafts
+                    ? 'Delete all forwarding drafts before Reply'
+                    : canReplyWithDraft
+                      ? undefined
+                      : replyTargetName
+                        ? `Add a reply comment or attachment for ${replyTargetName} first`
+                        : 'Add a reply comment or attachment first'
+                }
+                onClick={() => {
+                  if (!replyHoldForActions || !canReplyWithDraft) return
+                  setError('')
+                  setParentMarkingId(replyHoldForActions.id)
+                  setRecipients([emptyRecipient(replyTargetName)])
+                  setActiveRecipientIndex(0)
+                  setDialog('reply')
+                }}
+              >
+                <Reply className="mr-1 h-3.5 w-3.5" /> Reply
+              </Button>
+            )}
+            {actions.includes('respond') && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (rrHoldsForMe.length === 1) setRespondMarkingId(rrHoldsForMe[0]!.id)
+                  setDialog('respond')
+                }}
+              >
+                <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Respond
+              </Button>
+            )}
+            {revokableMarkings.length > 0 && (
+              <Button size="sm" variant="destructive" onClick={() => setDialog('revoke')}>
+                <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
+              </Button>
+            )}
+            {actions.includes('close') && (
+              <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
+                <XCircle className="mr-1 h-3.5 w-3.5" /> Close
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
@@ -820,10 +1133,181 @@ export function MarkingWorkflowPanel({
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Comments & Attachments</h3>
         {timelineItems.filter(
           (item) => item.kind === 'content' || visibility.showMarkingCards,
-        ).length === 0 && (
+        ).length === 0 &&
+          draftGroups.length === 0 && (
           <p className="text-xs text-slate-500">No notes, attachments, or markings yet.</p>
         )}
         <ul className="space-y-3">
+          {draftGroups.map((group) => {
+            const author = me.name || group.notes[0]?.authorUser || 'You'
+            return (
+              <li
+                key={`draft-${group.key}`}
+                className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/40"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-3">
+                  <div className="divide-y divide-amber-200/70 px-4 py-1 md:col-span-2 md:border-r md:border-amber-200/70 dark:divide-amber-800/50 dark:md:border-amber-800/50">
+                    <div className="pt-3 pb-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-base font-bold tracking-wide text-amber-950 dark:text-amber-200">
+                          {author}
+                        </p>
+                        <span className="rounded-full bg-amber-200/80 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-amber-950">
+                          YOU
+                        </span>
+                        <Badge tone="amber">Draft</Badge>
+                        <Badge tone={group.intent === 'reply' ? 'violet' : 'blue'}>
+                          {group.intent === 'reply' ? 'Reply' : 'Forward'}
+                        </Badge>
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-amber-900/75 dark:text-amber-300/75">
+                        {group.targetLabel} · confirm with{' '}
+                        {group.intent === 'reply' ? 'Reply' : 'Forward'}
+                      </p>
+                    </div>
+                    {group.notes.length === 0 ? (
+                      <p className="pb-3 text-xs text-amber-800/60 dark:text-amber-400/60">No draft comments</p>
+                    ) : (
+                      <div className="py-1">
+                        {group.notes.map((note) => (
+                          <div
+                            key={`draft-note-${note.id}`}
+                            className="border-t border-amber-100 py-2.5 first:border-t-0 dark:border-amber-900/40"
+                          >
+                            <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-amber-900/80 dark:text-amber-300/80">
+                              {visibility.showCommentMeta ? (
+                                <>
+                                  <span>{note.createdAt ? formatDateTime(note.createdAt) : ''}</span>
+                                  {note.clientIp ? <span>IP {note.clientIp}</span> : null}
+                                </>
+                              ) : null}
+                              <span className="ml-auto flex flex-wrap gap-1.5">
+                                <Button
+                                  type="button"
+                                  size="xs"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setEditingDraftNoteId(note.id)
+                                    setEditingDraftNoteBody(note.bodyText)
+                                  }}
+                                >
+                                  <Pencil data-icon="inline-start" /> Edit
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="xs"
+                                  variant="destructive"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void run(async () => {
+                                      const result = await deleteDraftNote(note.id)
+                                      setDrafts(result.drafts)
+                                      if (editingDraftNoteId === note.id) {
+                                        setEditingDraftNoteId(null)
+                                      }
+                                    })
+                                  }
+                                >
+                                  <Trash2 data-icon="inline-start" /> Delete
+                                </Button>
+                              </span>
+                            </div>
+                            {editingDraftNoteId === note.id ? (
+                              <div className="space-y-2">
+                                <textarea
+                                  className="w-full rounded border border-amber-200 bg-white px-2 py-1.5 text-sm dark:border-amber-800 dark:bg-amber-950/40"
+                                  rows={3}
+                                  value={editingDraftNoteBody}
+                                  onChange={(e) => setEditingDraftNoteBody(e.target.value)}
+                                />
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void run(async () => {
+                                        if (!editingDraftNoteBody.trim()) {
+                                          throw new Error('Note text is required')
+                                        }
+                                        const result = await updateDraftNote(
+                                          note.id,
+                                          editingDraftNoteBody,
+                                        )
+                                        setDrafts(result.drafts)
+                                        setEditingDraftNoteId(null)
+                                      })
+                                    }
+                                  >
+                                    Save
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setEditingDraftNoteId(null)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-amber-950 dark:text-amber-100">
+                                {note.bodyText}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="border-t border-amber-200/70 bg-amber-100/50 px-3 py-3 md:col-span-1 md:border-t-0 dark:border-amber-800/50 dark:bg-amber-950/60">
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-amber-800/80 dark:text-amber-400/80">
+                      Attachments
+                    </p>
+                    {group.attachments.length === 0 ? (
+                      <p className="text-xs text-amber-800/50 dark:text-amber-400/50">None</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {group.attachments.map((a) => (
+                          <li
+                            key={`draft-att-${a.id}`}
+                            className="rounded-lg border border-amber-200/80 bg-white px-2.5 py-2 shadow-sm dark:border-amber-800/50 dark:bg-amber-950/40"
+                          >
+                            <div className="flex items-start gap-2">
+                              <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-semibold text-slate-800 dark:text-amber-100">
+                                  {a.originalFilename || a.attachmentKind}
+                                </p>
+                                <p className="mt-0.5 text-[10px] font-medium text-slate-500">
+                                  {a.attachmentKind}
+                                </p>
+                                <div className="mt-1.5">
+                                  <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="destructive"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void run(async () => {
+                                        const result = await deleteDraftAttachment(a.id)
+                                        setDrafts(result.drafts)
+                                      })
+                                    }
+                                  >
+                                    <Trash2 data-icon="inline-start" /> Delete
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </li>
+            )
+          })}
           {timelineItems.map((item) => {
             if (item.kind === 'mark' || item.kind === 'markBatch') {
               if (!visibility.showMarkingCards) return null
@@ -831,7 +1315,15 @@ export function MarkingWorkflowPanel({
                 const { marking } = item
                 const revoked = marking.status === 'revoked'
                 return (
-                  <li key={`mark-${marking.id}`} className="flex justify-center py-0.5">
+                  <li
+                    id={`workflow-mark-${marking.id}`}
+                    key={`mark-${marking.id}`}
+                    className={cn(
+                      'flex justify-center py-0.5 scroll-mt-24 rounded-lg transition ring-offset-2',
+                      highlightedTimelineId === `workflow-mark-${marking.id}` &&
+                        'ring-2 ring-[#1769aa]/50',
+                    )}
+                  >
                     <div
                       className={cn(
                         'inline-flex max-w-full flex-col items-center gap-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm',
@@ -845,8 +1337,9 @@ export function MarkingWorkflowPanel({
                       ) : null}
                       <div className="flex flex-wrap items-center justify-center gap-1.5">
                         <span className={cn('font-medium', revoked && 'line-through')}>
-                          {marking.fromUser} → {marking.toUser}
+                          {marking.fromUser} {marking.direction === 'reply' ? '↩' : '→'} {marking.toUser}
                         </span>
+                        {marking.direction === 'reply' ? <Badge tone="violet">Reply</Badge> : null}
                         {revoked ? (
                           <Badge tone="slate">Revoked</Badge>
                         ) : (
@@ -854,17 +1347,39 @@ export function MarkingWorkflowPanel({
                             {markingActionLabel(marking.action)}
                           </Badge>
                         )}
+                        {shortPathId(marking.pathId) ? (
+                          <Badge tone="slate">Path {shortPathId(marking.pathId)}</Badge>
+                        ) : null}
                       </div>
                     </div>
                   </li>
                 )
               }
               const { batchId, markings: batchMarks } = item
+              const batchMarkedAt = batchMarks.reduce<string | undefined>((best, m) => {
+                if (!m.createdAt) return best
+                if (!best) return m.createdAt
+                return activityTime(m.createdAt, m.id) >= activityTime(best, 0) ? m.createdAt : best
+              }, undefined)
               return (
-                <li key={`batch-${batchId}`} className="flex justify-center py-0.5">
+                <li
+                  id={`workflow-batch-${batchId}`}
+                  key={`batch-${batchId}`}
+                  className={cn(
+                    'flex justify-center py-0.5 scroll-mt-24 rounded-lg transition ring-offset-2',
+                    highlightedTimelineId === `workflow-batch-${batchId}` &&
+                      'ring-2 ring-[#1769aa]/50',
+                  )}
+                >
                   <div className="inline-flex max-w-full flex-col items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-sm">
+                    {batchMarkedAt ? (
+                      <span className="text-[10px] leading-none text-slate-400">
+                        {formatDateTime(batchMarkedAt)}
+                      </span>
+                    ) : null}
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                      Marked to {batchMarks.length} users · Batch #{batchId}
+                      {batchMarks[0]?.direction === 'reply' ? 'Replied' : 'Forwarded'} to{' '}
+                      {batchMarks.length} user{batchMarks.length === 1 ? '' : 's'} · Batch #{batchId}
                     </span>
                     <div className="flex flex-wrap items-center justify-center gap-1.5">
                       {batchMarks.map((marking) => {
@@ -887,6 +1402,11 @@ export function MarkingWorkflowPanel({
                                 {markingActionLabel(marking.action)}
                               </Badge>
                             )}
+                            {shortPathId(marking.pathId) ? (
+                              <span className="font-mono text-[10px] text-slate-400">
+                                {shortPathId(marking.pathId)}
+                              </span>
+                            ) : null}
                           </span>
                         )
                       })}
@@ -905,12 +1425,15 @@ export function MarkingWorkflowPanel({
             const isOwnComments = visibility.highlightOwnComments && authoredByMe
             return (
               <li
+                id={`workflow-incident-${incident.key}`}
                 key={`incident-${incident.key}`}
                 className={cn(
-                  'overflow-hidden rounded-xl border shadow-sm',
+                  'scroll-mt-24 overflow-hidden rounded-xl border shadow-sm transition ring-offset-2',
                   isOwnComments
                     ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/40'
                     : 'border-slate-200 bg-white',
+                  highlightedTimelineId === `workflow-incident-${incident.key}` &&
+                    'ring-2 ring-[#1769aa]/50',
                 )}
               >
                 <div className="grid grid-cols-1 md:grid-cols-3">
@@ -939,7 +1462,11 @@ export function MarkingWorkflowPanel({
                         const hasResponse = group.some((n) => n.isResponse)
                         const groupEditable = group.some((n) => n.editable)
                         const groupKey = `note-group-${group[0]?.id ?? author}`
-                        const markedOnwardAt = onwardMarkedAt(incident.key, author, allMarkings)
+                        const authorSubtitle = contentAuthorSubtitle(
+                          incident.key,
+                          author,
+                          allMarkings,
+                        )
                         return [
                           <div key={`${groupKey}-heading`} className="pt-3 pb-2">
                             <div className="flex flex-wrap items-center gap-2">
@@ -971,7 +1498,7 @@ export function MarkingWorkflowPanel({
                                 />
                               )}
                             </div>
-                            {markedOnwardAt ? (
+                            {authorSubtitle ? (
                               <p
                                 className={cn(
                                   'mt-0.5 text-[11px]',
@@ -980,7 +1507,7 @@ export function MarkingWorkflowPanel({
                                     : 'text-slate-500',
                                 )}
                               >
-                                Marked onward {formatDateTime(markedOnwardAt)}
+                                {authorSubtitle}
                               </p>
                             ) : null}
                           </div>,
@@ -1285,27 +1812,52 @@ export function MarkingWorkflowPanel({
         </div>
       )}
 
-      {dialog === 'mark' && (
+      {(dialog === 'forward' || dialog === 'reply') && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold text-slate-800">Mark correspondence</h2>
+          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold text-slate-800">
+              {dialog === 'reply' ? 'Reply correspondence' : 'Forward correspondence'}
+            </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Assign each recipient an action. Added recipients appear as badges above — edit one at a time.
+              {dialog === 'reply'
+                ? 'Confirms reply to the previous sender and publishes drafts prepared with Add Comment / Add Attachment.'
+                : 'Confirms forwarding only to users who already have draft comments or attachments.'}
             </p>
 
             {activeHolds.length > 1 && (
               <div className="mt-3">
                 <label className="block text-xs font-medium text-slate-600">
-                  Marking under which hold?
+                  {dialog === 'reply' ? 'Replying under which hold?' : 'Forwarding under which hold?'}
                 </label>
                 <AppSelect
                   value={parentMarkingId != null ? String(parentMarkingId) : ''}
-                  onValueChange={(v) => setParentMarkingId(v ? Number(v) : null)}
+                  onValueChange={(v) => {
+                    const id = v ? Number(v) : null
+                    setParentMarkingId(id)
+                    if (dialog === 'reply' && id != null) {
+                      const hold = activeHolds.find((h) => h.id === id)
+                      if (hold) {
+                        const replyTo =
+                          hold.status === 'responded' && hold.fromUser === me.name
+                            ? hold.toUser
+                            : hold.fromUser
+                        setRecipients([{ ...emptyRecipient(), toUser: replyTo, action: 'forward' }])
+                        setActiveRecipientIndex(0)
+                      }
+                    }
+                  }}
                   options={[
                     { value: '', label: 'Select hold…' },
                     ...activeHolds.map((h) => ({
                       value: String(h.id),
-                      label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
+                      label:
+                        h.status === 'responded'
+                          ? `Response from ${h.toUser} · ${markingActionLabel(h.action)}${
+                              shortPathId(h.pathId) ? ` · Path ${shortPathId(h.pathId)}` : ''
+                            }`
+                          : `From ${h.fromUser} · ${markingActionLabel(h.action)}${
+                              shortPathId(h.pathId) ? ` · Path ${shortPathId(h.pathId)}` : ''
+                            }`,
                     })),
                   ]}
                   className="mt-1 w-full text-sm"
@@ -1313,51 +1865,37 @@ export function MarkingWorkflowPanel({
               </div>
             )}
 
-            {recipients.some((r) => r.toUser.trim()) && (
+            {dialog === 'forward' && recipients.some((r) => r.toUser.trim()) && (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {recipients.map((row, idx) => {
                   if (!row.toUser.trim()) return null
                   const isActive = idx === activeRecipientIndex
                   return (
-                    <span
+                    <button
+                      type="button"
                       key={`recipient-badge-${idx}-${row.toUser}`}
                       className={cn(
                         'inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold',
                         isActive
-                          ? 'border-[#1769aa]/40 bg-sky-50 text-slate-800'
-                          : 'border-slate-200 bg-slate-100 text-slate-700',
+                          ? 'border-[#1769aa]/40 bg-sky-50 text-slate-800 dark:border-sky-500/40 dark:bg-sky-950/60 dark:text-sky-100'
+                          : 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200',
                       )}
+                      onClick={() => setActiveRecipientIndex(idx)}
                     >
                       <span className="truncate">{row.toUser}</span>
                       <span
                         className={cn(
                           'inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold',
                           row.action === 'response_required'
-                            ? 'bg-amber-100 text-amber-800'
+                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-200'
                             : row.action === 'for_info'
-                              ? 'bg-slate-200 text-slate-600'
-                              : 'bg-emerald-100 text-emerald-800',
+                              ? 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-200',
                         )}
                       >
                         {ACTION_LABELS[row.action] ?? markingActionLabel(row.action)}
                       </span>
-                      <button
-                        type="button"
-                        className="inline-flex shrink-0 rounded p-0.5 text-slate-500 hover:bg-white/80 hover:text-[#1769aa]"
-                        aria-label={`Edit ${row.toUser}`}
-                        onClick={() => setActiveRecipientIndex(idx)}
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/80 hover:text-rose-600"
-                        aria-label={`Remove ${row.toUser}`}
-                        onClick={() => removeRecipientAt(idx)}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
+                    </button>
                   )
                 })}
               </div>
@@ -1365,23 +1903,23 @@ export function MarkingWorkflowPanel({
 
             <div className="mt-3 rounded-lg border border-slate-200 p-3">
               <label className="block text-xs font-medium text-slate-600">User</label>
-              <AppSelect
-                value={activeRecipient.toUser}
-                onValueChange={(v) => updateActiveRecipient({ toUser: v })}
-                options={[
-                  { value: '', label: 'Select user…' },
-                  ...users.map((u) => ({ value: u.name, label: u.name })),
-                ]}
-                className="mt-1 w-full text-sm"
-              />
+              <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                {activeRecipient.toUser || '—'}
+              </p>
               <label className="mt-2 block text-xs font-medium text-slate-600">Action</label>
-              <AppSelect
-                value={activeRecipient.action}
-                onValueChange={(v) => updateActiveRecipient({ action: v as MarkingAction })}
-                options={MARKING_ACTIONS.map((a) => ({ value: a, label: ACTION_LABELS[a] }))}
-                className="mt-1 w-full text-sm"
-              />
-              {activeRecipient.action === 'response_required' && (
+              {dialog === 'reply' ? (
+                <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800">
+                  Reply
+                </p>
+              ) : (
+                <AppSelect
+                  value={activeRecipient.action}
+                  onValueChange={(v) => updateActiveRecipient({ action: v as MarkingAction })}
+                  options={MARKING_ACTIONS.map((a) => ({ value: a, label: ACTION_LABELS[a] }))}
+                  className="mt-1 w-full text-sm"
+                />
+              )}
+              {dialog === 'forward' && activeRecipient.action === 'response_required' && (
                 <>
                   <label className="mt-2 block text-xs font-medium text-slate-600">Response type</label>
                   <AppSelect
@@ -1399,38 +1937,35 @@ export function MarkingWorkflowPanel({
                   />
                 </>
               )}
-              <label className="mt-2 block text-xs font-medium text-slate-600">Instructions</label>
-              <textarea
-                className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                rows={2}
-                value={activeRecipient.instructions || ''}
-                onChange={(e) => updateActiveRecipient({ instructions: e.target.value })}
-                placeholder="Optional guidance for this recipient"
-              />
-              <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={activeRecipient.track !== false}
-                  onChange={(e) => updateActiveRecipient({ track: e.target.checked })}
-                />
-                Track this marking
-              </label>
             </div>
 
-            <Button type="button" size="xs" variant="outline" className="mt-2" onClick={addRecipientSlot}>
-              + Add recipient
-            </Button>
-            <label className="mt-3 block text-xs font-medium text-slate-600">Remarks</label>
-            <textarea
-              className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-              rows={2}
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-            />
-            <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
-              <input type="checkbox" checked={pathwayNotify} onChange={(e) => setPathwayNotify(e.target.checked)} />
-              Notify me of the pathway (further marks / responses)
-            </label>
+            {drafts && (
+              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <p className="font-semibold text-slate-700">Drafts to publish</p>
+                {(drafts.commonNoteCount > 0 || drafts.commonAttachmentCount > 0) && (
+                  <p className="mt-1">
+                    Common: {drafts.commonNoteCount} comment
+                    {drafts.commonNoteCount === 1 ? '' : 's'}, {drafts.commonAttachmentCount}{' '}
+                    attachment{drafts.commonAttachmentCount === 1 ? '' : 's'}
+                  </p>
+                )}
+                <ul className="mt-1 space-y-0.5">
+                  {recipients
+                    .filter((r) => r.toUser.trim())
+                    .map((r) => {
+                      const n = drafts.notes.filter((d) => d.targetUser === r.toUser).length
+                      const a = drafts.attachments.filter((d) => d.targetUser === r.toUser).length
+                      return (
+                        <li key={r.toUser}>
+                          {r.toUser}: {n} comment{n === 1 ? '' : 's'}, {a} attachment
+                          {a === 1 ? '' : 's'}
+                        </li>
+                      )
+                    })}
+                </ul>
+              </div>
+            )}
+
             {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" disabled={busy} onClick={() => setDialog(null)}>
@@ -1440,10 +1975,22 @@ export function MarkingWorkflowPanel({
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
-                    const cleaned = recipients.filter((r) => r.toUser.trim())
-                    if (!cleaned.length) throw new Error('Select at least one recipient')
+                    const direction: MarkingDirection = dialog === 'reply' ? 'reply' : 'forward'
+                    const cleaned =
+                      direction === 'reply'
+                        ? recipients.filter((r) => r.toUser.trim()).slice(0, 1)
+                        : recipients.filter((r) => r.toUser.trim())
+                    if (!cleaned.length) {
+                      throw new Error(
+                        'No recipients with drafts. Use Add Comment / Add Attachment first.',
+                      )
+                    }
                     if (activeHolds.length > 1 && parentMarkingId == null) {
-                      throw new Error('Select which hold you are marking under')
+                      throw new Error(
+                        direction === 'reply'
+                          ? 'Select which hold you are replying under'
+                          : 'Select which hold you are forwarding under',
+                      )
                     }
                     const resolvedParent =
                       activeHolds.length === 1
@@ -1451,20 +1998,31 @@ export function MarkingWorkflowPanel({
                         : activeHolds.length > 1
                           ? parentMarkingId
                           : undefined
+
                     await markLetter(letter.id, {
-                      recipients: cleaned.map((r) => ({
-                        ...r,
-                        responseType: r.action === 'response_required' ? r.responseType || 'draft_letter' : undefined,
-                        remindersEnabled: r.action === 'response_required' ? r.track !== false : false,
-                      })),
-                      remarks,
-                      pathwayNotify,
+                      recipients: cleaned.map((r) => {
+                        const action: MarkingAction =
+                          direction === 'reply' ? 'forward' : r.action
+                        return {
+                          ...r,
+                          action,
+                          instructions: '',
+                          track: true,
+                          responseType:
+                            action === 'response_required' ? r.responseType || 'draft_letter' : undefined,
+                          remindersEnabled: action === 'response_required',
+                        }
+                      }),
+                      remarks: '',
+                      pathwayNotify: false,
                       parentMarkingId: resolvedParent ?? undefined,
+                      direction,
+                      consumeDrafts: true,
                     })
                   })
                 }
               >
-                Mark
+                {dialog === 'reply' ? 'Reply' : 'Forward'}
               </Button>
             </div>
           </div>
@@ -1474,22 +2032,64 @@ export function MarkingWorkflowPanel({
       {(dialog === 'note' || dialog === 'respond') && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold">{dialog === 'note' ? 'Add Comment' : 'Submit response'}</h2>
-            {dialog === 'note' && activeHolds.length > 1 && (
-              <div className="mt-2">
-                <label className="block text-xs font-medium text-slate-600">On which hold?</label>
-                <AppSelect
-                  value={contextMarkingId != null ? String(contextMarkingId) : ''}
-                  onValueChange={(v) => setContextMarkingId(v ? Number(v) : null)}
-                  options={[
-                    { value: '', label: 'Select hold…' },
-                    ...activeHolds.map((h) => ({
-                      value: String(h.id),
-                      label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
-                    })),
-                  ]}
-                  className="mt-1 w-full text-sm"
-                />
+            <h2 className="text-sm font-bold">
+              {dialog === 'note'
+                ? draftIntent === 'reply'
+                  ? 'Add Reply Comment'
+                  : 'Add Forwarding Comment'
+                : 'Submit response'}
+            </h2>
+            {dialog === 'note' && (
+              <div className="mt-2 space-y-2">
+                {draftIntent === 'reply' ? (
+                  <>
+                    {activeHolds.length > 1 && (
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600">
+                          Replying under which hold?
+                        </label>
+                        <AppSelect
+                          value={contextMarkingId != null ? String(contextMarkingId) : ''}
+                          onValueChange={(v) => {
+                            const id = v ? Number(v) : null
+                            setContextMarkingId(id)
+                            const hold = activeHolds.find((h) => h.id === id)
+                            if (hold) setDraftTargetUser(replyTargetForHold(hold, me.name))
+                          }}
+                          options={[
+                            { value: '', label: 'Select hold…' },
+                            ...activeHolds.map((h) => ({
+                              value: String(h.id),
+                              label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
+                            })),
+                          ]}
+                          className="mt-1 w-full text-sm"
+                        />
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600">Recipient</label>
+                      <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                        {draftTargetUser || '—'}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600">Recipient</label>
+                    <AppSelect
+                      value={draftTargetUser || '__common__'}
+                      onValueChange={(v) => setDraftTargetUser(v === '__common__' ? '' : v)}
+                      options={[
+                        { value: '__common__', label: 'Common to all recipients' },
+                        ...users
+                          .filter((u) => u.name !== me.name)
+                          .map((u) => ({ value: u.name, label: u.name })),
+                      ]}
+                      className="mt-1 w-full text-sm"
+                    />
+                  </div>
+                )}
               </div>
             )}
             {dialog === 'respond' && rrHoldsForMe.length > 1 && (
@@ -1517,7 +2117,11 @@ export function MarkingWorkflowPanel({
               placeholder={dialog === 'note' ? 'Your input…' : 'Your response…'}
             />
             <p className="mt-2 text-[11px] text-slate-400">
-              Use <span className="font-medium">Add Attachment</span> to attach files separately.
+              Use{' '}
+              <span className="font-medium">
+                {draftIntent === 'reply' ? 'Add Reply Attachment' : 'Add Forwarding Attachment'}
+              </span>{' '}
+              to attach files separately.
             </p>
             <div className="mt-3 flex justify-end gap-2">
               <Button
@@ -1535,23 +2139,19 @@ export function MarkingWorkflowPanel({
                   onClick={() =>
                     void run(async () => {
                       if (!noteBody.trim()) throw new Error('Note text is required')
-                      if (activeHolds.length > 1 && contextMarkingId == null) {
-                        throw new Error('Select which hold this note belongs to')
+                      if (draftIntent === 'reply' && !draftTargetUser.trim()) {
+                        throw new Error('Select which hold you are drafting a reply under')
                       }
-                      const markingId =
-                        activeHolds.length === 1
-                          ? activeHolds[0]!.id
-                          : activeHolds.length > 1
-                            ? contextMarkingId ?? undefined
-                            : undefined
-                      await addMarkingNote(letter.id, {
+                      const result = await addDraftNote(letter.id, {
                         bodyText: noteBody,
-                        markingId,
+                        targetUser: draftTargetUser,
+                        intent: draftIntent,
                       })
+                      setDrafts(result.drafts)
                     })
                   }
                 >
-                  Save note
+                  Save draft
                 </Button>
               ) : (
                 <Button
@@ -1575,27 +2175,64 @@ export function MarkingWorkflowPanel({
       {dialog === 'attach' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold">Add Attachment</h2>
+            <h2 className="text-sm font-bold">
+              {draftIntent === 'reply' ? 'Add Reply Attachment' : 'Add Forwarding Attachment'}
+            </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Files are linked to your current marking hold, not to individual notes.
+              Draft for a recipient, then confirm with{' '}
+              {draftIntent === 'reply' ? 'Reply' : 'Forward'}.
             </p>
-            {activeHolds.length > 1 && (
-              <div className="mt-2">
-                <label className="block text-xs font-medium text-slate-600">On which hold?</label>
-                <AppSelect
-                  value={contextMarkingId != null ? String(contextMarkingId) : ''}
-                  onValueChange={(v) => setContextMarkingId(v ? Number(v) : null)}
-                  options={[
-                    { value: '', label: 'Select hold…' },
-                    ...activeHolds.map((h) => ({
-                      value: String(h.id),
-                      label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
-                    })),
-                  ]}
-                  className="mt-1 w-full text-sm"
-                />
-              </div>
-            )}
+            <div className="mt-2 space-y-2">
+              {draftIntent === 'reply' ? (
+                <>
+                  {activeHolds.length > 1 && (
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600">
+                        Replying under which hold?
+                      </label>
+                      <AppSelect
+                        value={contextMarkingId != null ? String(contextMarkingId) : ''}
+                        onValueChange={(v) => {
+                          const id = v ? Number(v) : null
+                          setContextMarkingId(id)
+                          const hold = activeHolds.find((h) => h.id === id)
+                          if (hold) setDraftTargetUser(replyTargetForHold(hold, me.name))
+                        }}
+                        options={[
+                          { value: '', label: 'Select hold…' },
+                          ...activeHolds.map((h) => ({
+                            value: String(h.id),
+                            label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
+                          })),
+                        ]}
+                        className="mt-1 w-full text-sm"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600">Recipient</label>
+                    <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                      {draftTargetUser || '—'}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600">Recipient</label>
+                  <AppSelect
+                    value={draftTargetUser || '__common__'}
+                    onValueChange={(v) => setDraftTargetUser(v === '__common__' ? '' : v)}
+                    options={[
+                      { value: '__common__', label: 'Common to all recipients' },
+                      ...users
+                        .filter((u) => u.name !== me.name)
+                        .map((u) => ({ value: u.name, label: u.name })),
+                    ]}
+                    className="mt-1 w-full text-sm"
+                  />
+                </div>
+              )}
+            </div>
             <div className="mt-3 rounded-lg border border-slate-200 p-3">
               <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-[8rem] flex-1">
@@ -1678,21 +2315,91 @@ export function MarkingWorkflowPanel({
                 onClick={() =>
                   void run(async () => {
                     if (!pendingFiles.length) throw new Error('Choose at least one file')
-                    if (activeHolds.length > 1 && contextMarkingId == null) {
-                      throw new Error('Select which hold these attachments belong to')
+                    if (draftIntent === 'reply' && !draftTargetUser.trim()) {
+                      throw new Error('Select which hold you are drafting a reply under')
                     }
-                    const markingId =
-                      activeHolds.length === 1
-                        ? activeHolds[0]!.id
-                        : activeHolds.length > 1
-                          ? contextMarkingId
-                          : undefined
                     const uploaded = await uploadPendingAttachments()
-                    await addAttachmentsToMarking(letter.id, uploaded, markingId)
+                    const result = await addDraftAttachments(
+                      letter.id,
+                      uploaded,
+                      draftTargetUser,
+                      draftIntent,
+                    )
+                    setDrafts(result.drafts)
                   })
                 }
               >
-                Upload
+                Save draft
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dialog === 'revoke' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold">Revoke markings</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Revoke a mark only if the recipient has not remade it or added comments/attachments.
+            </p>
+            {revokableMarkings.length === 0 ? (
+              <p className="mt-3 text-xs text-slate-500">No markings available to revoke.</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {revokableMarkings.map((m) => (
+                  <li
+                    key={m.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-800">{m.toUser}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {markingActionLabel(m.action)}
+                        {shortPathId(m.pathId) ? ` · Path ${shortPathId(m.pathId)}` : ''}
+                        {m.createdAt ? ` · ${formatDateTime(m.createdAt)}` : ''}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={busy}
+                      onClick={() =>
+                        void (async () => {
+                          busyRef.current = true
+                          setBusy(true)
+                          setError('')
+                          try {
+                            await revokeMarking(m.id)
+                            await onDone()
+                            await load()
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : 'Revoke failed')
+                          } finally {
+                            busyRef.current = false
+                            setBusy(false)
+                          }
+                        })()
+                      }
+                    >
+                      Revoke
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
+            <div className="mt-4 flex justify-end">
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  setDialog(null)
+                  setError('')
+                }}
+              >
+                Close
               </Button>
             </div>
           </div>

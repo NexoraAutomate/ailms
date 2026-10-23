@@ -75,15 +75,22 @@ async def upload_document(
     letter_id: int,
     document_type: str = Form(...),
     change_description: str = Form(default=""),
+    scope: str = Form(
+        default="letter",
+        description="letter = Attachments tab (locked after first mark); workflow = marking attachments",
+    ),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
+    if scope not in {"letter", "workflow"}:
+        raise HTTPException(status_code=422, detail="scope must be 'letter' or 'workflow'")
     document = await create_document_with_upload(
         db,
         letter_id=letter_id,
         document_type=document_type,
         upload=file,
         change_description=change_description,
+        require_registration_edit=(scope == "letter"),
     )
     db.commit()
     db.refresh(document)

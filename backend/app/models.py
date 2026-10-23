@@ -309,6 +309,10 @@ class Marking(Base):
         nullable=True,
         index=True,
     )
+    # Stable branch id: inherited on single-recipient continue; new UUID per recipient on fan-out.
+    path_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    # forward = onward path; reply = back to the immediate previous marker on the same path.
+    direction: Mapped[str] = mapped_column(String(20), default="forward", index=True)
     from_user: Mapped[str] = mapped_column(String(120), default="", index=True)
     to_user: Mapped[str] = mapped_column(String(120), default="", index=True)
     action: Mapped[str] = mapped_column(String(40), default="forward", index=True)
@@ -365,6 +369,43 @@ class CorrespondenceAttachment(Base):
         index=True,
     )
     created_by: Mapped[str] = mapped_column(String(120), default="", index=True)
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    attachment_kind: Mapped[str] = mapped_column(String(60), default="Other")
+    storage_key: Mapped[str] = mapped_column(String(500), default="")
+    original_filename: Mapped[str] = mapped_column(String(255), default="")
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CorrespondenceDraftNote(Base):
+    """Draft comment staged for a future Forward/Reply recipient (not yet published)."""
+
+    __tablename__ = "cms_correspondence_draft_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    author_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    # Empty target_user = common draft copied to every recipient on Forward.
+    target_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    # forward | reply — mutually exclusive staging for Forward vs Reply confirm.
+    intent: Mapped[str] = mapped_column(String(20), default="forward", index=True)
+    body_text: Mapped[str] = mapped_column(Text, default="")
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class CorrespondenceDraftAttachment(Base):
+    """Draft file staged for a future Forward/Reply recipient (not yet published)."""
+
+    __tablename__ = "cms_correspondence_draft_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    created_by: Mapped[str] = mapped_column(String(120), default="", index=True)
+    target_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    intent: Mapped[str] = mapped_column(String(20), default="forward", index=True)
     document_id: Mapped[int | None] = mapped_column(
         ForeignKey("cms_documents.id", ondelete="SET NULL"), nullable=True
     )

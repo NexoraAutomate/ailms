@@ -126,7 +126,13 @@ export function ReplyDialog({
       for (const file of files) {
         const type = documentType || inferDocumentType(file.name, 'Draft Response')
         try {
-          await uploadLetterDocument(letter.id, file, type, `Reply attachment · to ${recipient}`)
+          await uploadLetterDocument(
+            letter.id,
+            file,
+            type,
+            `Reply attachment · to ${recipient}`,
+            'workflow',
+          )
         } catch (err) {
           uploadErrors.push(err instanceof Error ? err.message : file.name)
         }

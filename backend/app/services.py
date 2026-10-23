@@ -157,7 +157,43 @@ def serialize_letter(
         validatedAt=letter.validated_at.isoformat() if getattr(letter, "validated_at", None) else "",
         classifiedAt=letter.classified_at.isoformat() if getattr(letter, "classified_at", None) else "",
         canEditDetails=bool(edit_details),
+        sentMarkingId=None,
+        sentToUser="",
+        sentPathId="",
+        sentDueAt="",
+        sentAction="",
+        markedBy="",
     )
+
+
+def attach_inbox_marked_by(letter_out: LetterOut, marked_by: str) -> LetterOut:
+    """Clone a letter DTO with the Inbox marker (who marked it to the viewer)."""
+    return letter_out.model_copy(update={"markedBy": (marked_by or "").strip()})
+
+
+def attach_sent_marking(letter_out: LetterOut, marking) -> LetterOut:
+    """Clone a letter DTO as a Sent row bound to one Response Required marking."""
+    updates: dict = {
+        "sentMarkingId": marking.id,
+        "sentToUser": marking.to_user or "",
+        "sentPathId": marking.path_id or "",
+        "sentDueAt": marking.due_at.isoformat() if marking.due_at else "",
+        "sentAction": marking.action or "",
+        # Surface recipient on Assigned To for the Sent list.
+        "assignedTo": marking.to_user or letter_out.assignedTo,
+        "assignedBy": marking.from_user or letter_out.assignedBy,
+        "lastAction": (
+            "Awaiting Response"
+            if marking.action == "response_required"
+            else f"Forwarded to {marking.to_user}"
+        ),
+        "status": (
+            "Awaiting Response" if marking.action == "response_required" else letter_out.status
+        ),
+    }
+    if marking.due_at:
+        updates["dueDate"] = marking.due_at.isoformat()
+    return letter_out.model_copy(update=updates)
 
 
 def serialize_department(db: Session, department: Department) -> DepartmentOut:

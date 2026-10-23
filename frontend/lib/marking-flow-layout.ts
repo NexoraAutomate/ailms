@@ -1,6 +1,6 @@
 import type { Edge, Node } from '@xyflow/react'
 import { MarkerType } from '@xyflow/react'
-import { markingActionLabel, type MarkingNode } from '@/services/markings'
+import { markingActionLabel, shortPathId, type MarkingNode } from '@/services/markings'
 
 const H_GAP = 220
 const V_GAP = 120
@@ -24,12 +24,19 @@ export type MarkingFlowNodeData = {
   createdAt?: string
   markingId?: number
   batchId?: number
+  pathId?: string
+  pathLabel?: string
+  direction?: string
   orientation: MarkingFlowOrientation
 }
 
 export type MarkingFlowNode = Node<MarkingFlowNodeData, 'markingPerson'>
 
 type LayoutResult = { nodes: MarkingFlowNode[]; edges: Edge[] }
+
+function isReplyMarking(node: MarkingNode) {
+  return (node.direction || '').toLowerCase() === 'reply'
+}
 
 /** Drop revoked markings (and their subtrees) from the pathway graph. */
 function visibleChildren(node: MarkingNode): MarkingNode[] {
@@ -44,10 +51,24 @@ function filterTree(tree: MarkingNode[]): MarkingNode[] {
   return tree.filter((n) => n.status !== 'revoked').map(stripRevokedDescendants)
 }
 
+function forwardChildren(node: MarkingNode): MarkingNode[] {
+  return visibleChildren(node).filter((c) => !isReplyMarking(c))
+}
+
+function replyChildren(node: MarkingNode): MarkingNode[] {
+  return visibleChildren(node).filter((c) => isReplyMarking(c))
+}
+
+/**
+ * Horizontal span in "slots". Replies sit beside their parent at the same depth,
+ * so width is max(forward subtree, 1 + reply count).
+ */
 function subtreeWidth(node: MarkingNode): number {
-  const kids = visibleChildren(node)
-  if (!kids.length) return 1
-  return kids.reduce((sum, c) => sum + subtreeWidth(c), 0)
+  const forwards = forwardChildren(node)
+  const replies = replyChildren(node)
+  const forwardWidth =
+    forwards.length === 0 ? 1 : forwards.reduce((sum, c) => sum + subtreeWidth(c), 0)
+  return Math.max(forwardWidth, 1 + replies.length)
 }
 
 function positionAt(
@@ -67,19 +88,15 @@ function positionAt(
   }
 }
 
-function layoutMarking(
+function pushMarkingNode(
   node: MarkingNode,
   depth: number,
-  leftSlot: number,
-  parentId: string,
+  centerSlot: number,
   orientation: MarkingFlowOrientation,
   nodes: MarkingFlowNode[],
-  edges: Edge[],
-): number {
-  const width = subtreeWidth(node)
-  const centerSlot = leftSlot + width / 2
+): string {
   const id = `m-${node.id}`
-
+  const pathLabel = shortPathId(node.pathId) || undefined
   nodes.push({
     id,
     type: 'markingPerson',
@@ -87,9 +104,11 @@ function layoutMarking(
     data: {
       kind: 'marking',
       label: node.toUser,
-      subtitle: `from ${node.fromUser}`,
+      subtitle: pathLabel
+        ? `${isReplyMarking(node) ? '↩' : '←'} ${node.fromUser} · ${pathLabel}`
+        : `from ${node.fromUser}`,
       action: node.action,
-      actionLabel: markingActionLabel(node.action),
+      actionLabel: isReplyMarking(node) ? 'Reply' : markingActionLabel(node.action),
       status: node.status,
       dueAt: node.dueAt || undefined,
       fromUser: node.fromUser,
@@ -99,37 +118,77 @@ function layoutMarking(
       createdAt: node.createdAt || undefined,
       markingId: node.id,
       batchId: node.batchId,
+      pathId: node.pathId || undefined,
+      pathLabel,
+      direction: node.direction || 'forward',
       orientation,
     },
     draggable: false,
     connectable: false,
   })
+  return id
+}
 
+function pushEdge(
+  parentId: string,
+  id: string,
+  node: MarkingNode,
+  edges: Edge[],
+): void {
+  const reply = isReplyMarking(node)
   edges.push({
     id: `e-${parentId}-${id}`,
     source: parentId,
     target: id,
-    type: 'smoothstep',
+    type: reply ? 'replyUTurn' : 'smoothstep',
     animated: node.status === 'active',
     style: {
-      stroke: '#64748b',
+      stroke: reply ? '#7c3aed' : '#64748b',
       strokeWidth: 1.5,
     },
     markerEnd: {
       type: MarkerType.ArrowClosed,
-      color: '#64748b',
+      color: reply ? '#7c3aed' : '#64748b',
       width: 14,
       height: 14,
     },
-    label: markingActionLabel(node.action),
-    labelStyle: { fontSize: 9, fill: '#64748b' },
+    label: reply ? 'Reply' : markingActionLabel(node.action),
+    labelStyle: {
+      fontSize: 9,
+      fill: reply ? '#7c3aed' : '#64748b',
+    },
     selectable: false,
     focusable: false,
     deletable: false,
   })
+}
+
+function layoutMarking(
+  node: MarkingNode,
+  depth: number,
+  leftSlot: number,
+  parentId: string,
+  orientation: MarkingFlowOrientation,
+  nodes: MarkingFlowNode[],
+  edges: Edge[],
+): number {
+  const forwards = forwardChildren(node)
+  const replies = replyChildren(node)
+  const width = subtreeWidth(node)
+
+  // This node sits in the first slot of its span; reply children occupy slots to its side
+  // at the same depth (U-turn back), while forwards continue to depth + 1.
+  const selfCenter = leftSlot + 0.5
+  const id = pushMarkingNode(node, depth, selfCenter, orientation, nodes)
+  pushEdge(parentId, id, node, edges)
+
+  replies.forEach((reply, index) => {
+    // Same depth as parent ("previous node"); place immediately to the side.
+    layoutMarking(reply, depth, leftSlot + 1 + index, id, orientation, nodes, edges)
+  })
 
   let slot = leftSlot
-  for (const child of visibleChildren(node)) {
+  for (const child of forwards) {
     const w = subtreeWidth(child)
     layoutMarking(child, depth + 1, slot, id, orientation, nodes, edges)
     slot += w
@@ -149,13 +208,13 @@ export function buildMarkingFlowGraph(
   const name = (initiatorName || '').trim() || 'Initiator'
   const visible = filterTree(tree)
 
-  const rootsWidth = visible.length ? visible.reduce((s, n) => s + subtreeWidth(n), 0) : 1
-  const rootCenter = rootsWidth / 2
+  const rootForwards = visible.filter((n) => !isReplyMarking(n))
+  const rootReplies = visible.filter((n) => isReplyMarking(n))
 
   nodes.push({
     id: rootId,
     type: 'markingPerson',
-    position: positionAt(0, rootCenter, orientation),
+    position: positionAt(0, 0.5, orientation),
     data: {
       kind: 'root',
       label: name,
@@ -168,8 +227,12 @@ export function buildMarkingFlowGraph(
     connectable: false,
   })
 
+  rootReplies.forEach((reply, index) => {
+    layoutMarking(reply, 0, 1 + index, rootId, orientation, nodes, edges)
+  })
+
   let slot = 0
-  for (const child of visible) {
+  for (const child of rootForwards) {
     const w = subtreeWidth(child)
     layoutMarking(child, 1, slot, rootId, orientation, nodes, edges)
     slot += w

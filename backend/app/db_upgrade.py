@@ -971,6 +971,8 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                         batch_id INTEGER NOT NULL REFERENCES cms_marking_batches(id) ON DELETE CASCADE,
                         letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
                         parent_marking_id INTEGER REFERENCES cms_markings(id) ON DELETE SET NULL,
+                        path_id VARCHAR(36) DEFAULT '',
+                        direction VARCHAR(20) DEFAULT 'forward',
                         from_user VARCHAR(120) DEFAULT '',
                         to_user VARCHAR(120) DEFAULT '',
                         action VARCHAR(40) DEFAULT 'forward',
@@ -997,6 +999,8 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                 "letter_id",
                 "batch_id",
                 "parent_marking_id",
+                "path_id",
+                "direction",
                 "from_user",
                 "to_user",
                 "action",
@@ -1190,6 +1194,131 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
             )
 
     inspector = inspect(engine)
+    if inspector.has_table("cms_markings"):
+        columns = {c["name"] for c in inspector.get_columns("cms_markings")}
+        with engine.begin() as conn:
+            if "path_id" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_markings "
+                        "ADD COLUMN path_id VARCHAR(36) DEFAULT ''"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_markings_path_id "
+                        "ON cms_markings (path_id)"
+                    )
+                )
+            if "direction" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_markings "
+                        "ADD COLUMN direction VARCHAR(20) DEFAULT 'forward'"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_markings_direction "
+                        "ON cms_markings (direction)"
+                    )
+                )
+        _backfill_marking_path_ids(engine)
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_correspondence_draft_notes"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_correspondence_draft_notes (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        author_user VARCHAR(120) DEFAULT '',
+                        target_user VARCHAR(120) DEFAULT '',
+                        intent VARCHAR(20) DEFAULT 'forward',
+                        body_text TEXT DEFAULT '',
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            for idx in ("letter_id", "author_user", "target_user", "intent"):
+                conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS ix_cms_correspondence_draft_notes_{idx} "
+                        f"ON cms_correspondence_draft_notes ({idx})"
+                    )
+                )
+
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_draft_notes"):
+        note_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_draft_notes")}
+        if "intent" not in note_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_draft_notes "
+                        "ADD COLUMN intent VARCHAR(20) DEFAULT 'forward'"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_draft_notes_intent "
+                        "ON cms_correspondence_draft_notes (intent)"
+                    )
+                )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_correspondence_draft_attachments"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_correspondence_draft_attachments (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        created_by VARCHAR(120) DEFAULT '',
+                        target_user VARCHAR(120) DEFAULT '',
+                        intent VARCHAR(20) DEFAULT 'forward',
+                        document_id INTEGER REFERENCES cms_documents(id) ON DELETE SET NULL,
+                        attachment_kind VARCHAR(60) DEFAULT 'Other',
+                        storage_key VARCHAR(500) DEFAULT '',
+                        original_filename VARCHAR(255) DEFAULT '',
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            for idx in ("letter_id", "created_by", "target_user", "intent"):
+                conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS ix_cms_correspondence_draft_attachments_{idx} "
+                        f"ON cms_correspondence_draft_attachments ({idx})"
+                    )
+                )
+
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_draft_attachments"):
+        att_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_draft_attachments")}
+        if "intent" not in att_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_draft_attachments "
+                        "ADD COLUMN intent VARCHAR(20) DEFAULT 'forward'"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_draft_attachments_intent "
+                        "ON cms_correspondence_draft_attachments (intent)"
+                    )
+                )
+
+    inspector = inspect(engine)
     if not inspector.has_table("cms_outbound_emails"):
         with engine.begin() as conn:
             conn.execute(
@@ -1215,6 +1344,53 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                     "CREATE INDEX IF NOT EXISTS ix_cms_outbound_emails_status "
                     "ON cms_outbound_emails (status)"
                 )
+            )
+
+
+def _backfill_marking_path_ids(engine: Engine) -> None:
+    """Assign path_id to legacy rows: fan-out batches get unique paths; single-child continues parent."""
+    import uuid as _uuid
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_markings"):
+        return
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, batch_id, parent_marking_id, COALESCE(path_id, '') AS path_id
+                FROM cms_markings
+                ORDER BY id ASC
+                """
+            )
+        ).mappings().all()
+        if not rows:
+            return
+        if all((r["path_id"] or "").strip() for r in rows):
+            return
+
+        batch_sizes: dict[int, int] = {}
+        for r in rows:
+            bid = int(r["batch_id"])
+            batch_sizes[bid] = batch_sizes.get(bid, 0) + 1
+
+        path_by_id: dict[int, str] = {}
+        for r in rows:
+            mid = int(r["id"])
+            existing = (r["path_id"] or "").strip()
+            if existing:
+                path_by_id[mid] = existing
+                continue
+            parent_id = r["parent_marking_id"]
+            parent_path = path_by_id.get(int(parent_id)) if parent_id is not None else None
+            fan_out = batch_sizes.get(int(r["batch_id"]), 0) > 1
+            if fan_out or not parent_path:
+                path_by_id[mid] = str(_uuid.uuid4())
+            else:
+                path_by_id[mid] = parent_path
+            conn.execute(
+                text("UPDATE cms_markings SET path_id = :pid WHERE id = :id"),
+                {"pid": path_by_id[mid], "id": mid},
             )
 
 

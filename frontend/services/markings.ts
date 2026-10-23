@@ -10,11 +10,16 @@ import {
 export type { MarkingAction, ResponseType, AttachmentKind }
 export { ACTION_LABELS }
 
+export type MarkingDirection = 'forward' | 'reply'
+
 export type MarkingNode = {
   id: number
   batchId: number
   letterId: string
   parentMarkingId: number | null
+  /** Stable workflow branch id — unique per fan-out recipient; inherited on single continue/reply. */
+  pathId: string
+  direction: MarkingDirection | string
   fromUser: string
   toUser: string
   action: string
@@ -68,6 +73,17 @@ export function groupMarkingsByBatch(flat: MarkingNode[]): { batchId: number; ma
   return order.map((batchId) => ({ batchId, markings: map.get(batchId)! }))
 }
 
+export type StagedNoteInput = {
+  bodyText: string
+}
+
+export type StagedAttachmentInput = {
+  attachmentKind: string
+  documentId?: number | null
+  storageKey?: string
+  originalFilename?: string
+}
+
 export type MarkRecipientInput = {
   toUser: string
   action: MarkingAction
@@ -78,6 +94,9 @@ export type MarkRecipientInput = {
   priority?: string
   track?: boolean
   remindersEnabled?: boolean
+  /** Draft comments published onto this recipient's marking when Forward/Reply is submitted. */
+  notes?: StagedNoteInput[]
+  attachments?: StagedAttachmentInput[]
 }
 
 export type MarkBatchInput = {
@@ -85,6 +104,18 @@ export type MarkBatchInput = {
   remarks?: string
   pathwayNotify?: boolean
   parentMarkingId?: number | null
+  direction?: MarkingDirection
+  /** Shared drafts copied onto every recipient marking in the batch. */
+  commonNotes?: StagedNoteInput[]
+  commonAttachments?: StagedAttachmentInput[]
+  /** Publish Add Comment / Add Attachment drafts for each recipient (default true). */
+  consumeDrafts?: boolean
+}
+
+/** Short display form of a path UUID (first 8 hex chars). */
+export function shortPathId(pathId: string | null | undefined) {
+  const raw = (pathId || '').replace(/-/g, '')
+  return raw ? raw.slice(0, 8).toUpperCase() : ''
 }
 
 export type CorrespondenceAttachment = {
@@ -139,7 +170,103 @@ export async function fetchMarkingAttachments(letterId: string) {
 export async function markLetter(letterId: string, input: MarkBatchInput) {
   return api.post<{ batch: { id: number }; markings: MarkingNode[]; letter: Letter }>(
     `/api/markings/letters/${letterId}/mark`,
-    input,
+    {
+      ...input,
+      direction: input.direction ?? 'forward',
+      consumeDrafts: input.consumeDrafts !== false,
+    },
+  )
+}
+
+export type DraftIntent = 'forward' | 'reply'
+
+export type DraftNote = {
+  id: number
+  letterId: string
+  authorUser: string
+  targetUser: string
+  intent: DraftIntent | string
+  bodyText: string
+  clientIp: string
+  createdAt: string
+}
+
+export type DraftAttachment = {
+  id: number
+  letterId: string
+  createdBy: string
+  targetUser: string
+  intent: DraftIntent | string
+  documentId: number | null
+  attachmentKind: string
+  storageKey: string
+  originalFilename: string
+  clientIp: string
+  createdAt: string
+}
+
+export type MarkingDrafts = {
+  notes: DraftNote[]
+  attachments: DraftAttachment[]
+  targetUsers: string[]
+  forwardTargetUsers: string[]
+  replyTargetUsers: string[]
+  hasForwardDrafts: boolean
+  hasReplyDrafts: boolean
+  commonNoteCount: number
+  commonAttachmentCount: number
+}
+
+export async function fetchMarkingDrafts(letterId: string) {
+  return api.get<MarkingDrafts>(`/api/markings/letters/${letterId}/drafts`)
+}
+
+export async function addDraftNote(
+  letterId: string,
+  input: { bodyText: string; targetUser?: string; intent?: DraftIntent },
+) {
+  return api.post<{ note: DraftNote; drafts: MarkingDrafts }>(
+    `/api/markings/letters/${letterId}/drafts/notes`,
+    {
+      bodyText: input.bodyText,
+      targetUser: input.targetUser ?? '',
+      intent: input.intent ?? 'forward',
+    },
+  )
+}
+
+export async function addDraftAttachments(
+  letterId: string,
+  attachments: StagedAttachmentInput[],
+  targetUser = '',
+  intent: DraftIntent = 'forward',
+) {
+  return api.post<{ attachments: DraftAttachment[]; drafts: MarkingDrafts }>(
+    `/api/markings/letters/${letterId}/drafts/attachments`,
+    { targetUser, intent, attachments },
+  )
+}
+
+export async function updateDraftNote(noteId: number, bodyText: string) {
+  return api.patch<{ note: DraftNote; drafts: MarkingDrafts }>(
+    `/api/markings/drafts/notes/${noteId}`,
+    { bodyText },
+  )
+}
+
+export async function deleteDraftNote(noteId: number) {
+  return api.delete<{ ok: boolean; drafts: MarkingDrafts }>(`/api/markings/drafts/notes/${noteId}`)
+}
+
+export async function deleteDraftAttachment(attachmentId: number) {
+  return api.delete<{ ok: boolean; drafts: MarkingDrafts }>(
+    `/api/markings/drafts/attachments/${attachmentId}`,
+  )
+}
+
+export async function fetchMarkingPath(pathId: string) {
+  return api.get<{ pathId: string; letterId: string; markings: MarkingNode[] }>(
+    `/api/markings/paths/${encodeURIComponent(pathId)}`,
   )
 }
 

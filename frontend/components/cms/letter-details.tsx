@@ -16,7 +16,6 @@ import {
   Inbox,
   Link2,
   Lock,
-  MessageSquare,
   Paperclip,
   Pencil,
   Send,
@@ -29,10 +28,8 @@ import { AppSelect } from '@/components/ui/app-select'
 import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
 import { AssignedToDisplay } from '@/components/cms/assigned-to-display'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
-import { ReplyDialog } from '@/components/cms/reply-dialog'
 import { CollapsibleCardMotionProvider } from '@/components/ui/collapsible-card'
 import { getLetter, priorityTone, statusTone, updateLetter, type Letter, type Priority } from '@/services/letters'
-import { letterRowActions } from '@/services/letter-actions'
 import {
   CorrespondenceThreadPanel,
   DocumentsPanel,
@@ -67,7 +64,6 @@ const ATTACHMENTS_SUB_TABS: {
 
 export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   const { letters, users, me, refresh, applyLetterField, acceptAiAction, departments, organizations, masterData } = useAppData()
-  const [replyOpen, setReplyOpen] = useState(false)
   const [tab, setTab] = useState<LetterTabId>('details')
   const [attachmentsSubTab, setAttachmentsSubTab] = useState<AttachmentsSubTabId>('correspondence')
   const cached = letters.find((item) => item.id === id) ?? null
@@ -133,7 +129,6 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   }
   if (!letter) return <p className="text-sm text-slate-500">Letter not found.</p>
 
-  const canReply = letterRowActions(letter, me.role).includes('reply')
   const TypeIcon = letter.type === 'Incoming' ? Inbox : Send
   const PriorityIcon = letter.priority === 'Urgent' ? CircleAlert : letter.priority === 'Important' ? ClipboardList : CheckCircle2
   const StatusIcon =
@@ -166,14 +161,6 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
               </Badge>
             </div>
           </>
-        }
-        action={
-          canReply ? (
-            <Button onClick={() => setReplyOpen(true)}>
-              <MessageSquare data-icon="inline-start" />
-              Reply
-            </Button>
-          ) : undefined
         }
       />
 
@@ -251,16 +238,6 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
           )}
         </AppTabPanel>
       </CollapsibleCardMotionProvider>
-
-      {replyOpen && (
-        <ReplyDialog
-          letter={letter}
-          users={users}
-          role={me.role}
-          onClose={() => setReplyOpen(false)}
-          onDone={refresh}
-        />
-      )}
     </>
   )
 }
