@@ -6,6 +6,7 @@ export type LetterRowActionId =
   | 'assign'
   | 'forward'
   | 'reassign'
+  | 'respond'
   | 'reply'
   | 'request_clarification'
   | 'mark_complete'
@@ -149,6 +150,7 @@ export const letterActionLabel: Record<LetterRowActionId, string> = {
   assign: 'Assign',
   forward: 'Forward',
   reassign: 'Reassign',
+  respond: 'Respond',
   reply: 'Reply',
   request_clarification: 'Clarify',
   mark_complete: 'Complete',
@@ -204,6 +206,14 @@ export function letterRowActions(letter: Letter, role: string): LetterRowActionI
     // Soft-archived: admin may delete only when not marked out to another user.
     return isAdministrator(role) && letter.hasActiveMarkings !== true ? ['delete'] : []
   }
+  // Inbox holder: Assign (forward onward) + Respond (RR) from the table.
+  if (letter.viewerHolds === true || letter.canAssign === true || letter.canRespond === true) {
+    const inboxActions: LetterRowActionId[] = []
+    // Holders can always Assign/Forward; Respond only when RR is outstanding.
+    if (letter.canAssign === true || letter.viewerHolds === true) inboxActions.push('assign')
+    if (letter.canRespond === true) inboxActions.push('respond')
+    return inboxActions
+  }
   // While marked to another user, sender must revoke on the Workflow tab before
   // edit / delete / assign become available again.
   if (letter.hasActiveMarkings === true) {
@@ -217,6 +227,7 @@ export function letterRowActions(letter: Letter, role: string): LetterRowActionI
       return letter.canEditDetails === true && transitionAllowed(action, status, role)
     }
     if (action === 'reply') return replyWorkflowAction(status, role) !== null
+    if (action === 'respond') return false
     return transitionAllowed(action, status, role)
   })
   if (isAdministrator(role)) actions.push('delete')

@@ -54,10 +54,16 @@ def user_on_route_or_action(db: Session, letter_id: int, user_name: str) -> bool
 
 
 def user_on_marking(db: Session, letter_id: int, user_name: str) -> bool:
+    """True when the user participates in a non-revoked marking on this letter.
+
+    Revoked markings do not grant Track/Catalog access — the recipient must lose
+    the letter once the marker revokes.
+    """
     return (
         db.query(Marking.id)
         .filter(
             Marking.letter_id == letter_id,
+            Marking.status != "revoked",
             or_(Marking.from_user == user_name, Marking.to_user == user_name),
         )
         .first()
@@ -95,7 +101,11 @@ def assert_letter_access(db: Session, letter: Letter, user_name: str, role: str 
 
 
 def owned_letter_filter(user_name: str):
-    """SQLAlchemy filter for Track / bootstrap scoping (includes markings + legacy route/action)."""
+    """SQLAlchemy filter for Track / bootstrap scoping (includes markings + legacy route/action).
+
+    Revoked markings are ignored so a recipient does not keep the letter in Track
+    after the marker revokes.
+    """
     name = (user_name or "").strip()
     return or_(
         Letter.assigned_to == name,
@@ -105,7 +115,8 @@ def owned_letter_filter(user_name: str):
         Letter.id.in_(select(RouteStep.letter_id).where(RouteStep.to_user == name)),
         Letter.id.in_(
             select(Marking.letter_id).where(
-                or_(Marking.from_user == name, Marking.to_user == name)
+                Marking.status != "revoked",
+                or_(Marking.from_user == name, Marking.to_user == name),
             )
         ),
     )

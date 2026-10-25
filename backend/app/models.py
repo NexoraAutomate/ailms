@@ -377,6 +377,40 @@ class CorrespondenceAttachment(Base):
     original_filename: Mapped[str] = mapped_column(String(255), default="")
     client_ip: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Soft-delete: keep junior submissions after senior remove/replace.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    deleted_by: Mapped[str] = mapped_column(String(120), default="")
+    # Last file version id known when this row was current (for archive trail).
+    current_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class CorrespondenceAttachmentEvent(Base):
+    """Append-only archive of add / replace / remove for each marking level."""
+
+    __tablename__ = "cms_correspondence_attachment_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(
+        ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True, default=0
+    )
+    marking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_markings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    attachment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cms_correspondence_attachments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # added | replaced | removed
+    event_type: Mapped[str] = mapped_column(String(20), default="added", index=True)
+    actor_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    document_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    original_filename: Mapped[str] = mapped_column(String(255), default="")
+    storage_key: Mapped[str] = mapped_column(String(500), default="")
+    attachment_kind: Mapped[str] = mapped_column(String(60), default="Other")
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
 class CorrespondenceDraftNote(Base):

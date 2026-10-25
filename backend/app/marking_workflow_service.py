@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     CorrespondenceAttachment,
+    CorrespondenceAttachmentEvent,
     CorrespondenceDraftAttachment,
     CorrespondenceDraftNote,
     CorrespondenceNote,
@@ -204,31 +205,26 @@ def _mark_last_action(marking: Marking) -> str:
     return f"Marked ({_action_label(marking.action)})"
 
 
-def _revoke_last_action(marking: Marking) -> str:
-    return f"Revoked (from {marking.to_user})"
-
-
 def derive_last_action_from_markings(db: Session, letter: Letter) -> str | None:
     """Most recent marking event label for backfill / repair.
 
-    Emits one terminal event per marking (revoked > responded > marked) so
-    create/revoke clock skew (DB local now vs utcnow) cannot resurface a mark
-    after it was revoked.
+    Revoked markings are omitted entirely — revoke is not a workflow tracking
+    event, and skipping them also avoids create/revoke clock skew resurfacing
+    a mark after it was revoked.
     """
     events: list[tuple[datetime, int, str]] = []
     if letter.status == CLOSED_LETTER and letter.closed_at:
         events.append((letter.closed_at, letter.id or 0, "Closed"))
-    rows = db.query(Marking).filter(Marking.letter_id == letter.id).all()
+    rows = (
+        db.query(Marking)
+        .filter(Marking.letter_id == letter.id, Marking.status != "revoked")
+        .all()
+    )
     for row in rows:
-        if row.status == "revoked" and row.revoked_at:
-            events.append((row.revoked_at, row.id or 0, _revoke_last_action(row)))
-        elif row.status == "responded" and row.responded_at:
+        if row.status == "responded" and row.responded_at:
             events.append((row.responded_at, row.id or 0, "Responded"))
         elif row.created_at:
             events.append((row.created_at, row.id or 0, _mark_last_action(row)))
-        elif row.status == "revoked":
-            # Missing revoked_at: still prefer revoke over create for this row.
-            events.append((row.created_at or datetime.min, row.id or 0, _revoke_last_action(row)))
     if not events:
         return None
     events.sort(key=lambda item: (item[0], item[1]))
@@ -320,10 +316,17 @@ def marking_has_children(db: Session, marking_id: int) -> bool:
 
 
 def marking_recipient_has_activity(db: Session, marking: Marking) -> bool:
-    """True if the marked-to user has added comments or attachments on this marking."""
+    """True if the marked-to user has contributed on this marking.
+
+    Counts notes, attachments (including soft-deleted), file replace versions they
+    uploaded on linked documents, and archive events — so revoke stays blocked
+    after the recipient acts even if a senior later removes/replaces files.
+    """
     recipient = (marking.to_user or "").strip()
     if not recipient:
         return False
+    if marking.status == "responded":
+        return True
     has_note = (
         db.query(CorrespondenceNote.id)
         .filter(
@@ -335,11 +338,46 @@ def marking_recipient_has_activity(db: Session, marking: Marking) -> bool:
     )
     if has_note:
         return True
-    return (
+    has_attachment = (
         db.query(CorrespondenceAttachment.id)
         .filter(
             CorrespondenceAttachment.marking_id == marking.id,
             CorrespondenceAttachment.created_by == recipient,
+        )
+        .first()
+        is not None
+    )
+    if has_attachment:
+        return True
+    has_event = (
+        db.query(CorrespondenceAttachmentEvent.id)
+        .filter(
+            CorrespondenceAttachmentEvent.marking_id == marking.id,
+            CorrespondenceAttachmentEvent.actor_user == recipient,
+            CorrespondenceAttachmentEvent.event_type.in_(("added", "replaced", "removed")),
+        )
+        .first()
+        is not None
+    )
+    if has_event:
+        return True
+    doc_ids = [
+        int(row[0])
+        for row in db.query(CorrespondenceAttachment.document_id)
+        .filter(
+            CorrespondenceAttachment.marking_id == marking.id,
+            CorrespondenceAttachment.document_id.isnot(None),
+        )
+        .all()
+        if row[0] is not None
+    ]
+    if not doc_ids:
+        return False
+    return (
+        db.query(DocumentVersion.id)
+        .filter(
+            DocumentVersion.document_id.in_(doc_ids),
+            DocumentVersion.uploaded_by == recipient,
         )
         .first()
         is not None
@@ -479,7 +517,7 @@ def path_ids_visible_to_user(db: Session, letter_id: int, actor_name: str) -> se
     Path ids the actor may see on this letter.
 
     Returns None for Admin (unrestricted). A user sees a path if they appear as
-    from_user or to_user on any marking with that path_id.
+    from_user or to_user on any non-revoked marking with that path_id.
     """
     name = (actor_name or "").strip()
     if not name:
@@ -490,6 +528,7 @@ def path_ids_visible_to_user(db: Session, letter_id: int, actor_name: str) -> se
         db.query(Marking.path_id)
         .filter(
             Marking.letter_id == letter_id,
+            Marking.status != "revoked",
             (Marking.from_user == name) | (Marking.to_user == name),
         )
         .distinct()
@@ -517,9 +556,10 @@ def marking_tree(
     *,
     actor_name: str | None = None,
 ) -> list[dict]:
+    # Revoked markings are omitted from Workflow history / pathway (not tracked).
     rows = (
         db.query(Marking)
-        .filter(Marking.letter_id == letter_id)
+        .filter(Marking.letter_id == letter_id, Marking.status != "revoked")
         .order_by(Marking.id.asc())
         .all()
     )
@@ -986,9 +1026,8 @@ def create_mark_batch(
             response_type = ""
             response_type_other = ""
 
-        # Only block while an outstanding leaf mark to this user still exists.
-        # Prior marks that were remade onward (have children) must not prevent
-        # marking the same person again after the correspondence returns.
+        # Outstanding leaf mark to this user: non-admin must revoke first;
+        # admin may update action / response type in place (no duplicate row).
         outstanding = (
             db.query(Marking)
             .filter(
@@ -999,11 +1038,21 @@ def create_mark_batch(
             )
             .all()
         )
-        if any(not marking_has_children(db, m.id) for m in outstanding):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Active marking already exists from you to '{to_user}'",
-            )
+        existing_leaf = next(
+            (m for m in outstanding if not marking_has_children(db, m.id)),
+            None,
+        )
+        update_id: int | None = None
+        if existing_leaf is not None:
+            if not _is_admin(db, actor_name):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Active marking already exists from you to '{to_user}'. "
+                        "Revoke it before forwarding again or changing action / response type."
+                    ),
+                )
+            update_id = existing_leaf.id
 
         normalized.append(
             {
@@ -1018,6 +1067,7 @@ def create_mark_batch(
                 "reminders_enabled": reminders_enabled,
                 "notes": _normalize_staged_notes(raw.get("notes")),
                 "attachments": _normalize_staged_attachments(raw.get("attachments")),
+                "update_id": update_id,
             }
         )
 
@@ -1100,6 +1150,9 @@ def create_mark_batch(
                 draft_atts_by_target.setdefault(target, []).append(payload)
 
         for item in normalized:
+            # Admin in-place edit of an existing marking may change action/type without new drafts.
+            if item.get("update_id"):
+                continue
             target = item["to_user"]
             has_personal = bool(
                 item["notes"]
@@ -1116,31 +1169,56 @@ def create_mark_batch(
                     ),
                 )
 
-    actor = _user_by_name(db, actor_name)
-    batch = MarkingBatch(
-        letter_id=letter.id,
-        from_user=actor_name,
-        from_user_id=actor.id if actor else None,
-        remarks=(remarks or "").strip(),
-        pathway_notify=bool(pathway_notify),
-        client_ip=client_ip or "",
-    )
-    db.add(batch)
-    db.flush()
-
-    if pathway_notify:
-        db.add(
-            MarkingSubscription(
-                letter_id=letter.id,
-                batch_id=batch.id,
-                user_name=actor_name,
-                active=True,
-            )
-        )
-
-    fan_out = len(normalized) > 1
+    to_create = [item for item in normalized if not item.get("update_id")]
+    to_update = [item for item in normalized if item.get("update_id")]
+    fan_out = len(to_create) > 1
     created: list[Marking] = []
-    for item in normalized:
+    updated: list[Marking] = []
+
+    for item in to_update:
+        marking = db.get(Marking, int(item["update_id"]))
+        if not marking or marking.letter_id != letter.id:
+            raise HTTPException(status_code=400, detail="Invalid marking to update")
+        marking.action = item["action"]
+        marking.response_type = item["response_type"]
+        marking.response_type_other = item["response_type_other"]
+        marking.instructions = item["instructions"]
+        marking.due_at = item["due_at"]
+        marking.priority = item["priority"]
+        marking.track = item["track"]
+        marking.reminders_enabled = item["reminders_enabled"]
+        updated.append(marking)
+
+    actor = _user_by_name(db, actor_name)
+    batch: MarkingBatch | None = None
+    if to_create:
+        batch = MarkingBatch(
+            letter_id=letter.id,
+            from_user=actor_name,
+            from_user_id=actor.id if actor else None,
+            remarks=(remarks or "").strip(),
+            pathway_notify=bool(pathway_notify),
+            client_ip=client_ip or "",
+        )
+        db.add(batch)
+        db.flush()
+        if pathway_notify:
+            db.add(
+                MarkingSubscription(
+                    letter_id=letter.id,
+                    batch_id=batch.id,
+                    user_name=actor_name,
+                    active=True,
+                )
+            )
+    elif updated:
+        # Admin in-place edit: reuse the existing batch for the API response.
+        batch = db.get(MarkingBatch, updated[0].batch_id)
+
+    if batch is None:
+        raise HTTPException(status_code=400, detail="No recipients to forward")
+
+    for item in to_create:
         marking = Marking(
             batch_id=batch.id,
             letter_id=letter.id,
@@ -1164,7 +1242,11 @@ def create_mark_batch(
         created.append(marking)
     db.flush()
 
-    for marking, item in zip(created, normalized):
+    publish_pairs: list[tuple[Marking, dict[str, Any]]] = [
+        *[(m, item) for m, item in zip(updated, to_update)],
+        *[(m, item) for m, item in zip(created, to_create)],
+    ]
+    for marking, item in publish_pairs:
         target = marking.to_user
         _publish_staged_on_marking(
             db,
@@ -1186,8 +1268,9 @@ def create_mark_batch(
             client_ip=client_ip or "",
         )
 
-    if consume_drafts and created:
-        consumed_targets = {m.to_user for m in created}
+    affected = [*created, *updated]
+    if consume_drafts and affected:
+        consumed_targets = {m.to_user for m in affected}
         for n in draft_note_rows:
             target = (n.target_user or "").strip()
             if not target or target in consumed_targets:
@@ -1199,7 +1282,10 @@ def create_mark_batch(
 
     db.flush()
 
-    primary = _pick_primary_marking(created) or created[0]
+    if not affected:
+        raise HTTPException(status_code=400, detail="No recipients to forward")
+
+    primary = _pick_primary_marking(affected) or affected[0]
     letter.status = OPEN_LETTER
     sync_letter_from_markings(db, letter, last_action=_mark_last_action(primary))
 
@@ -1219,36 +1305,56 @@ def create_mark_batch(
             related_entity_type="marking",
             related_entity_id=str(marking.id),
         )
+    for marking in updated:
+        add_notification(
+            db,
+            title="Marking Updated",
+            description=(
+                f"{letter.number}: marking updated to {marking.action.replace('_', ' ')} "
+                f"by {actor_name}."
+            ),
+            priority=marking.priority or "Medium",
+            letter_id=letter.id,
+            notification_type="Marking Updated",
+            recipient_name=marking.to_user,
+            related_entity_type="marking",
+            related_entity_id=str(marking.id),
+        )
 
-    path_note = (
-        f" ({len({m.path_id for m in created})} path(s))"
-        if fan_out
-        else f" (path {(created[0].path_id or '')[:8]})"
-    )
-    _notify_pathway(
-        db,
-        letter=letter,
-        actor_name=actor_name,
-        title="Pathway Update",
-        description=(
-            f"{letter.number}: {actor_name} "
-            f"{'replied to' if direction == 'reply' else 'forwarded to'} "
-            f"{len(created)} recipient(s){path_note}."
-        ),
-        skip_user=actor_name,
-    )
+    if created:
+        path_note = (
+            f" ({len({m.path_id for m in created})} path(s))"
+            if fan_out
+            else f" (path {(created[0].path_id or '')[:8]})"
+        )
+        _notify_pathway(
+            db,
+            letter=letter,
+            actor_name=actor_name,
+            title="Pathway Update",
+            description=(
+                f"{letter.number}: {actor_name} "
+                f"{'replied to' if direction == 'reply' else 'forwarded to'} "
+                f"{len(created)} recipient(s){path_note}."
+            ),
+            skip_user=actor_name,
+        )
 
+    parts: list[str] = []
+    if created:
+        parts.append(
+            f"{'Replied to' if direction == 'reply' else 'Forwarded to'} "
+            f"{len(created)} recipient(s)"
+        )
+    if updated:
+        parts.append(f"Updated {len(updated)} existing marking(s)")
     add_audit(
         db,
         user=actor_name,
         module="Marking",
-        action="Reply" if direction == "reply" else "Forward",
+        action="Reply" if direction == "reply" else ("Update Marking" if not created else "Forward"),
         record=letter.number,
-        description=(
-            f"{'Replied to' if direction == 'reply' else 'Forwarded to'} "
-            f"{len(created)} recipient(s); paths: "
-            + ", ".join(sorted({(m.path_id or '')[:8] for m in created}))
-        ),
+        description="; ".join(parts),
         source=f"Web · {client_ip or 'unknown'}",
     )
     db.flush()
@@ -1270,6 +1376,11 @@ def revoke_marking(
         raise HTTPException(status_code=400, detail="Letter is closed")
     if marking.from_user != actor_name and not _is_admin(db, actor_name):
         raise HTTPException(status_code=403, detail="Only the marker can revoke")
+    if marking.status == "responded":
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot revoke: recipient has already submitted a response",
+        )
     if marking.status != "active":
         raise HTTPException(status_code=400, detail="Marking is not active")
     if marking_has_children(db, marking.id):
@@ -1280,16 +1391,23 @@ def revoke_marking(
     if marking_recipient_has_activity(db, marking):
         raise HTTPException(
             status_code=409,
-            detail="Cannot revoke: recipient has already added comments or attachments",
+            detail=(
+                "Cannot revoke: recipient has already added comments, attachments, "
+                "or edited files on this marking"
+            ),
         )
 
     marking.status = "revoked"
     marking.revoked_at = datetime.now()
     marking.revoked_by = actor_name
     marking.revoke_ip = client_ip or ""
+    # Drop from Track / workflow history — revoke is not a logged tracking event.
+    marking.track = False
     db.flush()
 
-    sync_letter_from_markings(db, letter, last_action=_revoke_last_action(marking))
+    # Restore assignment from remaining live markings; do not publish "Revoked …" as last_action.
+    derived = derive_last_action_from_markings(db, letter)
+    sync_letter_from_markings(db, letter, last_action=derived or "Registered")
 
     add_notification(
         db,
@@ -1431,8 +1549,37 @@ def add_note(
     return note
 
 
+def _record_attachment_event(
+    db: Session,
+    *,
+    letter_id: int,
+    marking_id: int | None,
+    attachment: CorrespondenceAttachment,
+    event_type: str,
+    actor_user: str,
+    version_id: int | None = None,
+    client_ip: str = "",
+) -> CorrespondenceAttachmentEvent:
+    event = CorrespondenceAttachmentEvent(
+        letter_id=letter_id,
+        marking_id=marking_id,
+        attachment_id=attachment.id,
+        event_type=event_type,
+        actor_user=actor_user,
+        document_id=attachment.document_id,
+        version_id=version_id,
+        original_filename=attachment.original_filename or "",
+        storage_key=attachment.storage_key or "",
+        attachment_kind=attachment.attachment_kind or "Other",
+        client_ip=client_ip or "",
+    )
+    db.add(event)
+    db.flush()
+    return event
+
+
 def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable: bool = False) -> dict:
-    version_id: int | None = None
+    version_id: int | None = getattr(row, "current_version_id", None)
     previewable = False
     mime_type = ""
     filename = row.original_filename or ""
@@ -1473,6 +1620,9 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable
         "clientIp": row.client_ip,
         "createdAt": row.created_at.isoformat() if row.created_at else "",
         "editable": editable,
+        "deleted": bool(getattr(row, "deleted_at", None)),
+        "deletedAt": row.deleted_at.isoformat() if getattr(row, "deleted_at", None) else "",
+        "deletedBy": getattr(row, "deleted_by", "") or "",
     }
 
 
@@ -1514,16 +1664,20 @@ def note_is_editable(db: Session, note: CorrespondenceNote, actor_name: str) -> 
 def attachment_is_editable(
     db: Session, attachment: CorrespondenceAttachment, actor_name: str
 ) -> bool:
-    """Uploader may edit/delete only attachments from their *current* marking hold."""
+    """Current hold owner (or admin) may edit/delete attachments on that hold.
+
+    Seniors can replace/remove a junior's file on the marking they currently hold;
+    soft-delete + attachment events keep the junior's submission in the archive.
+    """
     if _is_viewer(db, actor_name):
         return False
     letter = db.get(Letter, attachment.letter_id)
     if not letter or letter.status in {CLOSED_LETTER, ARCHIVED_LETTER} or letter.is_archived:
         return False
+    if getattr(attachment, "deleted_at", None):
+        return False
     if _is_admin(db, actor_name):
         return True
-    if (attachment.created_by or "").strip() != actor_name:
-        return False
     return _belongs_to_current_hold(
         db, letter=letter, actor_name=actor_name, marking_id=attachment.marking_id
     )
@@ -1582,8 +1736,18 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
                 mid = int(note.marking_id)
                 if mid not in marking_cache:
                     marking_cache[mid] = db.get(Marking, mid)
-                if not marking_visible_on_paths(marking_cache[mid], visible_paths):
+                linked = marking_cache[mid]
+                if linked is not None and linked.status == "revoked":
                     continue
+                if not marking_visible_on_paths(linked, visible_paths):
+                    continue
+        elif note.marking_id is not None:
+            mid = int(note.marking_id)
+            if mid not in marking_cache:
+                marking_cache[mid] = db.get(Marking, mid)
+            linked = marking_cache[mid]
+            if linked is not None and linked.status == "revoked":
+                continue
         editable = note_is_editable(db, note, actor_name) if actor_name else False
         out.append(
             {
@@ -1601,13 +1765,17 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
     return out
 
 
-def list_attachments(db: Session, letter_id: int, actor_name: str | None = None) -> list[dict]:
-    rows = (
-        db.query(CorrespondenceAttachment)
-        .filter(CorrespondenceAttachment.letter_id == letter_id)
-        .order_by(CorrespondenceAttachment.id.desc())
-        .all()
-    )
+def list_attachments(
+    db: Session,
+    letter_id: int,
+    actor_name: str | None = None,
+    *,
+    include_deleted: bool = False,
+) -> list[dict]:
+    query = db.query(CorrespondenceAttachment).filter(CorrespondenceAttachment.letter_id == letter_id)
+    if not include_deleted:
+        query = query.filter(CorrespondenceAttachment.deleted_at.is_(None))
+    rows = query.order_by(CorrespondenceAttachment.id.desc()).all()
     letter = db.get(Letter, letter_id)
     visible_paths: set[str] | None = None
     if actor_name:
@@ -1627,8 +1795,18 @@ def list_attachments(db: Session, letter_id: int, actor_name: str | None = None)
                 mid = int(row.marking_id)
                 if mid not in marking_cache:
                     marking_cache[mid] = db.get(Marking, mid)
-                if not marking_visible_on_paths(marking_cache[mid], visible_paths):
+                linked = marking_cache[mid]
+                if linked is not None and linked.status == "revoked":
                     continue
+                if not marking_visible_on_paths(linked, visible_paths):
+                    continue
+        elif row.marking_id is not None:
+            mid = int(row.marking_id)
+            if mid not in marking_cache:
+                marking_cache[mid] = db.get(Marking, mid)
+            linked = marking_cache[mid]
+            if linked is not None and linked.status == "revoked":
+                continue
         visible_rows.append(row)
 
     return [
@@ -1707,7 +1885,20 @@ def delete_attachment(
     client_ip: str = "",
 ) -> None:
     letter = assert_attachment_editable(db, attachment, actor_name)
-    db.delete(attachment)
+    if attachment.deleted_at:
+        return
+    attachment.deleted_at = datetime.now()
+    attachment.deleted_by = actor_name
+    _record_attachment_event(
+        db,
+        letter_id=letter.id,
+        marking_id=attachment.marking_id,
+        attachment=attachment,
+        event_type="removed",
+        actor_user=actor_name,
+        version_id=getattr(attachment, "current_version_id", None),
+        client_ip=client_ip,
+    )
     add_audit(
         db,
         user=actor_name,
@@ -1766,22 +1957,48 @@ def add_attachments_to_marking(
         kind = str(att.get("attachmentKind") or att.get("attachment_kind") or "Other")
         if kind not in ATTACHMENT_KINDS:
             raise HTTPException(status_code=400, detail=f"Invalid attachmentKind '{kind}'")
+        doc_id = att.get("documentId") or att.get("document_id")
+        version_id = None
+        if doc_id:
+            current = (
+                db.query(DocumentVersion)
+                .filter(
+                    DocumentVersion.document_id == int(doc_id),
+                    DocumentVersion.is_current.is_(True),
+                )
+                .order_by(DocumentVersion.id.desc())
+                .first()
+            )
+            if current:
+                version_id = current.id
         row = CorrespondenceAttachment(
             letter_id=letter.id,
             marking_id=resolved,
             note_id=None,
             created_by=actor_name,
-            document_id=att.get("documentId") or att.get("document_id"),
+            document_id=doc_id,
             attachment_kind=kind,
             storage_key=str(att.get("storageKey") or att.get("storage_key") or ""),
             original_filename=str(
                 att.get("originalFilename") or att.get("original_filename") or ""
             ),
             client_ip=client_ip or "",
+            current_version_id=version_id,
         )
         db.add(row)
         created.append(row)
     db.flush()
+    for row in created:
+        _record_attachment_event(
+            db,
+            letter_id=letter.id,
+            marking_id=row.marking_id,
+            attachment=row,
+            event_type="added",
+            actor_user=actor_name,
+            version_id=row.current_version_id,
+            client_ip=client_ip,
+        )
     add_audit(
         db,
         user=actor_name,
@@ -1802,10 +2019,92 @@ def sync_attachment_after_replace(
     original_filename: str,
     client_ip: str = "",
 ) -> CorrespondenceAttachment:
-    """Call after uploading a new document version for the same document_id."""
+    """Call after uploading a new document version for the same document_id.
+
+    Same-user replace updates the live row and archives the prior version.
+    Cross-user replace (senior over junior) soft-deletes the junior row so their
+    submission stays queryable, then creates a new live attachment for the actor.
+    """
     letter = assert_attachment_editable(db, attachment, actor_name)
+    previous_version_id = getattr(attachment, "current_version_id", None)
+    new_version_id = previous_version_id
+    if attachment.document_id:
+        current = (
+            db.query(DocumentVersion)
+            .filter(
+                DocumentVersion.document_id == attachment.document_id,
+                DocumentVersion.is_current.is_(True),
+            )
+            .order_by(DocumentVersion.id.desc())
+            .first()
+        )
+        if current:
+            new_version_id = current.id
+
+    prior_owner = (attachment.created_by or "").strip()
+    if prior_owner and prior_owner != actor_name.strip():
+        # Preserve junior row + file pointer, then publish senior's replacement.
+        attachment.deleted_at = datetime.now()
+        attachment.deleted_by = actor_name
+        _record_attachment_event(
+            db,
+            letter_id=letter.id,
+            marking_id=attachment.marking_id,
+            attachment=attachment,
+            event_type="replaced",
+            actor_user=actor_name,
+            version_id=previous_version_id,
+            client_ip=client_ip,
+        )
+        replacement = CorrespondenceAttachment(
+            letter_id=letter.id,
+            marking_id=attachment.marking_id,
+            note_id=None,
+            created_by=actor_name,
+            document_id=attachment.document_id,
+            attachment_kind=attachment.attachment_kind,
+            storage_key=attachment.storage_key or "",
+            original_filename=original_filename,
+            client_ip=client_ip or "",
+            current_version_id=new_version_id,
+        )
+        db.add(replacement)
+        db.flush()
+        _record_attachment_event(
+            db,
+            letter_id=letter.id,
+            marking_id=replacement.marking_id,
+            attachment=replacement,
+            event_type="added",
+            actor_user=actor_name,
+            version_id=new_version_id,
+            client_ip=client_ip,
+        )
+        add_audit(
+            db,
+            user=actor_name,
+            module="Marking",
+            action="Replace attachment",
+            record=letter.number,
+            description=original_filename,
+            source=f"Web · {client_ip or 'unknown'}",
+        )
+        db.flush()
+        return replacement
+
     attachment.original_filename = original_filename
     attachment.client_ip = client_ip or attachment.client_ip
+    attachment.current_version_id = new_version_id
+    _record_attachment_event(
+        db,
+        letter_id=letter.id,
+        marking_id=attachment.marking_id,
+        attachment=attachment,
+        event_type="replaced",
+        actor_user=actor_name,
+        version_id=previous_version_id or new_version_id,
+        client_ip=client_ip,
+    )
     add_audit(
         db,
         user=actor_name,
@@ -1817,6 +2116,67 @@ def sync_attachment_after_replace(
     )
     db.flush()
     return attachment
+
+
+def list_attachment_events(
+    db: Session,
+    letter_id: int,
+    *,
+    actor_name: str | None = None,
+    marking_id: int | None = None,
+    only_actor: str | None = None,
+) -> list[dict]:
+    """Archive trail of add/replace/remove — used for per-user node history."""
+    query = db.query(CorrespondenceAttachmentEvent).filter(
+        CorrespondenceAttachmentEvent.letter_id == letter_id
+    )
+    if marking_id is not None:
+        query = query.filter(CorrespondenceAttachmentEvent.marking_id == marking_id)
+    if only_actor:
+        query = query.filter(CorrespondenceAttachmentEvent.actor_user == only_actor.strip())
+    rows = query.order_by(CorrespondenceAttachmentEvent.id.desc()).all()
+    if actor_name:
+        visible_paths = path_ids_visible_to_user(db, letter_id, actor_name)
+        if visible_paths is not None:
+            marking_cache: dict[int, Marking | None] = {}
+            filtered: list[CorrespondenceAttachmentEvent] = []
+            for row in rows:
+                # Own archive events stay visible even after revoke so senders/recipients
+                # can still reference files they contributed.
+                if only_actor and row.actor_user == only_actor.strip():
+                    filtered.append(row)
+                    continue
+                if row.marking_id is None:
+                    if row.actor_user == actor_name:
+                        filtered.append(row)
+                    continue
+                mid = int(row.marking_id)
+                if mid not in marking_cache:
+                    marking_cache[mid] = db.get(Marking, mid)
+                linked = marking_cache[mid]
+                if linked is not None and linked.status == "revoked":
+                    continue
+                if marking_visible_on_paths(linked, visible_paths):
+                    filtered.append(row)
+            rows = filtered
+    return [
+        {
+            "id": row.id,
+            "letterId": str(row.letter_id),
+            "markingId": row.marking_id,
+            "attachmentId": row.attachment_id,
+            "eventType": row.event_type,
+            "actorUser": row.actor_user,
+            "documentId": row.document_id,
+            "versionId": row.version_id,
+            "originalFilename": row.original_filename,
+            "storageKey": row.storage_key,
+            "attachmentKind": row.attachment_kind,
+            "clientIp": row.client_ip,
+            "createdAt": row.created_at.isoformat() if row.created_at else "",
+        }
+        for row in rows
+    ]
 
 
 def list_tracked(db: Session, actor_name: str) -> list[dict]:
@@ -1841,7 +2201,12 @@ def batch_tracker(db: Session, batch_id: int, actor_name: str) -> dict:
         raise HTTPException(status_code=404, detail="Batch not found")
     if batch.from_user != actor_name and not _is_admin(db, actor_name):
         raise HTTPException(status_code=403, detail="Only the marker can view this tracker")
-    markings = db.query(Marking).filter(Marking.batch_id == batch_id).order_by(Marking.id.asc()).all()
+    markings = (
+        db.query(Marking)
+        .filter(Marking.batch_id == batch_id, Marking.status != "revoked")
+        .order_by(Marking.id.asc())
+        .all()
+    )
     pending = [m for m in markings if m.action == "response_required" and m.status == "active"]
     responded = [m for m in markings if m.action == "response_required" and m.status == "responded"]
     return {
@@ -2142,12 +2507,7 @@ def letter_ids_marked_by_user(db: Session, user_name: str) -> set[int]:
 
 
 def user_on_marking(db: Session, letter_id: int, user_name: str) -> bool:
-    return (
-        db.query(Marking.id)
-        .filter(
-            Marking.letter_id == letter_id,
-            (Marking.from_user == user_name) | (Marking.to_user == user_name),
-        )
-        .first()
-        is not None
-    )
+    """Delegate to letter_access — revoked markings do not count."""
+    from app.letter_access import user_on_marking as _access_user_on_marking
+
+    return _access_user_on_marking(db, letter_id, user_name)

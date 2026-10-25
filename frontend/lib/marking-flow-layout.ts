@@ -221,6 +221,8 @@ export function buildMarkingFlowGraph(
       subtitle: 'Initiator',
       status: 'root',
       actionLabel: 'Registered',
+      toUser: name,
+      fromUser: name,
       orientation,
     },
     draggable: false,

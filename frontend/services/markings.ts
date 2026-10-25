@@ -133,6 +133,9 @@ export type CorrespondenceAttachment = {
   clientIp: string
   createdAt: string
   editable: boolean
+  deleted?: boolean
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export type CorrespondenceNote = {
@@ -303,6 +306,35 @@ export async function closeMarkedLetter(letterId: string, input: { remarks?: str
 
 export async function fetchTrackedMarkings() {
   return api.get<MarkingNode[]>('/api/markings/tracked')
+}
+
+export type AttachmentEvent = {
+  id: number
+  letterId: string
+  markingId: number | null
+  attachmentId: number | null
+  eventType: 'added' | 'replaced' | 'removed' | string
+  actorUser: string
+  documentId: number | null
+  versionId: number | null
+  originalFilename: string
+  storageKey: string
+  attachmentKind: string
+  clientIp: string
+  createdAt: string
+}
+
+export async function fetchAttachmentEvents(
+  letterId: string,
+  opts?: { markingId?: number; mineOnly?: boolean },
+) {
+  const params = new URLSearchParams()
+  if (opts?.markingId != null) params.set('marking_id', String(opts.markingId))
+  if (opts?.mineOnly) params.set('mine_only', 'true')
+  const q = params.toString()
+  return api.get<AttachmentEvent[]>(
+    `/api/markings/letters/${letterId}/attachment-events${q ? `?${q}` : ''}`,
+  )
 }
 
 export async function fetchBatchTracker(batchId: number) {

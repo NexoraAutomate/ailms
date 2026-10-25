@@ -169,12 +169,31 @@ def serialize_letter(
         sentDueAt="",
         sentAction="",
         markedBy="",
+        viewerHolds=False,
+        canAssign=False,
+        canRespond=False,
     )
 
 
 def attach_inbox_marked_by(letter_out: LetterOut, marked_by: str) -> LetterOut:
     """Clone a letter DTO with the Inbox marker (who marked it to the viewer)."""
     return letter_out.model_copy(update={"markedBy": (marked_by or "").strip()})
+
+
+def attach_inbox_holder_actions(
+    letter_out: LetterOut,
+    *,
+    can_assign: bool,
+    can_respond: bool,
+) -> LetterOut:
+    """Clone a letter DTO with Inbox Assign / Respond affordances for the holder."""
+    return letter_out.model_copy(
+        update={
+            "viewerHolds": True,
+            "canAssign": bool(can_assign),
+            "canRespond": bool(can_respond),
+        }
+    )
 
 
 def attach_sent_marking(letter_out: LetterOut, marking) -> LetterOut:

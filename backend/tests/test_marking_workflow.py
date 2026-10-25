@@ -562,7 +562,7 @@ class MarkingWorkflowTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             revoke_marking(self.db, marking=marking, actor_name=self.initiator.name)
         self.assertEqual(ctx.exception.status_code, 409)
-        self.assertIn("comments or attachments", ctx.exception.detail)
+        self.assertIn("comments, attachments", ctx.exception.detail)
 
         # Fresh letter: attachment alone also blocks revoke.
         letter2 = Letter(
@@ -1035,15 +1035,21 @@ class MarkingWorkflowTest(unittest.TestCase):
         revoke_marking(self.db, marking=leaf, actor_name=self.user_a.name)
         self.db.flush()
         # After revoke of the leaf, hold returns to user_a (still has active inbound with no children).
+        # Revoke is not logged as last_action — remaining live mark label is kept.
         self.assertEqual(self.letter.assigned_to, self.user_a.name)
         self.assertEqual(self.letter.assigned_by, self.initiator.name)
-        self.assertEqual(self.letter.last_action, f"Revoked (from {self.user_b.name})")
+        self.assertEqual(self.letter.last_action, "Marked (Forward)")
+        self.assertFalse(leaf.track)
 
         revoke_marking(self.db, marking=parent, actor_name=self.initiator.name)
         self.db.flush()
         self.assertEqual(self.letter.assigned_to, self.initiator.name)
         self.assertEqual(self.letter.assigned_by, self.initiator.name)
-        self.assertEqual(self.letter.last_action, f"Revoked (from {self.user_a.name})")
+        self.assertEqual(self.letter.last_action, "Registered")
+        # Revoked markings must not remain in Workflow tree / Track for the recipient.
+        self.assertEqual(marking_tree(self.db, self.letter.id), [])
+        self.assertNotIn(self.letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
+        self.assertNotIn(self.letter.id, letter_ids_held_by_user(self.db, self.user_b.name))
 
     def test_assigned_to_lists_multiple_holders_and_truncates(self) -> None:
         user_c = User(
@@ -1396,6 +1402,138 @@ class MarkingWorkflowTest(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("reply drafts", ctx.exception.detail)
+
+    def test_non_admin_cannot_remark_same_user_without_revoke(self) -> None:
+        """After forwarding, sender loses hold — cannot re-forward / edit action until revoke."""
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertNotIn("forward", available_marking_actions(self.db, self.letter, self.initiator.name))
+        self.assertIn("revoke", available_marking_actions(self.db, self.letter, self.initiator.name))
+        with self.assertRaises(HTTPException) as ctx:
+            create_mark_batch(
+                self.db,
+                letter=self.letter,
+                actor_name=self.initiator.name,
+                recipients=[
+                    {
+                        "toUser": self.user_a.name,
+                        "action": "response_required",
+                        "responseType": "presentation",
+                    }
+                ],
+                consume_drafts=False,
+            )
+        # No longer holds the letter → mutate denied (must revoke to regain hold / edit).
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_admin_can_update_existing_marking_action(self) -> None:
+        admin = User(
+            name=f"Admin {uuid.uuid4().hex[:6]}",
+            username=f"admin{uuid.uuid4().hex[:6]}",
+            password_hash="!",
+            role="Administrator",
+            status="Active",
+            department="Secretariat",
+        )
+        self.db.add(admin)
+        self.db.flush()
+        letter = Letter(
+            number=_num(),
+            letter_date=date.today(),
+            received_date=date.today(),
+            type="Incoming",
+            subject="Admin update marking",
+            sender="External",
+            recipient="Office",
+            department="Secretariat",
+            priority="Routine",
+            status="Open",
+            created_by=admin.name,
+            last_action="Registered",
+        )
+        self.db.add(letter)
+        self.db.flush()
+        create_mark_batch(
+            self.db,
+            letter=letter,
+            actor_name=admin.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+            consume_drafts=False,
+        )
+        self.db.flush()
+        marking = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == letter.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        self.assertEqual(marking.action, "forward")
+        create_mark_batch(
+            self.db,
+            letter=letter,
+            actor_name=admin.name,
+            recipients=[
+                {
+                    "toUser": self.user_a.name,
+                    "action": "response_required",
+                    "responseType": "presentation",
+                }
+            ],
+            consume_drafts=False,
+        )
+        self.db.flush()
+        self.db.refresh(marking)
+        self.assertEqual(marking.action, "response_required")
+        self.assertEqual(marking.response_type, "presentation")
+        self.assertEqual(
+            self.db.query(Marking).filter(Marking.letter_id == letter.id, Marking.status == "active").count(),
+            1,
+        )
+        self.db.query(Marking).filter(Marking.letter_id == letter.id).delete()
+        self.db.query(Letter).filter(Letter.id == letter.id).delete()
+        self.db.query(User).filter(User.id == admin.id).delete()
+        self.db.flush()
+
+    def test_revoke_removes_recipient_from_track_and_catalog_access(self) -> None:
+        """After revoke, recipient loses owned/Track scope and Catalog unlock via marking."""
+        from app.letter_access import owned_letter_filter, user_can_access_letter
+
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        self.assertTrue(user_can_access_letter(self.db, self.letter, self.user_a.name, "Actionist"))
+        owned = (
+            self.db.query(Letter)
+            .filter(owned_letter_filter(self.user_a.name), Letter.id == self.letter.id)
+            .first()
+        )
+        self.assertIsNotNone(owned)
+
+        marking = (
+            self.db.query(Marking)
+            .filter(Marking.letter_id == self.letter.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        revoke_marking(self.db, marking=marking, actor_name=self.initiator.name)
+        self.db.flush()
+
+        self.assertFalse(user_can_access_letter(self.db, self.letter, self.user_a.name, "Actionist"))
+        owned_after = (
+            self.db.query(Letter)
+            .filter(owned_letter_filter(self.user_a.name), Letter.id == self.letter.id)
+            .first()
+        )
+        self.assertIsNone(owned_after)
+        self.assertEqual(marking_tree(self.db, self.letter.id, actor_name=self.user_a.name), [])
+        self.assertNotIn("Revoked", self.letter.last_action or "")
 
     def test_legacy_assign_forward_creates_marking_and_inbox(self) -> None:
         """Row Assign/Forward must create a Marking so the recipient sees Inbox (not only assigned_to)."""

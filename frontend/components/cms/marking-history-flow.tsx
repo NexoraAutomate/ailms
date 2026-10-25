@@ -253,7 +253,9 @@ function MarkingHistoryFlowInner({
           maxZoom={1.5}
           proOptions={{ hideAttribution: true }}
           onNodeClick={(_, node) => {
-            if (node.data.kind === 'marking') onMarkingClick?.(node.data)
+            if (node.data.kind === 'marking' || node.data.kind === 'root') {
+              onMarkingClick?.(node.data)
+            }
           }}
         >
           <Background gap={16} size={1} color="#e2e8f0" />
@@ -262,7 +264,7 @@ function MarkingHistoryFlowInner({
         </ReactFlow>
       </div>
       <p className="text-[10px] text-slate-400">
-        Click a person to jump to that forward/reply in Comments & Attachments.
+        Click your node to view your comments and attachments; other nodes jump to the timeline.
       </p>
     </div>
   )

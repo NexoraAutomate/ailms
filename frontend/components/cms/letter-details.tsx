@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -63,8 +64,12 @@ const ATTACHMENTS_SUB_TABS: {
 ]
 
 export function Details({ id, go }: { id: string; go: (p: string) => void }) {
+  const searchParams = useSearchParams()
   const { letters, users, me, refresh, applyLetterField, acceptAiAction, departments, organizations, masterData } = useAppData()
-  const [tab, setTab] = useState<LetterTabId>('details')
+  const initialTab = (searchParams.get('tab') as LetterTabId | null) || 'details'
+  const [tab, setTab] = useState<LetterTabId>(
+    LETTER_TABS.some((t) => t.id === initialTab) ? initialTab : 'details',
+  )
   const [attachmentsSubTab, setAttachmentsSubTab] = useState<AttachmentsSubTabId>('correspondence')
   const cached = letters.find((item) => item.id === id) ?? null
   const [letter, setLetter] = useState<Letter | null>(cached)
@@ -72,9 +77,10 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   const [denied, setDenied] = useState(false)
 
   useEffect(() => {
-    setTab('details')
+    const fromQuery = searchParams.get('tab') as LetterTabId | null
+    setTab(fromQuery && LETTER_TABS.some((t) => t.id === fromQuery) ? fromQuery : 'details')
     setAttachmentsSubTab('correspondence')
-  }, [id])
+  }, [id, searchParams])
 
   useEffect(() => {
     const fromCache = letters.find((item) => item.id === id) ?? null
@@ -220,7 +226,14 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
             </div>
           )}
 
-          {tab === 'workflow' && <MarkingWorkflowPanel letter={letter} users={users} onDone={refresh} />}
+          {tab === 'workflow' && (
+            <MarkingWorkflowPanel
+              letter={letter}
+              users={users}
+              onDone={refresh}
+              initialAction={searchParams.get('action')}
+            />
+          )}
 
           {tab === 'meetings' && <RelatedMeetingsPanel letter={letter} go={go} />}
 

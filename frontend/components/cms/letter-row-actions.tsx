@@ -2,12 +2,14 @@
 
 import { useState } from 'react'
 import type { ComponentType } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Archive,
   ArrowUpRight,
   CheckCircle2,
   CornerUpLeft,
   MessageSquare,
+  Reply,
   Pencil,
   RefreshCw,
   Send,
@@ -41,6 +43,7 @@ const ACTION_ICONS: Record<LetterRowActionId, ComponentType<{ className?: string
   assign: UserPlus,
   forward: Send,
   reassign: UserRoundCog,
+  respond: Reply,
   reply: MessageSquare,
   request_clarification: CornerUpLeft,
   mark_complete: CheckCircle2,
@@ -79,6 +82,7 @@ export function LetterRowActions({
   onChanged: () => Promise<void>
   onDelete: () => void
 }) {
+  const router = useRouter()
   const actions = letterRowActions(letter, role)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -89,11 +93,24 @@ export function LetterRowActions({
   const [assignedTo, setAssignedTo] = useState(letter.assignedTo || '')
   const [level, setLevel] = useState('Level 1')
 
+  /** Assign / Forward / Reassign open Workflow Forward; Respond opens the RR dialog. */
+  const openWorkflow = (action: 'forward' | 'respond' = 'forward') => {
+    router.push(`/letters/${letter.id}?tab=workflow&action=${action}`)
+  }
+
   const runWorkflow = async (action: LetterRowActionId, input?: { remarks: string; assignedTo: string; level: string }) => {
     if (action === 'edit' || action === 'delete' || action === 'reply') return
+    if (action === 'assign' || action === 'forward' || action === 'reassign') {
+      openWorkflow('forward')
+      return
+    }
+    if (action === 'respond') {
+      openWorkflow('respond')
+      return
+    }
     const note = input?.remarks ?? ''
     const person = input?.assignedTo ?? ''
-    if ((action === 'assign' || action === 'reassign' || action === 'submit_for_approval') && !person.trim()) {
+    if ((action === 'submit_for_approval') && !person.trim()) {
       setError('Select a person before continuing.')
       return
     }
@@ -138,6 +155,14 @@ export function LetterRowActions({
     }
     if (action === 'reply') {
       setReplyOpen(true)
+      return
+    }
+    if (action === 'assign' || action === 'forward' || action === 'reassign') {
+      openWorkflow('forward')
+      return
+    }
+    if (action === 'respond') {
+      openWorkflow('respond')
       return
     }
     if (actionNeedsInput(action)) {
@@ -194,16 +219,16 @@ export function LetterRowActions({
               <IconActionButton label="Close" icon={X} onClick={() => setPending(null)} />
             </div>
             {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
-            {(pending === 'assign' || pending === 'reassign' || pending === 'submit_for_approval' || pending === 'escalate' || pending === 'forward') && (
+            {(pending === 'submit_for_approval' || pending === 'escalate') && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">
-                  {pending === 'escalate' ? 'Escalate to' : pending === 'submit_for_approval' ? 'Reviewer' : pending === 'forward' ? 'Forward to' : 'Assign to'}
+                  {pending === 'escalate' ? 'Escalate to' : 'Reviewer'}
                 </span>
                 <AppSelect
                   value={assignedTo}
                   onValueChange={setAssignedTo}
                   options={[
-                    { value: '', label: pending === 'forward' ? 'Keep current assignee' : 'Select…' },
+                    { value: '', label: 'Select…' },
                     ...users.map((user) => ({
                       value: user.name,
                       label: user.name + (user.department ? ` · ${user.department}` : ''),

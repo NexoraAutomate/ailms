@@ -32,9 +32,11 @@ import { cn } from '@/lib/utils'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import { MarkingActiveHolds } from '@/components/cms/marking-active-holds'
 import { MarkingHistoryFlow } from '@/components/cms/marking-history-flow'
+import type { MarkingFlowNodeData } from '@/lib/marking-flow-layout'
 import { useAppData } from '@/components/app-provider'
 import { Badge } from '@/components/cms/ui'
 import { formatDateTime } from '@/lib/datetime'
+import { isAdministrator } from '@/services/letter-actions'
 import type { Letter } from '@/services/letters'
 import {
   documentDownloadUrl,
@@ -62,6 +64,7 @@ import {
   deleteMarkingNote,
   updateDraftNote,
   fetchBatchTracker,
+  fetchAttachmentEvents,
   fetchMarkingActions,
   fetchMarkingAttachments,
   fetchMarkingDrafts,
@@ -76,6 +79,7 @@ import {
   shortPathId,
   updateMarkingAttachment,
   updateMarkingNote,
+  type AttachmentEvent,
   type CorrespondenceAttachment,
   type CorrespondenceNote,
   type DraftAttachment,
@@ -187,6 +191,19 @@ function timelineClusterKey(item: TimelineItem, markingsById: Map<number, Markin
 
 function emptyRecipient(toUser = ''): MarkRecipientInput {
   return { toUser, action: 'forward', track: true, remindersEnabled: true }
+}
+
+function recipientFromExistingMarking(marking: MarkingNode): MarkRecipientInput {
+  const due = (marking.dueAt || '').slice(0, 10)
+  return {
+    toUser: marking.toUser,
+    action: marking.action,
+    track: marking.track !== false,
+    remindersEnabled: marking.remindersEnabled !== false,
+    responseType: (marking.responseType as ResponseType) || 'draft_letter',
+    responseTypeOther: marking.responseTypeOther || undefined,
+    dueAt: due || undefined,
+  }
 }
 
 /** Who Reply / Draft Reply targets for a given hold (usually the sender). */
@@ -338,7 +355,9 @@ function buildCommentsTimeline(
 
   const byBatch = new Map<number, MarkingNode[]>()
   const batchOrder: number[] = []
+  // Revoked markings are not logged in the Workflow timeline (same as pathway).
   for (const marking of markings) {
+    if (marking.status === 'revoked') continue
     if (!byBatch.has(marking.batchId)) {
       batchOrder.push(marking.batchId)
       byBatch.set(marking.batchId, [])
@@ -395,12 +414,16 @@ export function MarkingWorkflowPanel({
   letter,
   users,
   onDone,
+  initialAction = null,
 }: {
   letter: Letter
   users: WorkflowUser[]
   onDone: () => Promise<void>
+  /** Deep-link from Inbox row: forward | respond */
+  initialAction?: string | null
 }) {
   const { me } = useAppData()
+  const initialActionHandled = useRef(false)
   const [actions, setActions] = useState<string[]>([])
   const [tree, setTree] = useState<MarkingNode[]>([])
   const [activeHolds, setActiveHolds] = useState<MarkingNode[]>([])
@@ -433,6 +456,8 @@ export function MarkingWorkflowPanel({
   const [expandedTrackerBatchId, setExpandedTrackerBatchId] = useState<number | null>(null)
   const [trackerCache, setTrackerCache] = useState<Record<number, BatchTrackerSummary>>({})
   const [busy, setBusy] = useState(false)
+  const [nodeDialog, setNodeDialog] = useState<MarkingFlowNodeData | null>(null)
+  const [nodeEvents, setNodeEvents] = useState<AttachmentEvent[]>([])
   const [previewVersionId, setPreviewVersionId] = useState<number | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
   const [editingNoteBody, setEditingNoteBody] = useState('')
@@ -665,6 +690,10 @@ export function MarkingWorkflowPanel({
   }, [load])
 
   useEffect(() => {
+    initialActionHandled.current = false
+  }, [letter.id, initialAction])
+
+  useEffect(() => {
     setVisibility(readWorkflowVisibility())
   }, [])
 
@@ -766,6 +795,7 @@ export function MarkingWorkflowPanel({
   }
 
   // Last marker may revoke only if recipient has not remade or added comments/attachments.
+  // Backend is authoritative (actions.includes('revoke')); this filters which leaves to list.
   const revokableMarkings = useMemo(() => {
     if (!actions.includes('revoke')) return []
     const meName = (me.name || '').trim()
@@ -778,6 +808,7 @@ export function MarkingWorkflowPanel({
       const hasNote = notes.some(
         (n) => n.markingId === m.id && (n.authorUser || '').trim() === recipient,
       )
+      // Live list hides soft-deleted rows; backend still blocks via archive events.
       const hasAttachment = attachments.some(
         (a) => a.markingId === m.id && (a.createdBy || '').trim() === recipient,
       )
@@ -794,8 +825,78 @@ export function MarkingWorkflowPanel({
   const forwardTargetUsers = drafts?.forwardTargetUsers ?? []
   const hasReplyDrafts = Boolean(drafts?.hasReplyDrafts)
   const hasForwardDrafts = Boolean(drafts?.hasForwardDrafts)
+  const isAdminActor = isAdministrator(me.role || '')
+  /** Active leaf outbound markings from me — used to detect re-forward / admin edit. */
+  const myOutboundLeafByUser = useMemo(() => {
+    const meName = (me.name || '').trim()
+    const map = new Map<string, MarkingNode>()
+    if (!meName) return map
+    for (const m of allMarkings) {
+      if (
+        m.status === 'active' &&
+        m.fromUser === meName &&
+        !hasActiveChild(m) &&
+        (m.toUser || '').trim()
+      ) {
+        map.set(m.toUser.trim(), m)
+      }
+    }
+    return map
+  }, [allMarkings, me.name])
   const canForwardWithDrafts =
-    forwardTargetUsers.length > 0 && !hasReplyDrafts
+    (forwardTargetUsers.length > 0 || (isAdminActor && myOutboundLeafByUser.size > 0)) &&
+    !hasReplyDrafts
+
+  useEffect(() => {
+    if (loading || initialActionHandled.current) return
+    const action = (initialAction || '').trim().toLowerCase()
+    if (!action) return
+    if (action === 'respond' && actions.includes('respond')) {
+      initialActionHandled.current = true
+      const rr = activeHolds.filter((n) => n.action === 'response_required' && n.status === 'active')
+      if (rr.length === 1) setRespondMarkingId(rr[0]!.id)
+      setDialog('respond')
+      return
+    }
+    if ((action === 'forward' || action === 'assign') && actions.includes('forward')) {
+      initialActionHandled.current = true
+      setError('')
+      // Open Forward when drafts already exist; otherwise land on Workflow to stage them.
+      if (!canForwardWithDrafts) return
+      const rawNames =
+        forwardTargetUsers.length > 0
+          ? forwardTargetUsers
+          : isAdminActor
+            ? [...myOutboundLeafByUser.keys()]
+            : []
+      const names = isAdminActor
+        ? rawNames
+        : rawNames.filter((name) => !myOutboundLeafByUser.has(name))
+      if (!names.length) return
+      setRecipients(
+        names.map((name) => {
+          const existing = myOutboundLeafByUser.get(name)
+          return existing && isAdminActor
+            ? recipientFromExistingMarking(existing)
+            : emptyRecipient(name)
+        }),
+      )
+      setActiveRecipientIndex(0)
+      if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+      else if (activeHolds.length === 0) setParentMarkingId(null)
+      setDialog('forward')
+    }
+  }, [
+    loading,
+    initialAction,
+    actions,
+    activeHolds,
+    canForwardWithDrafts,
+    forwardTargetUsers,
+    isAdminActor,
+    myOutboundLeafByUser,
+  ])
+
   const replyHoldForActions =
     activeHolds.length === 1
       ? activeHolds[0]!
@@ -924,8 +1025,21 @@ export function MarkingWorkflowPanel({
             tree={tree}
             initiatorName={letter.createdBy || ''}
             onMarkingClick={(data) => {
-              if (data.markingId == null) return
-              jumpToMarkingInTimeline(data.markingId, data.batchId)
+              const meName = (me.name || '').trim()
+              // Only the person represented by the node may open their own comments/files.
+              if (!meName || data.toUser !== meName) {
+                if (data.markingId != null) {
+                  jumpToMarkingInTimeline(data.markingId, data.batchId)
+                }
+                return
+              }
+              setNodeDialog(data)
+              void fetchAttachmentEvents(letter.id, {
+                markingId: data.markingId ?? undefined,
+                mineOnly: true,
+              })
+                .then(setNodeEvents)
+                .catch(() => setNodeEvents([]))
             }}
           />
         </div>
@@ -1008,7 +1122,30 @@ export function MarkingWorkflowPanel({
                 onClick={() => {
                   if (!canForwardWithDrafts) return
                   setError('')
-                  setRecipients(forwardTargetUsers.map((name) => emptyRecipient(name)))
+                  const rawNames =
+                    forwardTargetUsers.length > 0
+                      ? forwardTargetUsers
+                      : isAdminActor
+                        ? [...myOutboundLeafByUser.keys()]
+                        : []
+                  // Non-admin must revoke before re-forwarding / editing action for the same user.
+                  const names = isAdminActor
+                    ? rawNames
+                    : rawNames.filter((name) => !myOutboundLeafByUser.has(name))
+                  if (!names.length) {
+                    setError(
+                      'Revoke the existing marking before forwarding again or changing action / response type.',
+                    )
+                    return
+                  }
+                  setRecipients(
+                    names.map((name) => {
+                      const existing = myOutboundLeafByUser.get(name)
+                      return existing && isAdminActor
+                        ? recipientFromExistingMarking(existing)
+                        : emptyRecipient(name)
+                    }),
+                  )
                   setActiveRecipientIndex(0)
                   if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
                   else if (activeHolds.length === 0) setParentMarkingId(null)
@@ -1823,6 +1960,14 @@ export function MarkingWorkflowPanel({
                 ? 'Confirms reply to the previous sender and publishes drafts prepared with Add Comment / Add Attachment.'
                 : 'Confirms forwarding only to users who already have draft comments or attachments.'}
             </p>
+            {dialog === 'forward' &&
+              recipients.some((r) => myOutboundLeafByUser.has(r.toUser.trim())) && (
+                <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+                  {isAdminActor
+                    ? 'This recipient already has an active marking from you. Saving updates action / response type (admin). Others must revoke first.'
+                    : 'This recipient already has an active marking from you. Revoke it before forwarding again or changing action / response type.'}
+                </p>
+              )}
 
             {activeHolds.length > 1 && (
               <div className="mt-3">
@@ -1984,6 +2129,17 @@ export function MarkingWorkflowPanel({
                       throw new Error(
                         'No recipients with drafts. Use Add Comment / Add Attachment first.',
                       )
+                    }
+                    if (direction === 'forward' && !isAdminActor) {
+                      const blocked = cleaned.find((r) =>
+                        myOutboundLeafByUser.has(r.toUser.trim()),
+                      )
+                      if (blocked) {
+                        throw new Error(
+                          `Active marking already exists from you to '${blocked.toUser}'. ` +
+                            'Revoke it before forwarding again or changing action / response type.',
+                        )
+                      }
                     }
                     if (activeHolds.length > 1 && parentMarkingId == null) {
                       throw new Error(
@@ -2397,6 +2553,134 @@ export function MarkingWorkflowPanel({
                 onClick={() => {
                   setDialog(null)
                   setError('')
+                }}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {nodeDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+            <div className="mb-3 flex items-start justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-slate-800">Your comments &amp; attachments</h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {nodeDialog.toUser}
+                  {nodeDialog.actionLabel ? ` · ${nodeDialog.actionLabel}` : ''}
+                  {nodeDialog.pathLabel ? ` · Path ${nodeDialog.pathLabel}` : ''}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                onClick={() => {
+                  setNodeDialog(null)
+                  setNodeEvents([])
+                }}
+                aria-label="Close"
+              >
+                <X />
+              </Button>
+            </div>
+            {(() => {
+              const meName = (me.name || '').trim()
+              const mid = nodeDialog.markingId ?? null
+              const myNotes = notes.filter(
+                (n) =>
+                  (n.markingId ?? null) === mid && (n.authorUser || '').trim() === meName,
+              )
+              const myAttachments = attachments.filter(
+                (a) =>
+                  (a.markingId ?? null) === mid && (a.createdBy || '').trim() === meName,
+              )
+              return (
+                <div className="space-y-4 text-xs">
+                  <div>
+                    <p className="mb-1.5 font-semibold uppercase tracking-wide text-slate-500">
+                      Comments ({myNotes.length})
+                    </p>
+                    {myNotes.length === 0 ? (
+                      <p className="text-slate-400">No comments from you on this step.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {myNotes.map((n) => (
+                          <li
+                            key={n.id}
+                            className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-700"
+                          >
+                            <p className="whitespace-pre-wrap">{n.bodyText}</p>
+                            <p className="mt-1 text-[10px] text-slate-400">
+                              {n.createdAt ? formatDateTime(n.createdAt) : ''}
+                              {n.isResponse ? ' · Response' : ''}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <p className="mb-1.5 font-semibold uppercase tracking-wide text-slate-500">
+                      Attachments ({myAttachments.length})
+                    </p>
+                    {myAttachments.length === 0 ? (
+                      <p className="text-slate-400">No live attachments from you on this step.</p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {myAttachments.map((a) => (
+                          <li
+                            key={a.id}
+                            className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-2.5 py-1.5"
+                          >
+                            <span className="min-w-0 truncate font-medium text-slate-700">
+                              {a.originalFilename || `File #${a.id}`}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-slate-400">{a.attachmentKind}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <p className="mb-1.5 font-semibold uppercase tracking-wide text-slate-500">
+                      Archive trail ({nodeEvents.length})
+                    </p>
+                    <p className="mb-1.5 text-[10px] text-slate-400">
+                      Add / replace / remove history kept even when a senior replaces your file.
+                    </p>
+                    {nodeEvents.length === 0 ? (
+                      <p className="text-slate-400">No archive events yet.</p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {nodeEvents.map((ev) => (
+                          <li
+                            key={ev.id}
+                            className="rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-slate-600"
+                          >
+                            <span className="font-semibold capitalize text-slate-700">{ev.eventType}</span>
+                            {' · '}
+                            {ev.originalFilename || 'file'}
+                            <span className="mt-0.5 block text-[10px] text-slate-400">
+                              {ev.createdAt ? formatDateTime(ev.createdAt) : ''}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
+            <div className="mt-4 flex justify-end">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setNodeDialog(null)
+                  setNodeEvents([])
                 }}
               >
                 Close

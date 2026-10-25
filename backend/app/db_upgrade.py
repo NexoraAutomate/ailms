@@ -1346,6 +1346,71 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                 )
             )
 
+    # Soft-delete + version pointer on correspondence attachments.
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_attachments"):
+        att_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_attachments")}
+        with engine.begin() as conn:
+            if "deleted_at" not in att_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN deleted_at TIMESTAMP NULL"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_deleted_at "
+                        "ON cms_correspondence_attachments (deleted_at)"
+                    )
+                )
+            if "deleted_by" not in att_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN deleted_by VARCHAR(120) DEFAULT ''"
+                    )
+                )
+            if "current_version_id" not in att_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN current_version_id INTEGER NULL"
+                    )
+                )
+
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_correspondence_attachment_events"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_correspondence_attachment_events (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        marking_id INTEGER REFERENCES cms_markings(id) ON DELETE SET NULL,
+                        attachment_id INTEGER REFERENCES cms_correspondence_attachments(id) ON DELETE SET NULL,
+                        event_type VARCHAR(20) DEFAULT 'added',
+                        actor_user VARCHAR(120) DEFAULT '',
+                        document_id INTEGER NULL,
+                        version_id INTEGER NULL,
+                        original_filename VARCHAR(255) DEFAULT '',
+                        storage_key VARCHAR(500) DEFAULT '',
+                        attachment_kind VARCHAR(60) DEFAULT 'Other',
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            for idx in ("letter_id", "marking_id", "attachment_id", "event_type", "actor_user", "created_at"):
+                conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachment_events_{idx} "
+                        f"ON cms_correspondence_attachment_events ({idx})"
+                    )
+                )
+
 
 def _backfill_marking_path_ids(engine: Engine) -> None:
     """Assign path_id to legacy rows: fan-out batches get unique paths; single-child continues parent."""

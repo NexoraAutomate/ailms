@@ -53,6 +53,10 @@ class LetterOut(BaseModel):
     sentAction: str = ""
     # Inbox view: user who marked this letter into the viewer's hold.
     markedBy: str = ""
+    # Inbox: viewer currently holds this letter (can Assign / Respond from the table).
+    viewerHolds: bool = False
+    canAssign: bool = False
+    canRespond: bool = False
 
 
 class LetterCreate(BaseModel):

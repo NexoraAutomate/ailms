@@ -25,6 +25,7 @@ from app.marking_workflow_service import (
     delete_draft_note,
     delete_note,
     update_draft_note,
+    list_attachment_events,
     list_attachments,
     list_drafts,
     list_notes,
@@ -396,12 +397,39 @@ def post_note(
 
 
 @router.get("/letters/{letter_id}/attachments")
-def get_attachments(letter_id: int, db: Session = Depends(get_db)) -> list[dict]:
+def get_attachments(
+    letter_id: int,
+    include_deleted: bool = False,
+    db: Session = Depends(get_db),
+) -> list[dict]:
     _require_enabled()
     letter = _get_letter(db, letter_id)
     actor = current_user_name(db)
     assert_letter_access(db, letter, actor)
-    return list_attachments(db, letter_id, actor_name=actor)
+    return list_attachments(
+        db, letter_id, actor_name=actor, include_deleted=include_deleted
+    )
+
+
+@router.get("/letters/{letter_id}/attachment-events")
+def get_attachment_events(
+    letter_id: int,
+    marking_id: int | None = None,
+    mine_only: bool = False,
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Per-level archive of add/replace/remove — juniors keep history when seniors replace files."""
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    return list_attachment_events(
+        db,
+        letter_id,
+        actor_name=actor,
+        marking_id=marking_id,
+        only_actor=actor if mine_only else None,
+    )
 
 
 @router.post("/letters/{letter_id}/attachments")

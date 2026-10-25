@@ -82,6 +82,10 @@ export type Letter = {
   sentAction?: string
   /** Inbox view: user who marked this letter to the viewer. */
   markedBy?: string
+  /** Inbox: current viewer holds this letter. */
+  viewerHolds?: boolean
+  canAssign?: boolean
+  canRespond?: boolean
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }
