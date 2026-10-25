@@ -95,6 +95,7 @@ def list_letters(
             can_edit_details=can_edit_letter_details(
                 db, row, actor, has_active=row.id in active_marked
             ),
+            has_active_markings=row.id in active_marked,
         )
         for row in rows
     ]
@@ -222,6 +223,21 @@ def update_letter(letter_id: int, payload: LetterUpdate, db: Session = Depends(g
         "actionRequired": "action_required",
         "bodyText": "body_text",
     }
+    from app.config import get_settings
+
+    # Assigned To must go through marking Forward — a bare PATCH does not put the
+    # recipient in Inbox and would leave the sender able to edit while "assigned".
+    if get_settings().marking_workflow_enabled and "assignedTo" in data:
+        next_assignee = (data.pop("assignedTo") or "").strip()
+        current = (letter.assigned_to or "").strip()
+        if next_assignee and next_assignee != current:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Use Assign or Forward (Workflow tab or row actions) to mark "
+                    "correspondence to another user"
+                ),
+            )
     if "number" in data:
         next_number = (data["number"] or "").strip()
         if not next_number:

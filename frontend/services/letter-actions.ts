@@ -82,9 +82,9 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
 }
 
 const FROM_STATUSES: Record<string, string[]> = {
-  assign: ['Draft', 'Registered', 'Under Review', 'Reopened', 'Validated', 'Classified'],
-  forward: ['Registered', 'Assigned', 'Action in Progress', 'Action Assigned', 'In Progress', 'Routed'],
-  reassign: ['Assigned', 'Action in Progress', 'Awaiting Response', 'Action Assigned', 'In Progress'],
+  assign: ['Draft', 'Registered', 'Under Review', 'Reopened', 'Validated', 'Classified', 'Open'],
+  forward: ['Registered', 'Assigned', 'Action in Progress', 'Action Assigned', 'In Progress', 'Routed', 'Open'],
+  reassign: ['Assigned', 'Action in Progress', 'Awaiting Response', 'Action Assigned', 'In Progress', 'Open'],
   add_action: ['Registered', 'Assigned', 'Under Review', 'Awaiting Response', 'Returned for Revision', 'Reopened', 'Action Assigned', 'In Progress'],
   request_response: ['Action in Progress', 'Assigned', 'Response Prepared', 'In Progress', 'Action Assigned', 'Response Drafted'],
   request_clarification: ['Action in Progress', 'Awaiting Response', 'Assigned', 'In Progress', 'Action Assigned'],
@@ -139,6 +139,8 @@ const BUTTONS_BY_STATUS: Record<string, LetterRowActionId[]> = {
   'Returned for Revision': ['edit', 'reply', 'draft_response', 'submit_for_approval'],
   Escalated: ['edit', 'reassign', 'reply'],
   Reopened: ['edit', 'assign', 'reply', 'validate', 'classify'],
+  // Marking workflow: holder may edit registration until marked onward; Forward via Assign.
+  Open: ['edit', 'assign', 'forward'],
 }
 
 export const letterActionLabel: Record<LetterRowActionId, string> = {
@@ -199,12 +201,21 @@ export function replyWorkflowAction(status: string, role: string): 'request_resp
 
 export function letterRowActions(letter: Letter, role: string): LetterRowActionId[] {
   if (letter.isArchived || workflowStatus(letter) === 'Archived') {
-    return isAdministrator(role) ? ['delete'] : []
+    // Soft-archived: admin may delete only when not marked out to another user.
+    return isAdministrator(role) && letter.hasActiveMarkings !== true ? ['delete'] : []
+  }
+  // While marked to another user, sender must revoke on the Workflow tab before
+  // edit / delete / assign become available again.
+  if (letter.hasActiveMarkings === true) {
+    return []
   }
   const status = workflowStatus(letter)
   const catalog = BUTTONS_BY_STATUS[status] ?? ['edit']
   const actions = catalog.filter((action) => {
     if (action === 'edit') return letter.canEditDetails === true
+    if (action === 'assign' || action === 'forward' || action === 'reassign') {
+      return letter.canEditDetails === true && transitionAllowed(action, status, role)
+    }
     if (action === 'reply') return replyWorkflowAction(status, role) !== null
     return transitionAllowed(action, status, role)
   })

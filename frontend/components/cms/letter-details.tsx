@@ -271,7 +271,6 @@ function CorrespondenceDetailsPanel({
   const [from, setFrom] = useState(letter.from)
   const [to, setTo] = useState(letter.to)
   const [department, setDepartment] = useState(letter.department)
-  const [assignedTo, setAssignedTo] = useState(letter.assignedTo)
   const [dueDate, setDueDate] = useState(letter.dueDate === '—' ? '' : letter.dueDate)
   const [priority, setPriority] = useState<Priority>(letter.priority)
   const [error, setError] = useState('')
@@ -286,7 +285,6 @@ function CorrespondenceDetailsPanel({
     setFrom(letter.from)
     setTo(letter.to)
     setDepartment(letter.department)
-    setAssignedTo(letter.assignedTo)
     setDueDate(letter.dueDate === '—' ? '' : letter.dueDate)
     setPriority(letter.priority)
     setError('')
@@ -347,7 +345,6 @@ function CorrespondenceDetailsPanel({
         from,
         to,
         department,
-        assignedTo,
         dueDate: dueDate || undefined,
         priority,
       })
@@ -435,15 +432,13 @@ function CorrespondenceDetailsPanel({
             type={type}
             priority={priority}
             department={department}
-            assignedTo={assignedTo}
+            assignedTo={letter.assignedTo}
             lastAction={letter.lastAction}
             typeOptions={typeOptions}
             deptNames={deptNames}
-            users={users}
             onTypeChange={setType}
             onPriorityChange={setPriority}
             onDepartmentChange={setDepartment}
-            onAssignedToChange={setAssignedTo}
           />
         </div>
       </div>
@@ -507,11 +502,9 @@ function LetterOtherDetailsCard({
   priority,
   typeOptions = [],
   deptNames = [],
-  users = [],
   onTypeChange,
   onPriorityChange,
   onDepartmentChange,
-  onAssignedToChange,
 }: {
   type: string
   department: string
@@ -521,11 +514,9 @@ function LetterOtherDetailsCard({
   priority?: Priority
   typeOptions?: string[]
   deptNames?: string[]
-  users?: DetailsPerson[]
   onTypeChange?: (value: string) => void
   onPriorityChange?: (value: Priority) => void
   onDepartmentChange?: (value: string) => void
-  onAssignedToChange?: (value: string) => void
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
@@ -564,24 +555,18 @@ function LetterOtherDetailsCard({
               </span>
               <AppSelect value={department} onValueChange={(v) => onDepartmentChange?.(v)} options={deptNames} className="mt-0.5 h-9 text-xs" />
             </label>
-            <label className="block rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-              <span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            <div className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
+              <div className="mb-1 flex items-center gap-1.5">
                 <CheckCircle2 className="size-3.5 text-[#1769aa]" />
-                Assigned to
-              </span>
-              <AppSelect
-                value={assignedTo}
-                onValueChange={(v) => onAssignedToChange?.(v)}
-                options={[
-                  { value: '', label: 'Unassigned' },
-                  ...users.map((user) => ({
-                    value: user.name,
-                    label: user.name + (user.department ? ` · ${user.department}` : ''),
-                  })),
-                ]}
-                className="mt-0.5 h-9 text-xs"
-              />
-            </label>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Assigned to</p>
+              </div>
+              <div className="text-xs font-semibold text-slate-700">
+                <AssignedToDisplay assignedTo={assignedTo} />
+              </div>
+              <p className="mt-1 text-[10px] text-slate-400">
+                Use Assign / Forward to mark to another user (puts the letter in their Inbox).
+              </p>
+            </div>
             <div className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
               <div className="mb-1 flex items-center gap-1.5">
                 <ClipboardList className="size-3.5 text-[#1769aa]" />

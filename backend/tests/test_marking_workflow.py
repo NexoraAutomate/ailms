@@ -1397,6 +1397,71 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("reply drafts", ctx.exception.detail)
 
+    def test_legacy_assign_forward_creates_marking_and_inbox(self) -> None:
+        """Row Assign/Forward must create a Marking so the recipient sees Inbox (not only assigned_to)."""
+        from app.workflow_service import execute_transition
+
+        self.letter.status = "Registered"
+        self.letter.assigned_to = self.initiator.name
+        self.db.flush()
+
+        execute_transition(
+            self.db,
+            letter=self.letter,
+            action="forward",
+            actor_name=self.initiator.name,
+            assigned_to=self.user_a.name,
+            remarks="Please action",
+        )
+        self.db.flush()
+
+        self.assertIn(self.letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
+        self.assertNotIn(self.letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        self.assertFalse(can_edit_letter_details(self.db, self.letter, self.initiator.name))
+        self.assertEqual(self.letter.status, "Open")
+        self.assertIn(self.user_a.name, self.letter.assigned_to or "")
+
+        marking = (
+            self.db.query(Marking)
+            .filter(
+                Marking.letter_id == self.letter.id,
+                Marking.to_user == self.user_a.name,
+                Marking.status == "active",
+            )
+            .one()
+        )
+        revoke_marking(self.db, marking=marking, actor_name=self.initiator.name)
+        self.db.flush()
+        self.assertTrue(can_edit_letter_details(self.db, self.letter, self.initiator.name))
+        self.assertIn(self.letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        self.assertNotIn(self.letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
+
+    def test_registration_assign_other_user_creates_inbox_hold(self) -> None:
+        from app.letter_create_service import create_letter_record
+        from app.schemas import LetterCreate
+
+        payload = LetterCreate(
+            number=_num(),
+            letterDate=date.today(),
+            type="Incoming",
+            subject="Registered to other",
+            from_="External",
+            to="Office",
+            department="Secretariat",
+            priority="Routine",
+            status="Registered",
+            assignedTo=self.user_a.name,
+        )
+        letter = create_letter_record(self.db, payload, actor=self.initiator.name)
+        self.db.flush()
+        self.assertIn(letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
+        self.assertNotIn(letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        self.assertFalse(can_edit_letter_details(self.db, letter, self.initiator.name))
+        # Cleanup extra letter created by this test.
+        self.db.query(Marking).filter(Marking.letter_id == letter.id).delete()
+        self.db.query(Letter).filter(Letter.id == letter.id).delete()
+        self.db.flush()
+
     def test_draft_attachment_publish_on_forward(self) -> None:
         add_draft_attachments(
             self.db,

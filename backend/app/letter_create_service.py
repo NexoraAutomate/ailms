@@ -64,17 +64,41 @@ def create_letter_record(
         record=letter.number,
         description=f"{letter.type} letter registered",
     )
-    if letter.assigned_to and letter.assigned_to != actor:
-        add_notification(
-            db,
-            title="New Assignment",
-            description=f"{letter.subject} assigned to {letter.assigned_to}.",
-            priority="High" if letter.priority == "Urgent" else "Medium",
-            letter_id=letter.id,
-            notification_type="New Assignment",
-            recipient_name=letter.assigned_to,
-            related_entity_type="letter",
-            related_entity_id=str(letter.id),
-        )
+    assignee = (letter.assigned_to or "").strip()
+    if assignee and assignee != actor:
+        from app.config import get_settings
+
+        if get_settings().marking_workflow_enabled:
+            # Create a real marking so the assignee sees the letter in Inbox.
+            from app.marking_workflow_service import create_mark_batch
+
+            create_mark_batch(
+                db,
+                letter=letter,
+                actor_name=actor,
+                recipients=[
+                    {
+                        "toUser": assignee,
+                        "action": "forward",
+                        "track": True,
+                        "priority": letter.priority or "Routine",
+                    }
+                ],
+                remarks="Assigned at registration",
+                direction="forward",
+                consume_drafts=False,
+            )
+        else:
+            add_notification(
+                db,
+                title="New Assignment",
+                description=f"{letter.subject} assigned to {assignee}.",
+                priority="High" if letter.priority == "Urgent" else "Medium",
+                letter_id=letter.id,
+                notification_type="New Assignment",
+                recipient_name=assignee,
+                related_entity_type="letter",
+                related_entity_id=str(letter.id),
+            )
     db.flush()
     return letter

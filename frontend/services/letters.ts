@@ -33,6 +33,7 @@ export type LetterStatus =
   | 'Reopened'
   | 'Archived'
   | 'Overdue'
+  | 'Open'
 export type Priority = 'Routine' | 'Important' | 'Urgent'
 
 export type Letter = {
@@ -71,6 +72,8 @@ export type Letter = {
   classifiedAt?: string
   /** Initiator may edit registration details only until marked onward. */
   canEditDetails?: boolean
+  /** True while any active marking exists (hide sender edit/delete until revoke). */
+  hasActiveMarkings?: boolean
   /** Sent view: one row per outstanding Response Required marking. */
   sentMarkingId?: number | null
   sentToUser?: string
@@ -118,6 +121,7 @@ export const statusTone = (status: LetterStatus) =>
     Reopened: 'blue',
     Archived: 'slate',
     Overdue: 'red',
+    Open: 'blue',
   }[status] ?? 'slate')
 
 export const priorityTone = (priority: Priority) => ({ Routine: 'slate', Important: 'amber', Urgent: 'red' }[priority])

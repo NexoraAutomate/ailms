@@ -65,8 +65,36 @@ def run_bulk_operation(
             assert_active_letter(letter)
             if operation in {"assign", "reassign"}:
                 assignee = (payload.get("assignedTo") or payload.get("assigned_to") or "").strip()
-                letter.assigned_to = assignee
-                letter.last_action = "Bulk Assign"
+                from app.config import get_settings
+
+                if get_settings().marking_workflow_enabled:
+                    from app.marking_workflow_service import create_mark_batch
+
+                    if assignee == (actor or "").strip():
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Cannot mark correspondence to yourself",
+                        )
+                    create_mark_batch(
+                        db,
+                        letter=letter,
+                        actor_name=actor,
+                        recipients=[
+                            {
+                                "toUser": assignee,
+                                "action": "forward",
+                                "track": True,
+                                "priority": letter.priority or "Routine",
+                            }
+                        ],
+                        remarks="Bulk assign",
+                        direction="forward",
+                        consume_drafts=False,
+                    )
+                    letter.last_action = "Bulk Assign"
+                else:
+                    letter.assigned_to = assignee
+                    letter.last_action = "Bulk Assign"
             elif operation == "change_department":
                 letter.department = (payload.get("department") or "").strip()
                 letter.last_action = "Bulk Department Change"

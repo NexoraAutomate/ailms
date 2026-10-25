@@ -54,6 +54,7 @@ def _letters(db: Session, user_name: str, role: str) -> list:
             can_edit_details=can_edit_letter_details(
                 db, row, user_name, has_active=row.id in active_marked
             ),
+            has_active_markings=row.id in active_marked,
         )
         for row in rows
     ]

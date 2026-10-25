@@ -43,6 +43,8 @@ class LetterOut(BaseModel):
     classifiedAt: str = ""
     # True when the current viewer may edit registration details (initiator, not yet marked onward).
     canEditDetails: bool = False
+    # True while any active marking exists (sender must revoke before editing again).
+    hasActiveMarkings: bool = False
     # Sent view: one list row per outstanding Response Required marking.
     sentMarkingId: int | None = None
     sentToUser: str = ""

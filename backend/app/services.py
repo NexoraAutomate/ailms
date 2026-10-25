@@ -117,14 +117,19 @@ def serialize_letter(
     db: Session | None = None,
     viewer: str | None = None,
     can_edit_details: bool | None = None,
+    has_active_markings: bool | None = None,
 ) -> LetterOut:
     status = effective_status(letter)
     completion = iso(letter.completion_date) if letter.status in CLOSED_STATUSES else "—"
     edit_details = can_edit_details
-    if edit_details is None and db is not None and viewer:
-        from app.marking_workflow_service import can_edit_letter_details
+    active_marks = has_active_markings
+    if db is not None:
+        from app.marking_workflow_service import can_edit_letter_details, has_active_markings as _has_active
 
-        edit_details = can_edit_letter_details(db, letter, viewer)
+        if edit_details is None and viewer:
+            edit_details = can_edit_letter_details(db, letter, viewer)
+        if active_marks is None:
+            active_marks = _has_active(db, letter.id)
     return LetterOut(
         id=str(letter.id),
         number=letter.number,
@@ -157,6 +162,7 @@ def serialize_letter(
         validatedAt=letter.validated_at.isoformat() if getattr(letter, "validated_at", None) else "",
         classifiedAt=letter.classified_at.isoformat() if getattr(letter, "classified_at", None) else "",
         canEditDetails=bool(edit_details),
+        hasActiveMarkings=bool(active_marks),
         sentMarkingId=None,
         sentToUser="",
         sentPathId="",

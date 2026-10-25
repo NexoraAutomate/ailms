@@ -279,6 +279,82 @@ def _notification_for(action: str, letter: Letter, actor: str) -> tuple[str, str
     return mapping.get(action)
 
 
+# Legacy row actions that must create a Marking when the simple marking workflow is on.
+MARKING_COMPAT_ACTIONS = frozenset({"assign", "forward", "reassign"})
+
+
+def _execute_as_marking(
+    db: Session,
+    *,
+    letter: Letter,
+    action: str,
+    actor_name: str,
+    remarks: str = "",
+    assigned_to: str | None = None,
+    action_label: str | None = None,
+) -> WorkflowTransition:
+    """Bridge classic assign/forward/reassign onto create_mark_batch so Inbox stays in sync."""
+    from app.marking_workflow_service import create_mark_batch
+
+    to_user = (assigned_to or "").strip()
+    if not to_user:
+        raise HTTPException(status_code=422, detail="Validation failed: assigned user is required")
+    if to_user == (actor_name or "").strip():
+        raise HTTPException(status_code=400, detail="Cannot mark correspondence to yourself")
+
+    from_status = stored_status(letter)
+    create_mark_batch(
+        db,
+        letter=letter,
+        actor_name=actor_name,
+        recipients=[
+            {
+                "toUser": to_user,
+                "action": "forward",
+                "track": True,
+                "instructions": (remarks or "").strip(),
+                "priority": letter.priority or "Routine",
+            }
+        ],
+        remarks=(remarks or "").strip(),
+        direction="forward",
+        consume_drafts=False,
+    )
+    to_status = letter.status or "Open"
+    label = action_label or action.replace("_", " ").title()
+    letter.last_action = label
+
+    tracking = LetterAction(
+        letter_id=letter.id,
+        action=label,
+        remarks=remarks,
+        created_by=actor_name,
+    )
+    db.add(tracking)
+
+    transition = WorkflowTransition(
+        letter_id=letter.id,
+        action=action,
+        from_status=from_status,
+        to_status=to_status,
+        performed_by=actor_name,
+        remarks=remarks,
+        assigned_to=letter.assigned_to or "",
+        department=letter.department or "",
+    )
+    db.add(transition)
+    add_audit(
+        db,
+        user=actor_name,
+        module="Workflow",
+        action=label,
+        record=letter.number,
+        description=remarks or f"Marked to {to_user} via {action}",
+    )
+    db.flush()
+    return transition
+
+
 def execute_transition(
     db: Session,
     *,
@@ -341,6 +417,24 @@ def execute_transition(
             instructions=instructions,
             blocked_reason=blocked_reason,
             document_id=document_id,
+        )
+
+    if get_settings().marking_workflow_enabled and action in MARKING_COMPAT_ACTIONS:
+        # Permission check only — from_status rules are obsolete under marking workflow.
+        role = normalize_role(resolve_user_role(db, actor_name))
+        allowed = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS.get("Actionist", set()))
+        if action not in allowed:
+            raise HTTPException(status_code=403, detail="Access denied for this workflow action")
+        if getattr(letter, "is_archived", False) or letter.status in {"Archived"}:
+            raise HTTPException(status_code=400, detail="Archived correspondence cannot be modified")
+        return _execute_as_marking(
+            db,
+            letter=letter,
+            action=action,
+            actor_name=actor_name,
+            remarks=remarks,
+            assigned_to=assigned_to,
+            action_label=action_label,
         )
 
     rule = validate_transition(db, letter=letter, action=action, actor_name=actor_name, reviewer_name=reviewer_name)

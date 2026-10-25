@@ -259,7 +259,6 @@ function EditLetterDialog({
   const [to, setTo] = useState(letter.to)
   const [department, setDepartment] = useState(letter.department)
   const [priority, setPriority] = useState<Priority>(letter.priority)
-  const [assignedTo, setAssignedTo] = useState(letter.assignedTo)
   const [dueDate, setDueDate] = useState(letter.dueDate)
   const [actionRequired, setActionRequired] = useState(letter.actionRequired ?? '')
   const [remarks, setRemarks] = useState(letter.remarks ?? '')
@@ -275,13 +274,14 @@ function EditLetterDialog({
     setBusy(true)
     setError('')
     try {
+      // Assigned To is intentionally omitted — use Assign/Forward so the recipient
+      // gets a real marking and appears in Inbox.
       await updateLetter(letter.id, {
         subject: subject.trim(),
         from,
         to,
         department,
         priority,
-        assignedTo,
         dueDate: dueDate || undefined,
         actionRequired,
         remarks,
@@ -311,21 +311,11 @@ function EditLetterDialog({
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Priority</span>
             <AppSelect value={priority} onValueChange={(v) => setPriority(v as Priority)} options={['Routine', 'Important', 'Urgent']} className="h-10 text-xs" />
           </label>
-          <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Assigned to</span>
-            <AppSelect
-              value={assignedTo}
-              onValueChange={setAssignedTo}
-              options={[
-                { value: '', label: 'Unassigned' },
-                ...users.map((user) => ({
-                  value: user.name,
-                  label: user.name + (user.department ? ` · ${user.department}` : ''),
-                })),
-              ]}
-              className="h-10 text-xs"
-            />
-          </label>
           <label className="flex flex-col gap-1"><span className="text-xs font-semibold text-slate-600">Due date</span><input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
+          <p className="sm:col-span-2 text-[11px] text-slate-500">
+            To send this letter to another user, use Assign / Forward (creates an Inbox item for them). Revoke from
+            the Workflow tab before editing again.
+          </p>
           <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Action required</span><input value={actionRequired} onChange={(e) => setActionRequired(e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
           <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Remarks</span><textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-20 rounded-md border border-slate-200 px-3 py-2 text-xs" /></label>
         </div>
