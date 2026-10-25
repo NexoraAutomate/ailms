@@ -345,6 +345,9 @@ class CorrespondenceNote(Base):
     )
     author_user: Mapped[str] = mapped_column(String(120), default="", index=True)
     body_text: Mapped[str] = mapped_column(Text, default="")
+    # all = shared with everyone on the pathway (incl. later forwards);
+    # recipient = only the marking's to_user (+ from_user / upstream auditors).
+    audience: Mapped[str] = mapped_column(String(20), default="recipient", index=True)
     is_response: Mapped[bool] = mapped_column(Boolean, default=False)
     client_ip: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
@@ -373,6 +376,8 @@ class CorrespondenceAttachment(Base):
         ForeignKey("cms_documents.id", ondelete="SET NULL"), nullable=True
     )
     attachment_kind: Mapped[str] = mapped_column(String(60), default="Other")
+    # Same semantics as CorrespondenceNote.audience.
+    audience: Mapped[str] = mapped_column(String(20), default="recipient", index=True)
     storage_key: Mapped[str] = mapped_column(String(500), default="")
     original_filename: Mapped[str] = mapped_column(String(255), default="")
     client_ip: Mapped[str] = mapped_column(String(80), default="")

@@ -1025,6 +1025,7 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                         marking_id INTEGER REFERENCES cms_markings(id) ON DELETE SET NULL,
                         author_user VARCHAR(120) DEFAULT '',
                         body_text TEXT DEFAULT '',
+                        audience VARCHAR(20) DEFAULT 'recipient',
                         is_response BOOLEAN DEFAULT FALSE,
                         client_ip VARCHAR(80) DEFAULT '',
                         created_at TIMESTAMP DEFAULT NOW()
@@ -1036,6 +1037,12 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_notes_letter_id "
                     "ON cms_correspondence_notes (letter_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_notes_audience "
+                    "ON cms_correspondence_notes (audience)"
                 )
             )
 
@@ -1056,6 +1063,7 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                         created_by VARCHAR(120) DEFAULT '',
                         document_id INTEGER REFERENCES cms_documents(id) ON DELETE SET NULL,
                         attachment_kind VARCHAR(60) DEFAULT 'Other',
+                        audience VARCHAR(20) DEFAULT 'recipient',
                         storage_key VARCHAR(500) DEFAULT '',
                         original_filename VARCHAR(255) DEFAULT '',
                         client_ip VARCHAR(80) DEFAULT '',
@@ -1408,6 +1416,42 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                     text(
                         f"CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachment_events_{idx} "
                         f"ON cms_correspondence_attachment_events ({idx})"
+                    )
+                )
+
+    # Audience: all (pathway-shared) vs recipient (hop-private).
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_notes"):
+        note_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_notes")}
+        if "audience" not in note_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_notes "
+                        "ADD COLUMN audience VARCHAR(20) DEFAULT 'recipient'"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_notes_audience "
+                        "ON cms_correspondence_notes (audience)"
+                    )
+                )
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_attachments"):
+        att_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_attachments")}
+        if "audience" not in att_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN audience VARCHAR(20) DEFAULT 'recipient'"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_audience "
+                        "ON cms_correspondence_attachments (audience)"
                     )
                 )
 

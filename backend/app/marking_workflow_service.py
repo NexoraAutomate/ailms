@@ -33,6 +33,18 @@ RESPONSE_TYPES = frozenset(
 ATTACHMENT_KINDS = frozenset(
     {"Presentation", "Draft Response", "Supporting Doc", "Nomination List", "Other"}
 )
+# all = visible to everyone on the pathway (propagates on remake);
+# recipient = only the hop's participants (+ upstream auditors).
+NOTE_AUDIENCES = frozenset({"all", "recipient"})
+AUDIENCE_ALL = "all"
+AUDIENCE_RECIPIENT = "recipient"
+
+
+def normalize_audience(raw: Any, *, default: str = AUDIENCE_RECIPIENT) -> str:
+    value = str(raw or "").strip().lower()
+    if value in NOTE_AUDIENCES:
+        return value
+    return default if default in NOTE_AUDIENCES else AUDIENCE_RECIPIENT
 ACTION_LABELS = {
     "forward": "Forward",
     "for_info": "For Information",
@@ -556,18 +568,17 @@ def marking_content_visible_to_actor(
     actor_name: str,
     *,
     visible_paths: set[str] | None,
+    audience: str = AUDIENCE_RECIPIENT,
 ) -> bool:
     """
     Whether notes/attachments on this marking may be shown to the actor.
 
-    Path membership alone is not enough: a shared path_id on a chain
-    (senior remakes to junior) would otherwise leak comments written for the
-    senior. Content is visible to:
-    - Admins (visible_paths is None)
-    - Direct participants (from_user / to_user of this marking)
-    - Upstream participants on ancestor markings (markers who can still audit
-      downstream hops on their branch)
-    Downstream juniors do not see ancestor-hop comments.
+    - audience=all: any user on the same pathway (including later remakes /
+      juniors) may see the content — "for all" comments travel with the letter.
+    - audience=recipient: only direct hop participants (from_user / to_user)
+      plus upstream participants on ancestor markings. Downstream juniors do
+      not see recipient-only comments written for a senior hop.
+    Admins (visible_paths is None) see everything.
     """
     if marking is None:
         return False
@@ -577,6 +588,9 @@ def marking_content_visible_to_actor(
         return True
     if not marking_visible_on_paths(marking, visible_paths):
         return False
+
+    if normalize_audience(audience) == AUDIENCE_ALL:
+        return True
 
     name = (actor_name or "").strip()
     if not name:
@@ -678,18 +692,22 @@ def _publish_staged_on_marking(
     letter: Letter,
     actor_name: str,
     marking: Marking,
-    notes: list[str],
+    notes: list[dict[str, str]],
     attachments: list[dict[str, Any]],
     client_ip: str = "",
 ) -> None:
     """Attach drafted comments/files to a newly created outbound marking."""
-    for body in notes:
+    for entry in notes:
+        body = str(entry.get("body") or "").strip()
+        if not body:
+            continue
         db.add(
             CorrespondenceNote(
                 letter_id=letter.id,
                 marking_id=marking.id,
                 author_user=actor_name,
                 body_text=body,
+                audience=normalize_audience(entry.get("audience")),
                 is_response=False,
                 client_ip=client_ip or "",
             )
@@ -703,6 +721,7 @@ def _publish_staged_on_marking(
                 created_by=actor_name,
                 document_id=att.get("document_id"),
                 attachment_kind=att["attachment_kind"],
+                audience=normalize_audience(att.get("audience")),
                 storage_key=att.get("storage_key") or "",
                 original_filename=att.get("original_filename") or "",
                 client_ip=client_ip or "",
@@ -1304,16 +1323,22 @@ def create_mark_batch(
             actor_name=actor_name,
             marking=marking,
             notes=[
-                *item["notes"],
-                *shared_notes,
-                *draft_notes_by_target.get(target, []),
-                *draft_common_notes,
+                *[{"body": b, "audience": AUDIENCE_RECIPIENT} for b in item["notes"]],
+                *[{"body": b, "audience": AUDIENCE_ALL} for b in shared_notes],
+                *[
+                    {"body": b, "audience": AUDIENCE_RECIPIENT}
+                    for b in draft_notes_by_target.get(target, [])
+                ],
+                *[{"body": b, "audience": AUDIENCE_ALL} for b in draft_common_notes],
             ],
             attachments=[
-                *item["attachments"],
-                *shared_attachments,
-                *draft_atts_by_target.get(target, []),
-                *draft_common_atts,
+                *[{**a, "audience": AUDIENCE_RECIPIENT} for a in item["attachments"]],
+                *[{**a, "audience": AUDIENCE_ALL} for a in shared_attachments],
+                *[
+                    {**a, "audience": AUDIENCE_RECIPIENT}
+                    for a in draft_atts_by_target.get(target, [])
+                ],
+                *[{**a, "audience": AUDIENCE_ALL} for a in draft_common_atts],
             ],
             client_ip=client_ip or "",
         )
@@ -1554,6 +1579,8 @@ def add_note(
         marking_id=resolved_marking_id,
         author_user=actor_name,
         body_text=body,
+        # Hold notes stay hop-private unless staged as Common drafts on Forward.
+        audience=AUDIENCE_RECIPIENT,
         is_response=bool(is_response),
         client_ip=client_ip or "",
     )
@@ -1665,6 +1692,7 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable
         "previewable": previewable,
         "mimeType": mime_type,
         "attachmentKind": row.attachment_kind,
+        "audience": normalize_audience(getattr(row, "audience", None)),
         "storageKey": row.storage_key,
         "originalFilename": filename,
         "clientIp": row.client_ip,
@@ -1782,7 +1810,11 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
             if linked is not None and linked.status == "revoked":
                 continue
             if actor_name and not marking_content_visible_to_actor(
-                db, linked, actor_name, visible_paths=visible_paths
+                db,
+                linked,
+                actor_name,
+                visible_paths=visible_paths,
+                audience=normalize_audience(getattr(note, "audience", None)),
             ):
                 continue
         elif actor_name and visible_paths is not None:
@@ -1800,6 +1832,7 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
                 "markingId": note.marking_id,
                 "authorUser": note.author_user,
                 "bodyText": note.body_text,
+                "audience": normalize_audience(getattr(note, "audience", None)),
                 "isResponse": note.is_response,
                 "clientIp": note.client_ip,
                 "createdAt": note.created_at.isoformat() if note.created_at else "",
@@ -1836,7 +1869,11 @@ def list_attachments(
             if linked is not None and linked.status == "revoked":
                 continue
             if actor_name and not marking_content_visible_to_actor(
-                db, linked, actor_name, visible_paths=visible_paths
+                db,
+                linked,
+                actor_name,
+                visible_paths=visible_paths,
+                audience=normalize_audience(getattr(row, "audience", None)),
             ):
                 continue
         elif actor_name and visible_paths is not None:
@@ -2016,6 +2053,9 @@ def add_attachments_to_marking(
             created_by=actor_name,
             document_id=doc_id,
             attachment_kind=kind,
+            audience=normalize_audience(
+                att.get("audience"), default=AUDIENCE_RECIPIENT
+            ),
             storage_key=str(att.get("storageKey") or att.get("storage_key") or ""),
             original_filename=str(
                 att.get("originalFilename") or att.get("original_filename") or ""
@@ -2177,6 +2217,7 @@ def list_attachment_events(
         visible_paths = path_ids_visible_to_user(db, letter_id, actor_name)
         if visible_paths is not None:
             marking_cache: dict[int, Marking | None] = {}
+            att_audience_cache: dict[int, str] = {}
             filtered: list[CorrespondenceAttachmentEvent] = []
             for row in rows:
                 # Own archive events stay visible even after revoke so senders/recipients
@@ -2192,8 +2233,21 @@ def list_attachment_events(
                 if mid not in marking_cache:
                     marking_cache[mid] = db.get(Marking, mid)
                 linked = marking_cache[mid]
+                audience = AUDIENCE_RECIPIENT
+                if row.attachment_id is not None:
+                    aid = int(row.attachment_id)
+                    if aid not in att_audience_cache:
+                        att = db.get(CorrespondenceAttachment, aid)
+                        att_audience_cache[aid] = normalize_audience(
+                            getattr(att, "audience", None) if att else None
+                        )
+                    audience = att_audience_cache[aid]
                 if marking_content_visible_to_actor(
-                    db, linked, actor_name, visible_paths=visible_paths
+                    db,
+                    linked,
+                    actor_name,
+                    visible_paths=visible_paths,
+                    audience=audience,
                 ):
                     filtered.append(row)
             rows = filtered

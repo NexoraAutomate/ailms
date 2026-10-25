@@ -118,6 +118,9 @@ export function shortPathId(pathId: string | null | undefined) {
   return raw ? raw.slice(0, 8).toUpperCase() : ''
 }
 
+/** all = shared on pathway remakes; recipient = hop-private. */
+export type NoteAudience = 'all' | 'recipient'
+
 export type CorrespondenceAttachment = {
   id: number
   letterId: string
@@ -128,6 +131,7 @@ export type CorrespondenceAttachment = {
   previewable: boolean
   mimeType: string
   attachmentKind: string
+  audience: NoteAudience
   storageKey: string
   originalFilename: string
   clientIp: string
@@ -144,6 +148,8 @@ export type CorrespondenceNote = {
   markingId: number | null
   authorUser: string
   bodyText: string
+  /** all = shared on pathway remakes; recipient = hop-private. */
+  audience: NoteAudience
   isResponse: boolean
   clientIp: string
   createdAt: string
