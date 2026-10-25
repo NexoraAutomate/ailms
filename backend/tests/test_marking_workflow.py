@@ -1324,6 +1324,69 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.assertEqual(len(tree_b), 1)
         self.assertEqual(tree_b[0]["toUser"], self.user_b.name)
 
+    def test_downstream_junior_cannot_see_senior_hop_comments(self) -> None:
+        """Chain shares path_id, but comments on the senior hop stay private to that hop."""
+        batch = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[
+                {
+                    "toUser": self.user_a.name,
+                    "action": "forward",
+                    "notes": [{"bodyText": "This is for senior only"}],
+                }
+            ],
+            common_notes=[{"bodyText": "This is for all on senior hop"}],
+        )
+        self.db.flush()
+        senior_mark = self.db.query(Marking).filter(Marking.batch_id == batch.id).one()
+
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=senior_mark.id,
+            recipients=[
+                {
+                    "toUser": self.user_b.name,
+                    "action": "forward",
+                    "notes": [{"bodyText": "This is for junior"}],
+                }
+            ],
+        )
+        self.db.flush()
+        junior_mark = (
+            self.db.query(Marking)
+            .filter(Marking.parent_marking_id == senior_mark.id, Marking.to_user == self.user_b.name)
+            .one()
+        )
+        # Same pathway id after single-recipient remake.
+        self.assertEqual(senior_mark.path_id, junior_mark.path_id)
+
+        notes_junior = list_notes(self.db, self.letter.id, actor_name=self.user_b.name)
+        bodies_junior = {n["bodyText"] for n in notes_junior}
+        self.assertEqual(bodies_junior, {"This is for junior"})
+        self.assertTrue(all(n["markingId"] == junior_mark.id for n in notes_junior))
+
+        notes_senior = list_notes(self.db, self.letter.id, actor_name=self.user_a.name)
+        bodies_senior = {n["bodyText"] for n in notes_senior}
+        self.assertEqual(
+            bodies_senior,
+            {"This is for senior only", "This is for all on senior hop", "This is for junior"},
+        )
+
+        # Upstream marker may still audit the junior hop.
+        notes_marker = list_notes(self.db, self.letter.id, actor_name=self.initiator.name)
+        bodies_marker = {n["bodyText"] for n in notes_marker}
+        self.assertEqual(
+            bodies_marker,
+            {"This is for senior only", "This is for all on senior hop", "This is for junior"},
+        )
+
+        atts_junior = list_attachments(self.db, self.letter.id, actor_name=self.user_b.name)
+        self.assertEqual(atts_junior, [])
+
     def test_draft_notes_publish_on_forward_consume(self) -> None:
         """Add Comment drafts for a user are published when Forward consumes them."""
         add_draft_note(

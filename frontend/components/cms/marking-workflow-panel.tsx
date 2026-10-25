@@ -232,6 +232,39 @@ function markingKey(id: number | null | undefined): MarkingIncidentKey {
   return id == null ? 'root' : id
 }
 
+function sameWorkflowUser(a?: string | null, b?: string | null) {
+  return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase()
+}
+
+/**
+ * Marking ids whose notes/files belong on this pathway node for the current user.
+ * Hold contributions use the node marking id; comments/files published when
+ * forwarding onward are stored on child markings (author = fromUser).
+ */
+function relatedMarkingIdsForNode(
+  data: MarkingFlowNodeData,
+  meName: string,
+  allMarkings: MarkingNode[],
+): Set<number | null> {
+  const ids = new Set<number | null>()
+  const mid = data.markingId == null ? null : Number(data.markingId)
+  ids.add(Number.isFinite(mid as number) ? (mid as number) : null)
+  if (mid == null || data.kind === 'root') {
+    for (const m of allMarkings) {
+      if (m.parentMarkingId == null && sameWorkflowUser(m.fromUser, meName)) {
+        ids.add(m.id)
+      }
+    }
+  } else {
+    for (const m of allMarkings) {
+      if (m.parentMarkingId === mid && sameWorkflowUser(m.fromUser, meName)) {
+        ids.add(m.id)
+      }
+    }
+  }
+  return ids
+}
+
 function activityTime(createdAt: string | undefined, id: number): number {
   const parsed = createdAt ? Date.parse(createdAt) : NaN
   return Number.isFinite(parsed) ? parsed : id
@@ -458,6 +491,7 @@ export function MarkingWorkflowPanel({
   const [busy, setBusy] = useState(false)
   const [nodeDialog, setNodeDialog] = useState<MarkingFlowNodeData | null>(null)
   const [nodeEvents, setNodeEvents] = useState<AttachmentEvent[]>([])
+  const [nodeEventsLoading, setNodeEventsLoading] = useState(false)
   const [previewVersionId, setPreviewVersionId] = useState<number | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
   const [editingNoteBody, setEditingNoteBody] = useState('')
@@ -1027,19 +1061,20 @@ export function MarkingWorkflowPanel({
             onMarkingClick={(data) => {
               const meName = (me.name || '').trim()
               // Only the person represented by the node may open their own comments/files.
-              if (!meName || data.toUser !== meName) {
+              if (!meName || !sameWorkflowUser(data.toUser, meName)) {
                 if (data.markingId != null) {
                   jumpToMarkingInTimeline(data.markingId, data.batchId)
                 }
                 return
               }
               setNodeDialog(data)
-              void fetchAttachmentEvents(letter.id, {
-                markingId: data.markingId ?? undefined,
-                mineOnly: true,
-              })
+              setNodeEvents([])
+              setNodeEventsLoading(true)
+              // Fetch all of my archive events; dialog filters to this node + outbound children.
+              void fetchAttachmentEvents(letter.id, { mineOnly: true })
                 .then(setNodeEvents)
                 .catch(() => setNodeEvents([]))
+                .finally(() => setNodeEventsLoading(false))
             }}
           />
         </div>
@@ -1922,7 +1957,7 @@ export function MarkingWorkflowPanel({
       </div>
 
       {previewVersionId !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4">
           <div className="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl bg-white p-4 shadow-xl">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="text-sm font-bold text-slate-700">Document preview</p>
@@ -2563,7 +2598,7 @@ export function MarkingWorkflowPanel({
       )}
 
       {nodeDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/40 p-4">
           <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
             <div className="mb-3 flex items-start justify-between gap-2">
               <div>
@@ -2589,15 +2624,48 @@ export function MarkingWorkflowPanel({
             </div>
             {(() => {
               const meName = (me.name || '').trim()
-              const mid = nodeDialog.markingId ?? null
+              const relatedIds = relatedMarkingIdsForNode(nodeDialog, meName, allMarkings)
+              const inRelated = (markingId: number | null | undefined) =>
+                relatedIds.has(markingId == null ? null : Number(markingId))
               const myNotes = notes.filter(
-                (n) =>
-                  (n.markingId ?? null) === mid && (n.authorUser || '').trim() === meName,
+                (n) => sameWorkflowUser(n.authorUser, meName) && inRelated(n.markingId),
               )
               const myAttachments = attachments.filter(
-                (a) =>
-                  (a.markingId ?? null) === mid && (a.createdBy || '').trim() === meName,
+                (a) => sameWorkflowUser(a.createdBy, meName) && inRelated(a.markingId),
               )
+              const myEvents = nodeEvents.filter(
+                (ev) =>
+                  sameWorkflowUser(ev.actorUser, meName) && inRelated(ev.markingId),
+              )
+              // Older files may predate the archive table — surface them as "added".
+              const archiveRows: {
+                key: string
+                eventType: string
+                filename: string
+                createdAt: string
+                versionId: number | null
+                previewable: boolean
+              }[] =
+                myEvents.length > 0
+                  ? myEvents.map((ev) => {
+                      const live = myAttachments.find((a) => a.id === ev.attachmentId)
+                      return {
+                        key: `ev-${ev.id}`,
+                        eventType: ev.eventType,
+                        filename: ev.originalFilename || 'file',
+                        createdAt: ev.createdAt || '',
+                        versionId: ev.versionId ?? live?.versionId ?? null,
+                        previewable: Boolean(live?.previewable && (ev.versionId ?? live?.versionId)),
+                      }
+                    })
+                  : myAttachments.map((a) => ({
+                      key: `att-${a.id}`,
+                      eventType: 'added',
+                      filename: a.originalFilename || `File #${a.id}`,
+                      createdAt: a.createdAt || '',
+                      versionId: a.versionId,
+                      previewable: Boolean(a.previewable && a.versionId),
+                    }))
               return (
                 <div className="space-y-4 text-xs">
                   <div>
@@ -2634,12 +2702,38 @@ export function MarkingWorkflowPanel({
                         {myAttachments.map((a) => (
                           <li
                             key={a.id}
-                            className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-2.5 py-1.5"
+                            className="rounded-md border border-slate-200 px-2.5 py-2"
                           >
-                            <span className="min-w-0 truncate font-medium text-slate-700">
-                              {a.originalFilename || `File #${a.id}`}
-                            </span>
-                            <span className="shrink-0 text-[10px] text-slate-400">{a.attachmentKind}</span>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate font-medium text-slate-700">
+                                  {a.originalFilename || `File #${a.id}`}
+                                </p>
+                                <p className="text-[10px] text-slate-400">{a.attachmentKind}</p>
+                              </div>
+                            </div>
+                            {a.versionId ? (
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {a.previewable ? (
+                                  <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="outline"
+                                    onClick={() => setPreviewVersionId(a.versionId)}
+                                  >
+                                    <Eye data-icon="inline-start" /> Preview
+                                  </Button>
+                                ) : null}
+                                <a
+                                  href={documentDownloadUrl(a.versionId)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={cn(buttonVariants({ size: 'xs', variant: 'outline' }))}
+                                >
+                                  <ExternalLink data-icon="inline-start" className="size-3" /> Open
+                                </a>
+                              </div>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
@@ -2647,26 +2741,52 @@ export function MarkingWorkflowPanel({
                   </div>
                   <div>
                     <p className="mb-1.5 font-semibold uppercase tracking-wide text-slate-500">
-                      Archive trail ({nodeEvents.length})
+                      Archive trail ({archiveRows.length})
                     </p>
                     <p className="mb-1.5 text-[10px] text-slate-400">
                       Add / replace / remove history kept even when a senior replaces your file.
                     </p>
-                    {nodeEvents.length === 0 ? (
+                    {nodeEventsLoading ? (
+                      <p className="text-slate-400">Loading archive…</p>
+                    ) : archiveRows.length === 0 ? (
                       <p className="text-slate-400">No archive events yet.</p>
                     ) : (
                       <ul className="space-y-1.5">
-                        {nodeEvents.map((ev) => (
+                        {archiveRows.map((row) => (
                           <li
-                            key={ev.id}
+                            key={row.key}
                             className="rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-slate-600"
                           >
-                            <span className="font-semibold capitalize text-slate-700">{ev.eventType}</span>
-                            {' · '}
-                            {ev.originalFilename || 'file'}
-                            <span className="mt-0.5 block text-[10px] text-slate-400">
-                              {ev.createdAt ? formatDateTime(ev.createdAt) : ''}
-                            </span>
+                            <div>
+                              <span className="font-semibold capitalize text-slate-700">{row.eventType}</span>
+                              {' · '}
+                              {row.filename}
+                              <span className="mt-0.5 block text-[10px] text-slate-400">
+                                {row.createdAt ? formatDateTime(row.createdAt) : ''}
+                              </span>
+                            </div>
+                            {row.versionId ? (
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {row.previewable ? (
+                                  <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="outline"
+                                    onClick={() => setPreviewVersionId(row.versionId)}
+                                  >
+                                    <Eye data-icon="inline-start" /> Preview
+                                  </Button>
+                                ) : null}
+                                <a
+                                  href={documentDownloadUrl(row.versionId)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={cn(buttonVariants({ size: 'xs', variant: 'outline' }))}
+                                >
+                                  <ExternalLink data-icon="inline-start" className="size-3" /> Open
+                                </a>
+                              </div>
+                            ) : null}
                           </li>
                         ))}
                       </ul>

@@ -550,6 +550,56 @@ def marking_visible_on_paths(marking: Marking | None, visible_paths: set[str] | 
     return pid in visible_paths
 
 
+def marking_content_visible_to_actor(
+    db: Session,
+    marking: Marking | None,
+    actor_name: str,
+    *,
+    visible_paths: set[str] | None,
+) -> bool:
+    """
+    Whether notes/attachments on this marking may be shown to the actor.
+
+    Path membership alone is not enough: a shared path_id on a chain
+    (senior remakes to junior) would otherwise leak comments written for the
+    senior. Content is visible to:
+    - Admins (visible_paths is None)
+    - Direct participants (from_user / to_user of this marking)
+    - Upstream participants on ancestor markings (markers who can still audit
+      downstream hops on their branch)
+    Downstream juniors do not see ancestor-hop comments.
+    """
+    if marking is None:
+        return False
+    if marking.status == "revoked":
+        return False
+    if visible_paths is None:
+        return True
+    if not marking_visible_on_paths(marking, visible_paths):
+        return False
+
+    name = (actor_name or "").strip()
+    if not name:
+        return False
+    if marking.from_user == name or marking.to_user == name:
+        return True
+
+    parent_id = marking.parent_marking_id
+    seen: set[int] = set()
+    while parent_id is not None:
+        pid = int(parent_id)
+        if pid in seen:
+            break
+        seen.add(pid)
+        parent = db.get(Marking, pid)
+        if parent is None:
+            break
+        if parent.from_user == name or parent.to_user == name:
+            return True
+        parent_id = parent.parent_marking_id
+    return False
+
+
 def marking_tree(
     db: Session,
     letter_id: int,
@@ -1724,29 +1774,23 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
     marking_cache: dict[int, Marking | None] = {}
     out: list[dict] = []
     for note in notes:
-        if visible_paths is not None:
-            if note.marking_id is None:
-                # Root / initiator-hold notes: author, initiator, or no path yet.
-                if not (
-                    note.author_user == actor_name
-                    or (letter is not None and is_initiator(letter, actor_name or ""))
-                ):
-                    continue
-            else:
-                mid = int(note.marking_id)
-                if mid not in marking_cache:
-                    marking_cache[mid] = db.get(Marking, mid)
-                linked = marking_cache[mid]
-                if linked is not None and linked.status == "revoked":
-                    continue
-                if not marking_visible_on_paths(linked, visible_paths):
-                    continue
-        elif note.marking_id is not None:
+        if note.marking_id is not None:
             mid = int(note.marking_id)
             if mid not in marking_cache:
                 marking_cache[mid] = db.get(Marking, mid)
             linked = marking_cache[mid]
             if linked is not None and linked.status == "revoked":
+                continue
+            if actor_name and not marking_content_visible_to_actor(
+                db, linked, actor_name, visible_paths=visible_paths
+            ):
+                continue
+        elif actor_name and visible_paths is not None:
+            # Root / initiator-hold notes: author, initiator, or no path yet.
+            if not (
+                note.author_user == actor_name
+                or (letter is not None and is_initiator(letter, actor_name or ""))
+            ):
                 continue
         editable = note_is_editable(db, note, actor_name) if actor_name else False
         out.append(
@@ -1784,28 +1828,22 @@ def list_attachments(
     marking_cache: dict[int, Marking | None] = {}
     visible_rows: list[CorrespondenceAttachment] = []
     for row in rows:
-        if visible_paths is not None:
-            if row.marking_id is None:
-                if not (
-                    row.created_by == actor_name
-                    or (letter is not None and is_initiator(letter, actor_name or ""))
-                ):
-                    continue
-            else:
-                mid = int(row.marking_id)
-                if mid not in marking_cache:
-                    marking_cache[mid] = db.get(Marking, mid)
-                linked = marking_cache[mid]
-                if linked is not None and linked.status == "revoked":
-                    continue
-                if not marking_visible_on_paths(linked, visible_paths):
-                    continue
-        elif row.marking_id is not None:
+        if row.marking_id is not None:
             mid = int(row.marking_id)
             if mid not in marking_cache:
                 marking_cache[mid] = db.get(Marking, mid)
             linked = marking_cache[mid]
             if linked is not None and linked.status == "revoked":
+                continue
+            if actor_name and not marking_content_visible_to_actor(
+                db, linked, actor_name, visible_paths=visible_paths
+            ):
+                continue
+        elif actor_name and visible_paths is not None:
+            if not (
+                row.created_by == actor_name
+                or (letter is not None and is_initiator(letter, actor_name or ""))
+            ):
                 continue
         visible_rows.append(row)
 
@@ -2154,9 +2192,9 @@ def list_attachment_events(
                 if mid not in marking_cache:
                     marking_cache[mid] = db.get(Marking, mid)
                 linked = marking_cache[mid]
-                if linked is not None and linked.status == "revoked":
-                    continue
-                if marking_visible_on_paths(linked, visible_paths):
+                if marking_content_visible_to_actor(
+                    db, linked, actor_name, visible_paths=visible_paths
+                ):
                     filtered.append(row)
             rows = filtered
     return [

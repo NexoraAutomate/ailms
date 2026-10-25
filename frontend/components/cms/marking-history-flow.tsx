@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BaseEdge,
@@ -68,7 +68,7 @@ function MarkingPersonNode({ data, selected }: NodeProps<MarkingFlowNode>) {
   const horizontal = data.orientation === 'horizontal'
   return (
     <div
-      className={`min-w-[160px] max-w-[200px] cursor-pointer rounded-lg border bg-white px-3 py-2 shadow-sm transition ${
+      className={`min-w-[160px] max-w-[200px] cursor-grab rounded-lg border bg-white px-3 py-2 shadow-sm transition active:cursor-grabbing ${
         selected ? 'border-[#1769aa] ring-2 ring-[#1769aa]/20' : 'border-slate-200'
       }`}
     >
@@ -191,13 +191,26 @@ function MarkingHistoryFlowInner({
   )
   const [nodes, setNodes, onNodesChange] = useNodesState<MarkingFlowNode>(graph.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges)
+  const resetLayoutRef = useRef(false)
 
   useEffect(() => {
-    setNodes(graph.nodes)
+    // Preserve drag positions across data refresh; full re-layout on orientation change.
+    setNodes((prev) => {
+      if (resetLayoutRef.current) {
+        resetLayoutRef.current = false
+        return graph.nodes
+      }
+      const prevById = new Map(prev.map((n) => [n.id, n]))
+      return graph.nodes.map((n) => {
+        const existing = prevById.get(n.id)
+        return existing ? { ...n, position: existing.position } : n
+      })
+    })
     setEdges(graph.edges)
   }, [graph, setNodes, setEdges])
 
   const setOrient = (next: MarkingFlowOrientation) => {
+    resetLayoutRef.current = true
     setOrientation(next)
     writeOrientation(next)
   }
@@ -243,14 +256,17 @@ function MarkingHistoryFlowInner({
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          nodesDraggable={false}
+          nodesDraggable
           nodesConnectable={false}
           elementsSelectable
-          zoomOnScroll={false}
+          panOnDrag
+          zoomOnScroll
+          zoomOnPinch
+          zoomOnDoubleClick
           fitView
           fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.35}
-          maxZoom={1.5}
+          minZoom={0.2}
+          maxZoom={2.5}
           proOptions={{ hideAttribution: true }}
           onNodeClick={(_, node) => {
             if (node.data.kind === 'marking' || node.data.kind === 'root') {
@@ -264,7 +280,7 @@ function MarkingHistoryFlowInner({
         </ReactFlow>
       </div>
       <p className="text-[10px] text-slate-400">
-        Click your node to view your comments and attachments; other nodes jump to the timeline.
+        Drag nodes to rearrange · scroll to zoom · click your node for comments and attachments.
       </p>
     </div>
   )

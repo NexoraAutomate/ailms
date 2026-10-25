@@ -123,7 +123,7 @@ function pushMarkingNode(
       direction: node.direction || 'forward',
       orientation,
     },
-    draggable: false,
+    draggable: true,
     connectable: false,
   })
   return id
@@ -225,7 +225,7 @@ export function buildMarkingFlowGraph(
       fromUser: name,
       orientation,
     },
-    draggable: false,
+    draggable: true,
     connectable: false,
   })
 
