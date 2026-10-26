@@ -1,0 +1,225 @@
+/* Marking pathway — turbo-flow border/glow (pink → cyan) + edge hover */
+
+.ailms-marking-flow {
+  --ailms-flow-bg: #f1f5f9;
+  --ailms-flow-dot: #cbd5e1;
+  --ailms-node-bg: #ffffff;
+  --ailms-node-text: #0f172a;
+  --ailms-node-muted: #64748b;
+  --ailms-ribbon: #0d3763;
+  --ailms-ribbon-you: #0f766e;
+  --ailms-ribbon-initiator: #9a3412;
+  --ailms-ribbon-text: #fff;
+  --ailms-handle: #1769aa;
+  --ailms-handle-reply: #db2777;
+  --ailms-turbo-a: #ff0072;
+  --ailms-turbo-b: #00d4ff;
+  --ailms-edge-forward: #64748b;
+  --ailms-edge-reply: #db2777;
+  --ailms-edge-forward-hover: #0284c7;
+  --ailms-edge-reply-hover: #ea580c;
+}
+
+.dark .ailms-marking-flow {
+  --ailms-flow-bg: #000000;
+  --ailms-flow-dot: #1a1a1a;
+  --ailms-node-bg: #0b0b12;
+  --ailms-node-text: #f8fafc;
+  --ailms-node-muted: #94a3b8;
+  --ailms-ribbon: #1e3a5f;
+  --ailms-ribbon-you: #0f766e;
+  --ailms-ribbon-initiator: #9a3412;
+  --ailms-ribbon-text: #fff;
+  --ailms-handle: #00d4ff;
+  --ailms-handle-reply: #ff0072;
+  --ailms-turbo-a: #ff0072;
+  --ailms-turbo-b: #00d4ff;
+  --ailms-edge-forward: #67e8f9;
+  --ailms-edge-reply: #ff4db8;
+  --ailms-edge-forward-hover: #22d3ee;
+  --ailms-edge-reply-hover: #fb923c;
+}
+
+/* Outer RF wrapper: soft pink / cyan bloom (subtle, high transparency) */
+.dark .ailms-marking-flow .react-flow__node-markingPerson {
+  filter:
+    drop-shadow(-3px 0 8px rgba(255, 0, 114, 0.18))
+    drop-shadow(3px 0 8px rgba(0, 212, 255, 0.16));
+}
+
+.ailms-marking-flow .react-flow__node-markingPerson {
+  filter: none;
+}
+
+.ailms-flow-node {
+  position: relative;
+  min-width: 168px;
+  max-width: 220px;
+  padding: 0.75px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    var(--ailms-turbo-a) 0%,
+    color-mix(in srgb, var(--ailms-turbo-a) 35%, var(--ailms-turbo-b)) 48%,
+    var(--ailms-turbo-b) 100%
+  );
+  color: var(--ailms-node-text);
+  box-shadow:
+    -2px 0 10px rgba(255, 0, 114, 0.1),
+    2px 0 10px rgba(0, 212, 255, 0.1);
+  transition: box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.dark .ailms-flow-node {
+  box-shadow:
+    -3px 0 12px rgba(255, 0, 114, 0.16),
+    3px 0 12px rgba(0, 212, 255, 0.14),
+    0 0 1px rgba(255, 0, 114, 0.12);
+}
+
+.ailms-flow-node-inner {
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--ailms-node-bg);
+}
+
+.ailms-flow-node.is-selected {
+  box-shadow:
+    -2px 0 10px rgba(255, 0, 114, 0.14),
+    2px 0 10px rgba(0, 212, 255, 0.14),
+    0 0 0 2px color-mix(in srgb, var(--ailms-turbo-b) 70%, white);
+}
+
+.dark .ailms-flow-node.is-selected {
+  box-shadow:
+    -3px 0 12px rgba(255, 0, 114, 0.22),
+    3px 0 12px rgba(0, 212, 255, 0.2),
+    0 0 0 2px #00d4ff;
+}
+
+/* Initiator / You keep turbo border; ribbon carries the distinction */
+.ailms-flow-node.is-initiator {
+  background: linear-gradient(135deg, #f97316 0%, var(--ailms-turbo-a) 42%, var(--ailms-turbo-b) 100%);
+}
+
+.ailms-flow-node.is-you:not(.is-initiator) {
+  background: linear-gradient(135deg, #14b8a6 0%, var(--ailms-turbo-a) 40%, var(--ailms-turbo-b) 100%);
+}
+
+.ailms-flow-ribbon {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  color: var(--ailms-ribbon-text);
+  background: var(--ailms-ribbon);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ailms-flow-ribbon.is-you {
+  background: var(--ailms-ribbon-you);
+}
+
+.ailms-flow-ribbon.is-initiator {
+  background: var(--ailms-ribbon-initiator);
+}
+
+.ailms-flow-body {
+  padding: 0.45rem 0.65rem 0.55rem;
+}
+
+.ailms-flow-handle {
+  width: 9px !important;
+  height: 9px !important;
+  border: 2px solid #fff !important;
+  background: var(--ailms-handle) !important;
+}
+
+.dark .ailms-flow-handle {
+  border-color: #0a0a0a !important;
+  box-shadow: 0 0 6px rgba(0, 212, 255, 0.65);
+}
+
+.ailms-flow-handle.is-reply {
+  background: var(--ailms-handle-reply) !important;
+}
+
+.dark .ailms-flow-handle.is-reply {
+  box-shadow: 0 0 6px rgba(255, 0, 114, 0.7);
+}
+
+/* Edge hover contrast — forward vs reply */
+.ailms-marking-flow .react-flow__edge.ailms-edge-forward path {
+  stroke: var(--ailms-edge-forward) !important;
+  transition: stroke 0.15s ease, stroke-width 0.15s ease;
+}
+
+.ailms-marking-flow .react-flow__edge.ailms-edge-reply path {
+  stroke: var(--ailms-edge-reply) !important;
+  transition: stroke 0.15s ease, stroke-width 0.15s ease;
+}
+
+.ailms-marking-flow .react-flow__edge.ailms-edge-forward:hover path,
+.ailms-marking-flow .react-flow__edge.ailms-edge-forward.selected path {
+  stroke: var(--ailms-edge-forward-hover) !important;
+  stroke-width: 2.75px !important;
+}
+
+.ailms-marking-flow .react-flow__edge.ailms-edge-reply:hover path,
+.ailms-marking-flow .react-flow__edge.ailms-edge-reply.selected path {
+  stroke: var(--ailms-edge-reply-hover) !important;
+  stroke-width: 2.75px !important;
+}
+
+.ailms-marking-flow.draw-mode .react-flow__pane {
+  cursor: crosshair;
+}
+
+.ailms-marking-flow.erase-mode .react-flow__pane {
+  cursor: cell;
+}
+
+.ailms-marking-flow .react-flow__node-freehandStroke {
+  pointer-events: all;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  filter: none !important;
+}
+
+.ailms-marking-flow.erase-mode .react-flow__node-freehandStroke {
+  cursor: pointer;
+  outline: 1px dashed transparent;
+}
+
+.ailms-marking-flow.erase-mode .react-flow__node-freehandStroke:hover {
+  outline-color: #f43f5e;
+}
+
+.ailms-marking-flow.is-fullscreen {
+  position: fixed !important;
+  inset: 0;
+  z-index: 80;
+  height: 100% !important;
+  min-height: 100% !important;
+  border-radius: 0 !important;
+}
+
+@media (max-width: 640px) {
+  .ailms-flow-node {
+    min-width: 140px;
+    max-width: 170px;
+  }
+
+  .ailms-flow-ribbon {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.5rem;
+  }
+}

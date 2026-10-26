@@ -614,6 +614,72 @@ def marking_content_visible_to_actor(
     return False
 
 
+def markings_for_pathway_view(
+    rows: list[Marking],
+    *,
+    actor_name: str,
+    is_admin: bool,
+) -> list[Marking]:
+    """
+    Markings shown on the Workflow pathway / tree for a non-admin actor.
+
+    Seed = hops where the actor is from_user or to_user.
+    Include:
+      - all ancestors of those seeds (so the chain back to the initiator is visible)
+      - all descendants of those seeds (so remakes / fan-outs the actor made or holds
+        continue to show, even when fan-out assigned new path_ids)
+
+    Sibling privacy: descendants are taken only from seed markings, not from
+    ancestors. A recipient on one fan-out branch therefore does not see the
+    sibling branch under the same parent.
+    """
+    name = (actor_name or "").strip()
+    if not name:
+        return []
+    if is_admin:
+        return list(rows)
+
+    by_id: dict[int, Marking] = {int(r.id): r for r in rows}
+    children_of: dict[int, list[int]] = {}
+    for row in rows:
+        pid = row.parent_marking_id
+        if pid is None:
+            continue
+        children_of.setdefault(int(pid), []).append(int(row.id))
+
+    seed = {
+        int(r.id)
+        for r in rows
+        if (r.from_user or "").strip() == name or (r.to_user or "").strip() == name
+    }
+    if not seed:
+        return []
+
+    visible: set[int] = set()
+
+    # Walk up to initiator so the pathway is not a detached leaf.
+    for sid in seed:
+        cur: int | None = sid
+        seen_up: set[int] = set()
+        while cur is not None and cur not in seen_up:
+            seen_up.add(cur)
+            visible.add(cur)
+            parent = by_id.get(cur)
+            cur = int(parent.parent_marking_id) if parent and parent.parent_marking_id is not None else None
+
+    # Walk down from seeds only (fan-out / remakes on the actor's holds).
+    stack = list(seed)
+    while stack:
+        mid = stack.pop()
+        for cid in children_of.get(mid, []):
+            if cid in visible:
+                continue
+            visible.add(cid)
+            stack.append(cid)
+
+    return [r for r in rows if int(r.id) in visible]
+
+
 def marking_tree(
     db: Session,
     letter_id: int,
@@ -628,9 +694,15 @@ def marking_tree(
         .all()
     )
     if actor_name:
-        visible_paths = path_ids_visible_to_user(db, letter_id, actor_name)
-        if visible_paths is not None:
-            rows = [r for r in rows if marking_visible_on_paths(r, visible_paths)]
+        name = (actor_name or "").strip()
+        if name:
+            # Pathway view: ancestors + seed descendants (fixes missing fan-out
+            # children when remakes minted new path_ids). Admins see everything.
+            rows = markings_for_pathway_view(
+                rows,
+                actor_name=name,
+                is_admin=_is_admin(db, name),
+            )
 
     visible_ids = {r.id for r in rows}
     by_parent: dict[int | None, list[Marking]] = {}

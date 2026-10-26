@@ -1,0 +1,30 @@
+Following react flow implementations on workflow tab are requried:
+
+1. When X user logged In- and that the letter tracking node should always show "You" instead of "X" on all workflow nodes whenever a letter is marked to X. Rest of Nodes should displays other user name as already implemented. 
+
+      For exampl when X user is logged in and opened workflow then following should be displayed on nodes:
+       Admin -> M Iqbal -> You -> M Iqbal -> Admin
+
+2. Initiator Node has distinct color
+
+3. Node Field selection Toolbar must be displayed to show/hide Or select the fields on Selected Node Or All Nodes.
+
+4. No need to add Registered badge, Just keep the record of it in database. 
+
+5. when One node is linked to Many nodes then "bezier" be used
+
+6. further from first to last, all nodes must be in straight line except one to Many which will distribute its rows equally in above and below the horizontal line.  
+
+7. A node has to display two connection points around its one edge when it has to reply to a user otherwise only single connection point will be present. for example: one connection point will be for receiving a letter and one connection point for reply if reply was required and replied to previous sender. 
+
+8. On hover, edge color be changed to some suitable contrast color: further Forward color would be same howeve reply edge color would be different from forward color. 
+
+9. In dark mode, preferably use attached color combinations for modern styling of the workflow: which is captured from https://reactflow.dev/examples/styling/turbo-flow 
+
+10. Provide a free hand draw: https://reactflow.dev/examples/whiteboard/freehand-draw  with toggle buton on top left corner to select "Selection mode vs Draw mode". An erase tool be added so that drawing can be cleared, one by one or all at one. selectionf color for drawing be also provided. Keep in notice, No nodes be deleted or modified with erase tool. its just for drawing. 
+
+11. User name be displayed on top of each node like a ribbon (contrasting color) spanning left to right and height of the text itself. "You" node color be different from others. 
+
+12. there must be full screen button to view the flow in full screen 
+
+All requirements above must follow dark/ light shades as well as responsiveness of the component. 

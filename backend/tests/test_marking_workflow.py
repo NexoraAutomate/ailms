@@ -1324,6 +1324,56 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.assertEqual(len(tree_b), 1)
         self.assertEqual(tree_b[0]["toUser"], self.user_b.name)
 
+    def test_tree_shows_fan_out_under_middle_holder_for_upstream(self) -> None:
+        """Initiator → holder → (A, B): upstream pathway must list both fan-out children.
+
+        Fan-out mints new path_ids; without ancestor/descendant expansion those
+        remakes were dropped from the tree and missing on the React Flow graph.
+        """
+        first = create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+        hold_a = (
+            self.db.query(Marking)
+            .filter(Marking.batch_id == first.id, Marking.to_user == self.user_a.name)
+            .one()
+        )
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            parent_marking_id=hold_a.id,
+            recipients=[
+                {"toUser": self.user_b.name, "action": "forward"},
+                {"toUser": self.viewer.name, "action": "forward"},
+            ],
+        )
+        self.db.flush()
+
+        tree_init = marking_tree(self.db, self.letter.id, actor_name=self.initiator.name)
+        self.assertEqual(len(tree_init), 1)
+        self.assertEqual(tree_init[0]["toUser"], self.user_a.name)
+        child_names = {c["toUser"] for c in tree_init[0]["children"]}
+        self.assertEqual(child_names, {self.user_b.name, self.viewer.name})
+
+        # Sibling privacy: B must not see viewer's branch under A.
+        tree_b = marking_tree(self.db, self.letter.id, actor_name=self.user_b.name)
+        flat_b: list[str] = []
+
+        def walk(nodes: list[dict]) -> None:
+            for n in nodes:
+                flat_b.append(n["toUser"])
+                walk(n.get("children") or [])
+
+        walk(tree_b)
+        self.assertIn(self.user_a.name, flat_b)
+        self.assertIn(self.user_b.name, flat_b)
+        self.assertNotIn(self.viewer.name, flat_b)
+
     def test_downstream_junior_sees_for_all_but_not_recipient_only(self) -> None:
         """For-all comments travel with remakes; recipient-only stay on the senior hop."""
         batch = create_mark_batch(

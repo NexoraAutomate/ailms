@@ -1058,6 +1058,7 @@ export function MarkingWorkflowPanel({
           <MarkingHistoryFlow
             tree={tree}
             initiatorName={letter.createdBy || ''}
+            viewerName={me.name || ''}
             onMarkingClick={(data) => {
               const meName = (me.name || '').trim()
               // Only the person represented by the node may open their own comments/files.
