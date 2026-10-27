@@ -1491,6 +1491,66 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                     )
                 )
 
+    # for_user: empty = common section; set = "For {name}" in batch comment cards.
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_notes"):
+        note_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_notes")}
+        if "for_user" not in note_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_notes "
+                        "ADD COLUMN for_user VARCHAR(120) DEFAULT ''"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_notes_for_user "
+                        "ON cms_correspondence_notes (for_user)"
+                    )
+                )
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_attachments"):
+        att_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_attachments")}
+        if "for_user" not in att_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN for_user VARCHAR(120) DEFAULT ''"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_for_user "
+                        "ON cms_correspondence_attachments (for_user)"
+                    )
+                )
+
+    # Draft Send Privately flag (default off = visible to all mark recipients).
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_draft_notes"):
+        note_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_draft_notes")}
+        if "send_privately" not in note_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_draft_notes "
+                        "ADD COLUMN send_privately BOOLEAN DEFAULT FALSE"
+                    )
+                )
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_draft_attachments"):
+        att_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_draft_attachments")}
+        if "send_privately" not in att_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_draft_attachments "
+                        "ADD COLUMN send_privately BOOLEAN DEFAULT FALSE"
+                    )
+                )
+
 
 def _backfill_marking_path_ids(engine: Engine) -> None:
     """Assign path_id to legacy rows: fan-out batches get unique paths; single-child continues parent."""

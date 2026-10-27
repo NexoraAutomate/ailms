@@ -1,6 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Paperclip, Send, Trash2 } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
@@ -20,6 +28,7 @@ import {
   deleteDraftAttachment,
   deleteDraftNote,
   putDraftRoster,
+  setDraftTargetPrivacy,
   updateDraftNote,
   type DraftAttachment,
   type DraftNote,
@@ -38,6 +47,10 @@ type ToEntry = {
   dueAt: string
 }
 
+export type DraftCommentsComposerHandle = {
+  requestMark: () => void
+}
+
 type DraftCommentsComposerProps = {
   letterId: string
   users: UserOption[]
@@ -45,6 +58,9 @@ type DraftCommentsComposerProps = {
   drafts: MarkingDrafts | null
   onDraftsChange: (drafts: MarkingDrafts) => void
   disabled?: boolean
+  /** When true, Mark is rendered by the parent (e.g. Workflow action bar). */
+  hideMarkButton?: boolean
+  onMarkAvailabilityChange?: (state: { canMark: boolean; busy: boolean }) => void
   onRequestMark: (recipients: MarkRecipientInput[]) => void
 }
 
@@ -106,20 +122,30 @@ function rosterToEntries(drafts: MarkingDrafts | null): { to: ToEntry[]; info: s
   return { to, info }
 }
 
-export function DraftCommentsComposer({
-  letterId,
-  users,
-  meName,
-  drafts,
-  onDraftsChange,
-  disabled = false,
-  onRequestMark,
-}: DraftCommentsComposerProps) {
+export const DraftCommentsComposer = forwardRef<
+  DraftCommentsComposerHandle,
+  DraftCommentsComposerProps
+>(function DraftCommentsComposer(
+  {
+    letterId,
+    users,
+    meName,
+    drafts,
+    onDraftsChange,
+    disabled = false,
+    hideMarkButton = false,
+    onMarkAvailabilityChange,
+    onRequestMark,
+  },
+  ref,
+) {
   const [toEntries, setToEntries] = useState<ToEntry[]>([])
   const [infoUsers, setInfoUsers] = useState<string[]>([])
   const [activeToUser, setActiveToUser] = useState<string | null>(null)
   const [commonBody, setCommonBody] = useState('')
   const [perToBodies, setPerToBodies] = useState<Record<string, string>>({})
+  /** Send Privately per To recipient — default off (visible to all mark recipients). */
+  const [perToPrivate, setPerToPrivate] = useState<Record<string, boolean>>({})
   const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
   const [busyAttach, setBusyAttach] = useState(false)
   const [saveError, setSaveError] = useState('')
@@ -138,11 +164,14 @@ export function DraftCommentsComposer({
     const { to, info } = rosterToEntries(source)
     const commonNote = noteForTarget(source.notes, '')
     const bodies: Record<string, string> = {}
+    const privateFlags: Record<string, boolean> = {}
     const ids: Record<string, number | null> = {}
     for (const entry of to) {
       const n = noteForTarget(source.notes, entry.toUser)
+      const att = attsForTarget(source.attachments, entry.toUser)[0]
       bodies[entry.toUser] = n?.bodyText ?? ''
       ids[entry.toUser] = n?.id ?? null
+      privateFlags[entry.toUser] = Boolean(n?.sendPrivately ?? att?.sendPrivately)
     }
     skipRosterSave.current = true
     setToEntries(to)
@@ -150,6 +179,7 @@ export function DraftCommentsComposer({
     setActiveToUser(to[0]?.toUser ?? null)
     setCommonBody(commonNote?.bodyText ?? '')
     setPerToBodies(bodies)
+    setPerToPrivate(privateFlags)
     commonNoteIdRef.current = commonNote?.id ?? null
     perToNoteIdsRef.current = ids
     setHydrated(true)
@@ -286,6 +316,7 @@ export function DraftCommentsComposer({
             bodyText: trimmed,
             targetUser: user,
             intent: 'forward',
+            sendPrivately: perToPrivate[user] ?? false,
           })
           perToNoteIdsRef.current[user] = result.note.id
           onDraftsChange(result.drafts)
@@ -297,7 +328,7 @@ export function DraftCommentsComposer({
         savingContentRef.current = false
       }
     },
-    [disabled, letterId, onDraftsChange],
+    [disabled, letterId, onDraftsChange, perToPrivate],
   )
 
   useEffect(() => {
@@ -345,6 +376,11 @@ export function DraftCommentsComposer({
       for (const name of names) next[name] = prev[name] ?? ''
       return next
     })
+    setPerToPrivate((prev) => {
+      const next: Record<string, boolean> = {}
+      for (const name of names) next[name] = prev[name] ?? false
+      return next
+    })
     setActiveToUser((prev) => {
       if (prev && names.includes(prev)) return prev
       return names[names.length - 1] ?? null
@@ -355,6 +391,18 @@ export function DraftCommentsComposer({
 
   const updateToEntry = (name: string, patch: Partial<ToEntry>) => {
     setToEntries((prev) => prev.map((e) => (e.toUser === name ? { ...e, ...patch } : e)))
+  }
+
+  const setSendPrivately = async (user: string, checked: boolean) => {
+    setPerToPrivate((prev) => ({ ...prev, [user]: checked }))
+    try {
+      const result = await setDraftTargetPrivacy(letterId, user, checked)
+      onDraftsChange(result.drafts)
+      setSaveError('')
+    } catch (err) {
+      setPerToPrivate((prev) => ({ ...prev, [user]: !checked }))
+      setSaveError(err instanceof Error ? err.message : 'Failed to update privacy')
+    }
   }
 
   const uploadFiles = async (targetUser: string, files: FileList | null) => {
@@ -380,7 +428,13 @@ export function DraftCommentsComposer({
           originalFilename: file.name,
         })
       }
-      const result = await addDraftAttachments(letterId, uploaded, targetUser, 'forward')
+      const result = await addDraftAttachments(
+        letterId,
+        uploaded,
+        targetUser,
+        'forward',
+        targetUser ? (perToPrivate[targetUser] ?? false) : false,
+      )
       onDraftsChange(result.drafts)
       setSaveError('')
     } catch (err) {
@@ -431,7 +485,7 @@ export function DraftCommentsComposer({
   const excludeForInfo = [meName, ...toEntries.map((e) => e.toUser)]
   const activeEntry = toEntries.find((e) => e.toUser === activeToUser) ?? null
 
-  const handleMarkClick = () => {
+  const handleMarkClick = useCallback(() => {
     for (const e of toEntries) {
       if (e.action === 'response_required' && !e.responseType) {
         setSaveError(`Choose a response type for ${e.toUser}`)
@@ -440,7 +494,13 @@ export function DraftCommentsComposer({
       }
     }
     onRequestMark(markRecipients)
-  }
+  }, [markRecipients, onRequestMark, toEntries])
+
+  useImperativeHandle(ref, () => ({ requestMark: handleMarkClick }), [handleMarkClick])
+
+  useEffect(() => {
+    onMarkAvailabilityChange?.({ canMark, busy: busyAttach })
+  }, [busyAttach, canMark, onMarkAvailabilityChange])
 
   return (
     <section className="mb-5 rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -451,10 +511,12 @@ export function DraftCommentsComposer({
             Choose recipients, compose comments, then Mark to send.
           </p>
         </div>
-        <Button size="sm" disabled={!canMark || busyAttach} onClick={handleMarkClick}>
-          <Send className="mr-1 h-3.5 w-3.5" />
-          Mark
-        </Button>
+        {!hideMarkButton ? (
+          <Button size="sm" disabled={!canMark || busyAttach} onClick={handleMarkClick}>
+            <Send className="mr-1 h-3.5 w-3.5" />
+            Mark
+          </Button>
+        ) : null}
       </div>
 
       <div className="space-y-4 p-3 sm:p-4">
@@ -490,7 +552,7 @@ export function DraftCommentsComposer({
           />
           {toEntries.length > 0 && !activeEntry ? (
             <p className="mt-1.5 text-[11px] text-slate-500">
-              Click a recipient badge to set their action and optional private message.
+              Click a recipient badge to set their action and optional To-specific message.
             </p>
           ) : null}
           {activeEntry ? (
@@ -550,8 +612,25 @@ export function DraftCommentsComposer({
                   </>
                 )}
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Private message &amp; attachments for {activeEntry.toUser} only (optional).
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] text-slate-500">
+                  Optional message &amp; attachments for {activeEntry.toUser}.
+                </p>
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 rounded border-slate-300"
+                    checked={perToPrivate[activeEntry.toUser] ?? false}
+                    disabled={disabled}
+                    onChange={(e) => void setSendPrivately(activeEntry.toUser, e.target.checked)}
+                  />
+                  Send Privately
+                </label>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                {(perToPrivate[activeEntry.toUser] ?? false)
+                  ? 'Only this recipient will see this message and its attachments.'
+                  : 'All recipients on this mark (including Info) can see this message and its attachments.'}
               </p>
               <textarea
                 value={perToBodies[activeEntry.toUser] ?? ''}
@@ -630,7 +709,7 @@ export function DraftCommentsComposer({
       </div>
     </section>
   )
-}
+})
 
 function AttachmentStrip({
   attachments,

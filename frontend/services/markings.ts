@@ -125,6 +125,8 @@ export type CorrespondenceAttachment = {
   id: number
   letterId: string
   markingId: number | null
+  /** Mark batch id — used to merge multi-recipient content into one card. */
+  batchId?: number | null
   createdBy: string
   documentId: number | null
   versionId: number | null
@@ -132,6 +134,8 @@ export type CorrespondenceAttachment = {
   mimeType: string
   attachmentKind: string
   audience: NoteAudience
+  /** Empty = common section; set = shown under "For {name}". */
+  forUser?: string
   storageKey: string
   originalFilename: string
   clientIp: string
@@ -146,10 +150,14 @@ export type CorrespondenceNote = {
   id: number
   letterId: string
   markingId: number | null
+  /** Mark batch id — used to merge multi-recipient content into one card. */
+  batchId?: number | null
   authorUser: string
   bodyText: string
   /** all = shared on pathway remakes; recipient = hop-private. */
   audience: NoteAudience
+  /** Empty = common section; set = shown under "For {name}". */
+  forUser?: string
   isResponse: boolean
   clientIp: string
   createdAt: string
@@ -196,6 +204,8 @@ export type DraftNote = {
   targetUser: string
   intent: DraftIntent | string
   bodyText: string
+  /** When true, only that To recipient sees the published note. Default false. */
+  sendPrivately?: boolean
   clientIp: string
   createdAt: string
 }
@@ -210,6 +220,7 @@ export type DraftAttachment = {
   attachmentKind: string
   storageKey: string
   originalFilename: string
+  sendPrivately?: boolean
   clientIp: string
   createdAt: string
 }
@@ -273,7 +284,12 @@ export async function putDraftRoster(letterId: string, recipients: DraftRosterRe
 
 export async function addDraftNote(
   letterId: string,
-  input: { bodyText: string; targetUser?: string; intent?: DraftIntent },
+  input: {
+    bodyText: string
+    targetUser?: string
+    intent?: DraftIntent
+    sendPrivately?: boolean
+  },
 ) {
   return api.post<{ note: DraftNote; drafts: MarkingDrafts }>(
     `/api/markings/letters/${letterId}/drafts/notes`,
@@ -281,6 +297,7 @@ export async function addDraftNote(
       bodyText: input.bodyText,
       targetUser: input.targetUser ?? '',
       intent: input.intent ?? 'forward',
+      sendPrivately: input.sendPrivately,
     },
   )
 }
@@ -290,10 +307,22 @@ export async function addDraftAttachments(
   attachments: StagedAttachmentInput[],
   targetUser = '',
   intent: DraftIntent = 'forward',
+  sendPrivately?: boolean,
 ) {
   return api.post<{ attachments: DraftAttachment[]; drafts: MarkingDrafts }>(
     `/api/markings/letters/${letterId}/drafts/attachments`,
-    { targetUser, intent, attachments },
+    { targetUser, intent, attachments, sendPrivately },
+  )
+}
+
+export async function setDraftTargetPrivacy(
+  letterId: string,
+  targetUser: string,
+  sendPrivately: boolean,
+) {
+  return api.put<{ ok: boolean; drafts: MarkingDrafts }>(
+    `/api/markings/letters/${letterId}/drafts/privacy`,
+    { targetUser, sendPrivately },
   )
 }
 

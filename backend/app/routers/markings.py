@@ -35,6 +35,7 @@ from app.marking_workflow_service import (
     markings_for_path,
     replace_draft_roster,
     revoke_marking,
+    set_draft_target_privacy,
     serialize_attachment,
     serialize_batch,
     serialize_draft_attachment,
@@ -126,12 +127,20 @@ class DraftNoteIn(BaseModel):
     targetUser: str = ""
     # forward | reply
     intent: str = "forward"
+    # To drafts only; default false = visible to all mark recipients.
+    sendPrivately: bool | None = None
 
 
 class DraftAttachmentsIn(BaseModel):
     targetUser: str = ""
     intent: str = "forward"
+    sendPrivately: bool | None = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DraftTargetPrivacyIn(BaseModel):
+    targetUser: str
+    sendPrivately: bool = False
 
 
 class DraftRosterRecipientIn(BaseModel):
@@ -328,11 +337,33 @@ def post_draft_note(
         body_text=payload.bodyText,
         target_user=payload.targetUser,
         intent=payload.intent,
+        send_privately=payload.sendPrivately,
         client_ip=client_ip_from_request(request),
     )
     db.commit()
     db.refresh(row)
     return {"note": serialize_draft_note(row), "drafts": list_drafts(db, letter_id, actor)}
+
+
+@router.put("/letters/{letter_id}/drafts/privacy")
+def put_draft_target_privacy(
+    letter_id: int,
+    payload: DraftTargetPrivacyIn,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    set_draft_target_privacy(
+        db,
+        letter=letter,
+        actor_name=actor,
+        target_user=payload.targetUser,
+        send_privately=payload.sendPrivately,
+    )
+    db.commit()
+    return {"ok": True, "drafts": list_drafts(db, letter_id, actor)}
 
 
 @router.post("/letters/{letter_id}/drafts/attachments")
@@ -352,6 +383,7 @@ def post_draft_attachments(
         actor_name=actor,
         target_user=payload.targetUser,
         intent=payload.intent,
+        send_privately=payload.sendPrivately,
         attachments=payload.attachments,
         client_ip=client_ip_from_request(request),
     )

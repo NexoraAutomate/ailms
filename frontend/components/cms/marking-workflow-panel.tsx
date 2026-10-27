@@ -1,6 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import {
   CheckCircle2,
   CornerUpLeft,
@@ -10,6 +17,7 @@ import {
   Paperclip,
   Pencil,
   Replace,
+  Send,
   Trash2,
   X,
   XCircle,
@@ -27,7 +35,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
-import { DraftCommentsComposer } from '@/components/cms/draft-comments-composer'
+import {
+  DraftCommentsComposer,
+  type DraftCommentsComposerHandle,
+} from '@/components/cms/draft-comments-composer'
 import { MarkingActiveHolds } from '@/components/cms/marking-active-holds'
 import { MarkingHistoryFlow } from '@/components/cms/marking-history-flow'
 import type { MarkingFlowNodeData } from '@/lib/marking-flow-layout'
@@ -76,6 +87,9 @@ import {
 } from '@/services/markings'
 
 type WorkflowUser = { name: string; avatarUrl?: string; department?: string }
+
+type MarkingIncidentKey = number | 'root'
+type ContentIncidentKey = MarkingIncidentKey | `batch:${number}`
 
 type BatchTrackerSummary = {
   batchId: number
@@ -127,31 +141,39 @@ function onwardMarkedAt(
 
 /**
  * Subtitle under an author on a content card.
- * Outbound published notes: "For {recipient} · Marked onward {date}".
- * Notes still on an inbound hold that was remade: "Marked onward {date}".
+ * Batch cards use internal "For {name}" sections — only show remade timing here.
  */
 function contentAuthorSubtitle(
-  incidentKey: MarkingIncidentKey,
+  incidentKey: ContentIncidentKey,
   author: string,
   markings: MarkingNode[],
 ): string | undefined {
   const authorNorm = (author || '').trim().toLowerCase()
   if (!authorNorm) return undefined
 
-  if (incidentKey !== 'root') {
+  if (typeof incidentKey === 'string' && incidentKey.startsWith('batch:')) {
+    const batchId = Number(incidentKey.slice('batch:'.length))
+    const mine = markings.find(
+      (m) =>
+        m.batchId === batchId && (m.fromUser || '').trim().toLowerCase() === authorNorm,
+    )
+    if (mine?.createdAt) return `Marked onward ${formatDateTime(mine.createdAt)}`
+    return undefined
+  }
+
+  if (incidentKey !== 'root' && typeof incidentKey === 'number') {
     const marking = markings.find((m) => m.id === incidentKey)
-    if (
-      marking &&
-      (marking.fromUser || '').trim().toLowerCase() === authorNorm &&
-      (marking.toUser || '').trim()
-    ) {
-      const forPart = `For ${(marking.toUser || '').trim()}`
+    if (marking && (marking.fromUser || '').trim().toLowerCase() === authorNorm) {
       const markedAt = marking.createdAt ? formatDateTime(marking.createdAt) : ''
-      return markedAt ? `${forPart} · Marked onward ${markedAt}` : forPart
+      return markedAt ? `Marked onward ${markedAt}` : undefined
     }
   }
 
-  const remadeAt = onwardMarkedAt(incidentKey, author, markings)
+  const remadeAt = onwardMarkedAt(
+    typeof incidentKey === 'number' || incidentKey === 'root' ? incidentKey : 'root',
+    author,
+    markings,
+  )
   if (remadeAt) return `Marked onward ${formatDateTime(remadeAt)}`
   return undefined
 }
@@ -160,9 +182,13 @@ function contentAuthorSubtitle(
 function timelineClusterKey(item: TimelineItem, markingsById: Map<number, MarkingNode>): string {
   if (item.kind === 'markBatch') return `batch:${item.batchId}`
   if (item.kind === 'mark') return `batch:${item.marking.batchId}`
-  if (item.kind === 'content' && item.incident.key !== 'root') {
-    const marking = markingsById.get(item.incident.key)
-    if (marking) return `batch:${marking.batchId}`
+  if (item.kind === 'content') {
+    const key = item.incident.key
+    if (typeof key === 'string' && key.startsWith('batch:')) return key
+    if (key !== 'root' && typeof key === 'number') {
+      const marking = markingsById.get(key)
+      if (marking) return `batch:${marking.batchId}`
+    }
   }
   return `content:${item.kind === 'content' ? item.incident.key : 'x'}`
 }
@@ -185,10 +211,72 @@ function groupNotesByAuthor(notes: CorrespondenceNote[]): CorrespondenceNote[][]
   return groups
 }
 
-type MarkingIncidentKey = number | 'root'
-
 function markingKey(id: number | null | undefined): MarkingIncidentKey {
   return id == null ? 'root' : id
+}
+
+function contentSectionLabel(forUser: string | null | undefined): string {
+  return (forUser || '').trim()
+}
+
+/** Common (empty forUser) first, then alphabetical "For {name}" sections. */
+function partitionByForUser<T extends { forUser?: string }>(
+  items: T[],
+): { label: string; items: T[] }[] {
+  const common: T[] = []
+  const byUser = new Map<string, T[]>()
+  for (const item of items) {
+    const label = contentSectionLabel(item.forUser)
+    if (!label) {
+      common.push(item)
+      continue
+    }
+    if (!byUser.has(label)) byUser.set(label, [])
+    byUser.get(label)!.push(item)
+  }
+  const sections: { label: string; items: T[] }[] = []
+  if (common.length) sections.push({ label: '', items: common })
+  for (const label of [...byUser.keys()].sort((a, b) => a.localeCompare(b))) {
+    sections.push({ label, items: byUser.get(label)! })
+  }
+  return sections
+}
+
+/** Dedupe common (forUser empty) notes copied onto every recipient marking in a batch. */
+function dedupeCommonNotes(notes: CorrespondenceNote[]): CorrespondenceNote[] {
+  const seen = new Set<string>()
+  const out: CorrespondenceNote[] = []
+  const sorted = [...notes].sort((a, b) => a.id - b.id)
+  for (const n of sorted) {
+    if (contentSectionLabel(n.forUser)) {
+      out.push(n)
+      continue
+    }
+    const key = `${(n.authorUser || '').toLowerCase()}|${(n.bodyText || '').trim()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(n)
+  }
+  return out
+}
+
+function dedupeCommonAttachments(
+  attachments: CorrespondenceAttachment[],
+): CorrespondenceAttachment[] {
+  const seen = new Set<string>()
+  const out: CorrespondenceAttachment[] = []
+  const sorted = [...attachments].sort((a, b) => a.id - b.id)
+  for (const a of sorted) {
+    if (contentSectionLabel(a.forUser)) {
+      out.push(a)
+      continue
+    }
+    const key = `${(a.createdBy || '').toLowerCase()}|${a.documentId ?? ''}|${a.originalFilename || a.storageKey}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(a)
+  }
+  return out
 }
 
 function sameWorkflowUser(a?: string | null, b?: string | null) {
@@ -296,7 +384,9 @@ function writeWorkflowVisibility(next: WorkflowVisibility) {
 }
 
 type ContentIncident = {
-  key: MarkingIncidentKey
+  key: ContentIncidentKey
+  /** Marking ids in this card (for scroll / highlight anchors). */
+  markingIds: number[]
   notes: CorrespondenceNote[]
   attachments: CorrespondenceAttachment[]
 }
@@ -306,27 +396,69 @@ type TimelineItem =
   | { kind: 'markBatch'; batchId: number; markings: MarkingNode[]; sortAt: number }
   | { kind: 'content'; incident: ContentIncident; sortAt: number }
 
-/** Group notes + attachments by marking incident; newest items first within each group. */
-function groupByMarkingIncident(
+/**
+ * Group notes + attachments into one card per mark batch (multi-recipient marks
+ * share a card). Common content is deduped; To-specific rows keep forUser labels.
+ */
+function groupContentIncidents(
+  markings: MarkingNode[],
   notes: CorrespondenceNote[],
   attachments: CorrespondenceAttachment[],
 ): ContentIncident[] {
-  const map = new Map<MarkingIncidentKey, ContentIncident>()
-  const ensure = (key: MarkingIncidentKey) => {
-    if (!map.has(key)) {
-      map.set(key, { key, notes: [], attachments: [] })
-    }
-    return map.get(key)!
+  const markingsById = new Map(markings.map((m) => [m.id, m]))
+  type Acc = {
+    key: ContentIncidentKey
+    markingIds: Set<number>
+    notes: CorrespondenceNote[]
+    attachments: CorrespondenceAttachment[]
   }
+  const map = new Map<string, Acc>()
+  const ensure = (key: ContentIncidentKey, markingId: number | null) => {
+    const mapKey = String(key)
+    if (!map.has(mapKey)) {
+      map.set(mapKey, { key, markingIds: new Set(), notes: [], attachments: [] })
+    }
+    const acc = map.get(mapKey)!
+    if (markingId != null) acc.markingIds.add(markingId)
+    return acc
+  }
+  const resolveKey = (
+    markingId: number | null | undefined,
+    batchId?: number | null,
+  ): ContentIncidentKey => {
+    // Prefer batchId from the API so recipients still merge sibling copies even when
+    // sibling markings are hidden from their pathway tree.
+    if (batchId != null && Number.isFinite(Number(batchId))) {
+      return `batch:${Number(batchId)}`
+    }
+    if (markingId == null) return 'root'
+    const marking = markingsById.get(markingId)
+    if (marking) return `batch:${marking.batchId}`
+    return markingKey(markingId)
+  }
+
   const notesDesc = [...notes].sort(
     (a, b) => activityTime(b.createdAt, b.id) - activityTime(a.createdAt, a.id),
   )
   const attachmentsDesc = [...attachments].sort(
     (a, b) => activityTime(b.createdAt, b.id) - activityTime(a.createdAt, a.id),
   )
-  for (const note of notesDesc) ensure(markingKey(note.markingId)).notes.push(note)
-  for (const att of attachmentsDesc) ensure(markingKey(att.markingId)).attachments.push(att)
-  return [...map.values()]
+  for (const note of notesDesc) {
+    const key = resolveKey(note.markingId, note.batchId)
+    ensure(key, note.markingId).notes.push(note)
+  }
+  for (const att of attachmentsDesc) {
+    const key = resolveKey(att.markingId, att.batchId)
+    ensure(key, att.markingId).attachments.push(att)
+  }
+
+  return [...map.values()].map((acc) => ({
+    key: acc.key,
+    markingIds: [...acc.markingIds],
+    // Always dedupe common copies (fan-out publishes the same common note on each hop).
+    notes: dedupeCommonNotes(acc.notes),
+    attachments: dedupeCommonAttachments(acc.attachments),
+  }))
 }
 
 function latestIncidentActivity(incident: ContentIncident): number {
@@ -367,7 +499,7 @@ function buildCommentsTimeline(
     }
   }
 
-  for (const incident of groupByMarkingIncident(notes, attachments)) {
+  for (const incident of groupContentIncidents(markings, notes, attachments)) {
     if (incident.notes.length === 0 && incident.attachments.length === 0) continue
     items.push({
       kind: 'content',
@@ -433,6 +565,8 @@ export function MarkingWorkflowPanel({
   const [drafts, setDrafts] = useState<MarkingDrafts | null>(null)
   /** Remount composer after a successful Mark so local draft state resets. */
   const [composerKey, setComposerKey] = useState(0)
+  const composerRef = useRef<DraftCommentsComposerHandle>(null)
+  const [composerMarkState, setComposerMarkState] = useState({ canMark: false, busy: false })
   const [parentMarkingId, setParentMarkingId] = useState<number | null>(null)
   const [noteBody, setNoteBody] = useState('')
   const [forceClose, setForceClose] = useState(false)
@@ -467,7 +601,8 @@ export function MarkingWorkflowPanel({
 
   const jumpToMarkingInTimeline = useCallback(
     (markingId: number, batchId?: number) => {
-      // Prefer the comments published with that mark; fall back to the mark/batch chip.
+      // Prefer the batch comments card; fall back to legacy per-marking / mark chips.
+      if (batchId != null && scrollToTimelineAnchor(`workflow-incident-batch:${batchId}`)) return
       if (scrollToTimelineAnchor(`workflow-incident-${markingId}`)) return
       if (batchId != null && scrollToTimelineAnchor(`workflow-batch-${batchId}`)) return
       scrollToTimelineAnchor(`workflow-mark-${markingId}`)
@@ -853,6 +988,15 @@ export function MarkingWorkflowPanel({
                 <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
               </Button>
             )}
+            {actions.includes('forward') && (
+              <Button
+                size="sm"
+                disabled={!composerMarkState.canMark || composerMarkState.busy || busy}
+                onClick={() => composerRef.current?.requestMark()}
+              >
+                <Send className="mr-1 h-3.5 w-3.5" /> Mark
+              </Button>
+            )}
             {actions.includes('close') && (
               <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
                 <XCircle className="mr-1 h-3.5 w-3.5" /> Close
@@ -923,12 +1067,15 @@ export function MarkingWorkflowPanel({
       {!loading && actions.includes('forward') && (
         <DraftCommentsComposer
           key={`composer-${letter.id}-${composerKey}`}
+          ref={composerRef}
           letterId={letter.id}
           users={users}
           meName={me.name}
           drafts={drafts}
           onDraftsChange={(next) => setDrafts({ ...next, roster: next.roster ?? [] })}
           disabled={busy}
+          hideMarkButton
+          onMarkAvailabilityChange={setComposerMarkState}
           onRequestMark={(nextRecipients) => {
             setError('')
             setRecipients(nextRecipients.length ? nextRecipients : [emptyRecipient()])
@@ -1152,7 +1299,25 @@ export function MarkingWorkflowPanel({
                             ) : null}
                           </div>,
                           <div key={groupKey} className="py-1">
-                            {group.map((note) => (
+                            {partitionByForUser(group).flatMap((section) => {
+                              const sectionNodes: ReactNode[] = []
+                              if (section.label) {
+                                sectionNodes.push(
+                                  <p
+                                    key={`${groupKey}-for-${section.label}`}
+                                    className={cn(
+                                      'border-t pt-2.5 text-sm font-bold underline underline-offset-2',
+                                      isOwnComments
+                                        ? 'border-emerald-100 text-emerald-950 dark:border-emerald-900/40 dark:text-emerald-100'
+                                        : 'border-slate-50 text-slate-800',
+                                    )}
+                                  >
+                                    For {section.label}
+                                  </p>,
+                                )
+                              }
+                              for (const note of section.items) {
+                                sectionNodes.push(
                               <div
                                 key={note.id}
                                 className={cn(
@@ -1199,6 +1364,11 @@ export function MarkingWorkflowPanel({
                                       )}
                                     >
                                       Response
+                                    </span>
+                                  ) : null}
+                                  {note.audience === 'recipient' ? (
+                                    <span className="rounded bg-amber-100 px-1 py-px text-[10px] font-semibold text-amber-900">
+                                      Private
                                     </span>
                                   ) : null}
                                   {note.editable && (
@@ -1272,8 +1442,11 @@ export function MarkingWorkflowPanel({
                                     {note.bodyText}
                                   </p>
                                 )}
-                              </div>
-                            ))}
+                              </div>,
+                                )
+                              }
+                              return sectionNodes
+                            })}
                           </div>,
                         ]
                       })
@@ -1301,7 +1474,20 @@ export function MarkingWorkflowPanel({
                       <p className="text-xs text-slate-400">None</p>
                     ) : (
                       <ul className="space-y-2">
-                        {incident.attachments.map((a) => (
+                        {partitionByForUser(incident.attachments).flatMap((section) => {
+                          const rows: ReactNode[] = []
+                          if (section.label) {
+                            rows.push(
+                              <li
+                                key={`att-for-${section.label}`}
+                                className="pt-1 text-xs font-bold underline underline-offset-2 text-slate-700"
+                              >
+                                For {section.label}
+                              </li>,
+                            )
+                          }
+                          for (const a of section.items) {
+                            rows.push(
                           <li
                             key={a.id}
                             className="relative rounded-lg border border-slate-200 bg-white px-2.5 py-2 pr-9 shadow-sm"
@@ -1412,8 +1598,11 @@ export function MarkingWorkflowPanel({
                                 </div>
                               </div>
                             </div>
-                          </li>
-                        ))}
+                          </li>,
+                            )
+                          }
+                          return rows
+                        })}
                       </ul>
                     )}
                   </div>
@@ -1541,7 +1730,7 @@ export function MarkingWorkflowPanel({
                       if (!n && !a) return null
                       return (
                         <li key={r.toUser}>
-                          {r.toUser} (private): {n} comment{n === 1 ? '' : 's'}, {a} attachment
+                          {r.toUser}: {n} comment{n === 1 ? '' : 's'}, {a} attachment
                           {a === 1 ? '' : 's'}
                         </li>
                       )

@@ -348,6 +348,8 @@ class CorrespondenceNote(Base):
     # all = shared with everyone on the pathway (incl. later forwards);
     # recipient = only the marking's to_user (+ from_user / upstream auditors).
     audience: Mapped[str] = mapped_column(String(20), default="recipient", index=True)
+    # Empty = common / batch-shared section; set = "For {name}" section in the card.
+    for_user: Mapped[str] = mapped_column(String(120), default="", index=True)
     is_response: Mapped[bool] = mapped_column(Boolean, default=False)
     client_ip: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
@@ -378,6 +380,8 @@ class CorrespondenceAttachment(Base):
     attachment_kind: Mapped[str] = mapped_column(String(60), default="Other")
     # Same semantics as CorrespondenceNote.audience.
     audience: Mapped[str] = mapped_column(String(20), default="recipient", index=True)
+    # Empty = common section; set = shown under "For {name}" in the batch card.
+    for_user: Mapped[str] = mapped_column(String(120), default="", index=True)
     storage_key: Mapped[str] = mapped_column(String(500), default="")
     original_filename: Mapped[str] = mapped_column(String(255), default="")
     client_ip: Mapped[str] = mapped_column(String(80), default="")
@@ -431,6 +435,8 @@ class CorrespondenceDraftNote(Base):
     # forward | reply — mutually exclusive staging for Forward vs Reply confirm.
     intent: Mapped[str] = mapped_column(String(20), default="forward", index=True)
     body_text: Mapped[str] = mapped_column(Text, default="")
+    # When True (To drafts only), publish as audience=recipient; else audience=all.
+    send_privately: Mapped[bool] = mapped_column(Boolean, default=False)
     client_ip: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
@@ -451,6 +457,8 @@ class CorrespondenceDraftAttachment(Base):
     attachment_kind: Mapped[str] = mapped_column(String(60), default="Other")
     storage_key: Mapped[str] = mapped_column(String(500), default="")
     original_filename: Mapped[str] = mapped_column(String(255), default="")
+    # When True (To drafts only), publish as audience=recipient; else audience=all.
+    send_privately: Mapped[bool] = mapped_column(Boolean, default=False)
     client_ip: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
