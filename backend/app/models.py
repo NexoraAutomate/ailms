@@ -455,6 +455,37 @@ class CorrespondenceDraftAttachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class CorrespondenceDraftRecipient(Base):
+    """Composer roster entry (To / Info) staged before Mark, with per-user action."""
+
+    __tablename__ = "cms_correspondence_draft_recipients"
+    __table_args__ = (
+        UniqueConstraint(
+            "letter_id",
+            "author_user",
+            "to_user",
+            name="uq_cms_draft_recipient_letter_author_user",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    letter_id: Mapped[int] = mapped_column(ForeignKey("cms_letters.id", ondelete="CASCADE"), index=True)
+    author_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    to_user: Mapped[str] = mapped_column(String(120), default="", index=True)
+    # to = actionable recipient; info = for_info only
+    role: Mapped[str] = mapped_column(String(20), default="to", index=True)
+    action: Mapped[str] = mapped_column(String(40), default="forward")
+    response_type: Mapped[str] = mapped_column(String(40), default="")
+    response_type_other: Mapped[str] = mapped_column(String(255), default="")
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    due_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    priority: Mapped[str] = mapped_column(String(40), default="")
+    track: Mapped[bool] = mapped_column(Boolean, default=True)
+    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    client_ip: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class MarkingSubscription(Base):
     """Pathway notification subscription for a marker on a letter/batch."""
 

@@ -1327,6 +1327,42 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                 )
 
     inspector = inspect(engine)
+    if not inspector.has_table("cms_correspondence_draft_recipients"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_correspondence_draft_recipients (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        author_user VARCHAR(120) DEFAULT '',
+                        to_user VARCHAR(120) DEFAULT '',
+                        role VARCHAR(20) DEFAULT 'to',
+                        action VARCHAR(40) DEFAULT 'forward',
+                        response_type VARCHAR(40) DEFAULT '',
+                        response_type_other VARCHAR(255) DEFAULT '',
+                        instructions TEXT DEFAULT '',
+                        due_at DATE NULL,
+                        priority VARCHAR(40) DEFAULT '',
+                        track BOOLEAN DEFAULT TRUE,
+                        reminders_enabled BOOLEAN DEFAULT TRUE,
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        CONSTRAINT uq_cms_draft_recipient_letter_author_user
+                            UNIQUE (letter_id, author_user, to_user)
+                    )
+                    """
+                )
+            )
+            for idx in ("letter_id", "author_user", "to_user", "role"):
+                conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS ix_cms_correspondence_draft_recipients_{idx} "
+                        f"ON cms_correspondence_draft_recipients ({idx})"
+                    )
+                )
+
+    inspector = inspect(engine)
     if not inspector.has_table("cms_outbound_emails"):
         with engine.begin() as conn:
             conn.execute(

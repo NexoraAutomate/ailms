@@ -214,9 +214,43 @@ export type DraftAttachment = {
   createdAt: string
 }
 
+export type DraftRecipientRole = 'to' | 'info'
+
+export type DraftRecipient = {
+  id: number
+  letterId: string
+  authorUser: string
+  toUser: string
+  role: DraftRecipientRole | string
+  action: MarkingAction | string
+  responseType: string
+  responseTypeOther: string
+  instructions: string
+  dueAt: string
+  priority: string
+  track: boolean
+  remindersEnabled: boolean
+  clientIp: string
+  createdAt: string
+}
+
+export type DraftRosterRecipientInput = {
+  toUser: string
+  role: DraftRecipientRole
+  action?: MarkingAction | string
+  responseType?: string
+  responseTypeOther?: string
+  instructions?: string
+  dueAt?: string | null
+  priority?: string
+  track?: boolean
+  remindersEnabled?: boolean
+}
+
 export type MarkingDrafts = {
   notes: DraftNote[]
   attachments: DraftAttachment[]
+  roster: DraftRecipient[]
   targetUsers: string[]
   forwardTargetUsers: string[]
   replyTargetUsers: string[]
@@ -228,6 +262,13 @@ export type MarkingDrafts = {
 
 export async function fetchMarkingDrafts(letterId: string) {
   return api.get<MarkingDrafts>(`/api/markings/letters/${letterId}/drafts`)
+}
+
+export async function putDraftRoster(letterId: string, recipients: DraftRosterRecipientInput[]) {
+  return api.put<{ roster: DraftRecipient[]; drafts: MarkingDrafts }>(
+    `/api/markings/letters/${letterId}/drafts/roster`,
+    { recipients },
+  )
 }
 
 export async function addDraftNote(

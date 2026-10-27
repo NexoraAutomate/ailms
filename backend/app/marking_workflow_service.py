@@ -14,6 +14,7 @@ from app.models import (
     CorrespondenceAttachmentEvent,
     CorrespondenceDraftAttachment,
     CorrespondenceDraftNote,
+    CorrespondenceDraftRecipient,
     CorrespondenceNote,
     DocumentVersion,
     Letter,
@@ -840,8 +841,28 @@ def serialize_draft_attachment(row: CorrespondenceDraftAttachment) -> dict:
     }
 
 
+def serialize_draft_recipient(row: CorrespondenceDraftRecipient) -> dict:
+    return {
+        "id": row.id,
+        "letterId": str(row.letter_id),
+        "authorUser": row.author_user,
+        "toUser": row.to_user or "",
+        "role": (row.role or "to").strip().lower() or "to",
+        "action": (row.action or "forward").strip().lower() or "forward",
+        "responseType": row.response_type or "",
+        "responseTypeOther": row.response_type_other or "",
+        "instructions": row.instructions or "",
+        "dueAt": row.due_at.isoformat() if row.due_at else "",
+        "priority": row.priority or "",
+        "track": bool(row.track),
+        "remindersEnabled": bool(row.reminders_enabled),
+        "clientIp": row.client_ip or "",
+        "createdAt": row.created_at.isoformat() if row.created_at else "",
+    }
+
+
 def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
-    """Draft comments/attachments authored by the actor, grouped for Forward/Reply confirm."""
+    """Draft comments/attachments/roster authored by the actor for Mark confirm."""
     name = (actor_name or "").strip()
     notes = (
         db.query(CorrespondenceDraftNote)
@@ -861,6 +882,15 @@ def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
         .order_by(CorrespondenceDraftAttachment.id.asc())
         .all()
     )
+    roster_rows = (
+        db.query(CorrespondenceDraftRecipient)
+        .filter(
+            CorrespondenceDraftRecipient.letter_id == letter_id,
+            CorrespondenceDraftRecipient.author_user == name,
+        )
+        .order_by(CorrespondenceDraftRecipient.id.asc())
+        .all()
+    )
     forward_targets: set[str] = set()
     reply_targets: set[str] = set()
     for n in notes:
@@ -877,20 +907,29 @@ def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
             reply_targets.add(t)
         elif t:
             forward_targets.add(t)
+    for r in roster_rows:
+        t = (r.to_user or "").strip()
+        if t:
+            forward_targets.add(t)
     has_reply = any(
         ((n.intent or "forward").strip().lower() or "forward") == "reply" for n in notes
     ) or any(
         ((a.intent or "forward").strip().lower() or "forward") == "reply" for a in atts
     )
-    has_forward = any(
-        ((n.intent or "forward").strip().lower() or "forward") == "forward" for n in notes
-    ) or any(
-        ((a.intent or "forward").strip().lower() or "forward") == "forward" for a in atts
+    has_forward = (
+        bool(roster_rows)
+        or any(
+            ((n.intent or "forward").strip().lower() or "forward") == "forward" for n in notes
+        )
+        or any(
+            ((a.intent or "forward").strip().lower() or "forward") == "forward" for a in atts
+        )
     )
     targets = forward_targets | reply_targets
     return {
         "notes": [serialize_draft_note(n) for n in notes],
         "attachments": [serialize_draft_attachment(a) for a in atts],
+        "roster": [serialize_draft_recipient(r) for r in roster_rows],
         "targetUsers": sorted(targets),
         "forwardTargetUsers": sorted(forward_targets),
         "replyTargetUsers": sorted(reply_targets),
@@ -909,6 +948,119 @@ def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
             and ((a.intent or "forward").strip().lower() or "forward") == "forward"
         ),
     }
+
+
+def replace_draft_roster(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    recipients: list[dict[str, Any]],
+    client_ip: str = "",
+) -> list[CorrespondenceDraftRecipient]:
+    """Replace the actor's draft roster for a letter (To + Info)."""
+    assert_can_mutate(db, letter, actor_name)
+    name = (actor_name or "").strip()
+    existing = list_drafts(db, letter.id, name)
+    if existing["hasReplyDrafts"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Delete reply drafts before updating the mark roster",
+        )
+
+    seen: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for raw in recipients:
+        to_user = str(raw.get("toUser") or raw.get("to_user") or "").strip()
+        if not to_user:
+            raise HTTPException(status_code=400, detail="Each roster entry requires toUser")
+        if to_user == name:
+            raise HTTPException(status_code=400, detail="Cannot mark to yourself")
+        if not _user_by_name(db, to_user):
+            raise HTTPException(status_code=400, detail=f"Unknown user '{to_user}'")
+        key = to_user.lower()
+        if key in seen:
+            raise HTTPException(status_code=400, detail=f"Duplicate recipient '{to_user}'")
+        seen.add(key)
+
+        role = str(raw.get("role") or "to").strip().lower() or "to"
+        if role not in {"to", "info"}:
+            raise HTTPException(status_code=400, detail="role must be 'to' or 'info'")
+
+        if role == "info":
+            action = "for_info"
+        else:
+            action = str(raw.get("action") or "forward").strip().lower() or "forward"
+            if action not in MARKING_ACTIONS:
+                raise HTTPException(status_code=400, detail=f"Invalid action '{action}'")
+            if action == "for_info":
+                # Info-only users belong in the Info field, not To.
+                role = "info"
+
+        response_type = str(raw.get("responseType") or raw.get("response_type") or "").strip()
+        response_type_other = str(
+            raw.get("responseTypeOther") or raw.get("response_type_other") or ""
+        ).strip()
+        due_raw = raw.get("dueAt") if "dueAt" in raw else raw.get("due_at")
+        due_at: date | None = None
+        if due_raw:
+            if isinstance(due_raw, date) and not isinstance(due_raw, datetime):
+                due_at = due_raw
+            else:
+                try:
+                    due_at = date.fromisoformat(str(due_raw)[:10])
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail="Invalid dueAt") from exc
+
+        if action == "response_required" and not response_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"responseType is required for Response Required ({to_user})",
+            )
+
+        normalized.append(
+            {
+                "to_user": to_user,
+                "role": role,
+                "action": action,
+                "response_type": response_type,
+                "response_type_other": response_type_other,
+                "instructions": str(raw.get("instructions") or "").strip(),
+                "due_at": due_at,
+                "priority": str(raw.get("priority") or "").strip(),
+                "track": bool(raw.get("track", True)),
+                "reminders_enabled": bool(
+                    raw.get("remindersEnabled", raw.get("reminders_enabled", True))
+                ),
+            }
+        )
+
+    db.query(CorrespondenceDraftRecipient).filter(
+        CorrespondenceDraftRecipient.letter_id == letter.id,
+        CorrespondenceDraftRecipient.author_user == name,
+    ).delete(synchronize_session=False)
+
+    created: list[CorrespondenceDraftRecipient] = []
+    for item in normalized:
+        row = CorrespondenceDraftRecipient(
+            letter_id=letter.id,
+            author_user=name,
+            to_user=item["to_user"],
+            role=item["role"],
+            action=item["action"],
+            response_type=item["response_type"],
+            response_type_other=item["response_type_other"],
+            instructions=item["instructions"],
+            due_at=item["due_at"],
+            priority=item["priority"],
+            track=item["track"],
+            reminders_enabled=item["reminders_enabled"],
+            client_ip=client_ip or "",
+        )
+        db.add(row)
+        created.append(row)
+    db.flush()
+    return created
 
 
 def add_draft_note(
@@ -1290,25 +1442,8 @@ def create_mark_batch(
             else:
                 draft_atts_by_target.setdefault(target, []).append(payload)
 
-        for item in normalized:
-            # Admin in-place edit of an existing marking may change action/type without new drafts.
-            if item.get("update_id"):
-                continue
-            target = item["to_user"]
-            has_personal = bool(
-                item["notes"]
-                or item["attachments"]
-                or draft_notes_by_target.get(target)
-                or draft_atts_by_target.get(target)
-            )
-            if not has_personal:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"No draft comments or attachments for '{target}'. "
-                        "Use Add Reply/Forwarding Comment or Attachment first."
-                    ),
-                )
+        # Composer may Mark with roster-only recipients (optional personal/common content).
+        # Personal drafts are no longer required per recipient when consumeDrafts is set.
 
     to_create = [item for item in normalized if not item.get("update_id")]
     to_update = [item for item in normalized if item.get("update_id")]
@@ -1426,6 +1561,18 @@ def create_mark_batch(
             target = (a.target_user or "").strip()
             if not target or target in consumed_targets:
                 db.delete(a)
+        roster_rows = (
+            db.query(CorrespondenceDraftRecipient)
+            .filter(
+                CorrespondenceDraftRecipient.letter_id == letter.id,
+                CorrespondenceDraftRecipient.author_user == (actor_name or "").strip(),
+            )
+            .all()
+        )
+        for r in roster_rows:
+            target = (r.to_user or "").strip()
+            if not target or target in consumed_targets:
+                db.delete(r)
 
     db.flush()
 

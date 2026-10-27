@@ -33,11 +33,13 @@ from app.marking_workflow_service import (
     marking_actions_payload,
     marking_tree,
     markings_for_path,
+    replace_draft_roster,
     revoke_marking,
     serialize_attachment,
     serialize_batch,
     serialize_draft_attachment,
     serialize_draft_note,
+    serialize_draft_recipient,
     serialize_marking,
     sync_attachment_after_replace,
     update_attachment_meta,
@@ -130,6 +132,23 @@ class DraftAttachmentsIn(BaseModel):
     targetUser: str = ""
     intent: str = "forward"
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DraftRosterRecipientIn(BaseModel):
+    toUser: str
+    role: str = "to"
+    action: str = "forward"
+    responseType: str = ""
+    responseTypeOther: str = ""
+    instructions: str = ""
+    dueAt: str | None = None
+    priority: str = ""
+    track: bool = True
+    remindersEnabled: bool = True
+
+
+class DraftRosterIn(BaseModel):
+    recipients: list[DraftRosterRecipientIn] = Field(default_factory=list)
 
 
 class RespondIn(BaseModel):
@@ -262,6 +281,33 @@ def get_drafts(letter_id: int, db: Session = Depends(get_db)) -> dict:
     actor = current_user_name(db)
     assert_letter_access(db, letter, actor)
     return list_drafts(db, letter_id, actor)
+
+
+@router.put("/letters/{letter_id}/drafts/roster")
+def put_draft_roster(
+    letter_id: int,
+    payload: DraftRosterIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    rows = replace_draft_roster(
+        db,
+        letter=letter,
+        actor_name=actor,
+        recipients=[r.model_dump() for r in payload.recipients],
+        client_ip=client_ip_from_request(request),
+    )
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return {
+        "roster": [serialize_draft_recipient(r) for r in rows],
+        "drafts": list_drafts(db, letter_id, actor),
+    }
 
 
 @router.post("/letters/{letter_id}/drafts/notes")
