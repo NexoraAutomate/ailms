@@ -127,6 +127,9 @@ export type CorrespondenceAttachment = {
   markingId: number | null
   /** Mark batch id — used to merge multi-recipient content into one card. */
   batchId?: number | null
+  /** Linked marking recipient (for To / For Info roster on the card). */
+  toUser?: string
+  markingAction?: string
   createdBy: string
   documentId: number | null
   versionId: number | null
@@ -152,6 +155,9 @@ export type CorrespondenceNote = {
   markingId: number | null
   /** Mark batch id — used to merge multi-recipient content into one card. */
   batchId?: number | null
+  /** Linked marking recipient (for To / For Info roster on the card). */
+  toUser?: string
+  markingAction?: string
   authorUser: string
   bodyText: string
   /** all = shared on pathway remakes; recipient = hop-private. */

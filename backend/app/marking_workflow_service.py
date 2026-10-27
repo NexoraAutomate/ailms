@@ -2059,15 +2059,21 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable
             mime_type = current.mime_type or ""
             filename = filename or current.original_filename or ""
     batch_id: int | None = None
+    to_user = ""
+    marking_action = ""
     if row.marking_id is not None:
         linked = db.get(Marking, int(row.marking_id))
         if linked is not None:
             batch_id = linked.batch_id
+            to_user = (linked.to_user or "").strip()
+            marking_action = (linked.action or "").strip()
     return {
         "id": row.id,
         "letterId": str(row.letter_id) if row.letter_id else "",
         "markingId": row.marking_id,
         "batchId": batch_id,
+        "toUser": to_user,
+        "markingAction": marking_action,
         "createdBy": row.created_by,
         "documentId": row.document_id,
         "versionId": version_id,
@@ -2222,6 +2228,8 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
                 "letterId": str(note.letter_id),
                 "markingId": note.marking_id,
                 "batchId": linked.batch_id if linked is not None else None,
+                "toUser": (linked.to_user or "").strip() if linked is not None else "",
+                "markingAction": (linked.action or "").strip() if linked is not None else "",
                 "authorUser": note.author_user,
                 "bodyText": note.body_text,
                 "audience": normalize_audience(getattr(note, "audience", None)),

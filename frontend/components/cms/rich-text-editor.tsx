@@ -5,27 +5,41 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import TextAlign from '@tiptap/extension-text-align'
-import { TextStyle } from '@tiptap/extension-text-style'
+import { TextStyle, FontFamily, FontSize, LineHeight } from '@tiptap/extension-text-style'
 import { Color } from '@tiptap/extension-color'
 import Highlight from '@tiptap/extension-highlight'
+import Subscript from '@tiptap/extension-subscript'
+import Superscript from '@tiptap/extension-superscript'
+import { TableKit } from '@tiptap/extension-table'
 import {
   AlignCenter,
+  AlignJustify,
   AlignLeft,
   AlignRight,
   Bold,
+  Columns3,
   Highlighter,
+  IndentDecrease,
+  IndentIncrease,
   Italic,
   Link2,
   List,
   ListOrdered,
+  Quote,
   Redo2,
   RemoveFormatting,
+  Rows3,
   Strikethrough,
+  Subscript as SubscriptIcon,
+  Superscript as SuperscriptIcon,
+  Table2,
+  Trash2,
   Underline as UnderlineIcon,
   Undo2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isRichTextEmpty, normalizeRichHtml } from '@/lib/rich-text'
+import { Indent } from '@/lib/tiptap-indent'
 
 const TEXT_COLORS = [
   { label: 'Default', value: '' },
@@ -37,6 +51,44 @@ const TEXT_COLORS = [
   { label: 'Blue', value: '#2563eb' },
   { label: 'Purple', value: '#7c3aed' },
 ]
+
+const FONT_FAMILIES = [
+  { label: 'Default', value: '' },
+  { label: 'Arial', value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Calibri', value: 'Calibri, Candara, Segoe UI, sans-serif' },
+  { label: 'Georgia', value: 'Georgia, serif' },
+  { label: 'Times New Roman', value: '"Times New Roman", Times, serif' },
+  { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
+  { label: 'Tahoma', value: 'Tahoma, Geneva, sans-serif' },
+  { label: 'Courier New', value: '"Courier New", Courier, monospace' },
+  { label: 'Comic Sans', value: '"Comic Sans MS", "Segoe Print", cursive' },
+]
+
+const FONT_SIZES = [
+  { label: 'Default', value: '' },
+  { label: '10', value: '10px' },
+  { label: '11', value: '11px' },
+  { label: '12', value: '12px' },
+  { label: '14', value: '14px' },
+  { label: '16', value: '16px' },
+  { label: '18', value: '18px' },
+  { label: '20', value: '20px' },
+  { label: '24', value: '24px' },
+  { label: '28', value: '28px' },
+  { label: '32', value: '32px' },
+]
+
+const LINE_HEIGHTS = [
+  { label: 'Default', value: '' },
+  { label: '1.0', value: '1' },
+  { label: '1.15', value: '1.15' },
+  { label: '1.5', value: '1.5' },
+  { label: '1.75', value: '1.75' },
+  { label: '2.0', value: '2' },
+]
+
+const selectClass =
+  'h-7 max-w-[8.5rem] rounded border border-sky-200 bg-white px-1 text-[11px] text-slate-700 dark:border-sky-800/60 dark:bg-slate-950 dark:text-white dark:[color-scheme:dark]'
 
 type RichTextEditorProps = {
   value: string
@@ -71,8 +123,9 @@ function ToolbarButton({
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className={cn(
-        'inline-flex h-7 w-7 items-center justify-center rounded text-slate-600 transition hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-40',
-        active && 'bg-sky-100 text-sky-800 hover:bg-sky-100',
+        'inline-flex h-7 w-7 items-center justify-center rounded border border-sky-200 text-slate-600 transition hover:bg-sky-50 hover:text-slate-900 disabled:opacity-40 dark:border-sky-800/60 dark:text-white dark:hover:bg-sky-950/60 dark:hover:text-white',
+        active &&
+          'border-sky-300 bg-sky-100 text-sky-900 hover:bg-sky-100 dark:border-sky-500 dark:bg-sky-900/70 dark:text-white dark:hover:bg-sky-900/70 dark:hover:text-white',
       )}
     >
       {children}
@@ -81,7 +134,24 @@ function ToolbarButton({
 }
 
 function ToolbarDivider() {
-  return <span className="mx-0.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden />
+  return (
+    <span
+      className="mx-0.5 h-5 w-px shrink-0 bg-sky-200 dark:bg-sky-800/60"
+      aria-hidden
+    />
+  )
+}
+
+function currentFontFamily(editor: Editor) {
+  return (editor.getAttributes('textStyle').fontFamily as string) || ''
+}
+
+function currentFontSize(editor: Editor) {
+  return (editor.getAttributes('textStyle').fontSize as string) || ''
+}
+
+function currentLineHeight(editor: Editor) {
+  return (editor.getAttributes('textStyle').lineHeight as string) || ''
 }
 
 function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolean }) {
@@ -98,7 +168,7 @@ function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolea
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-slate-50/90 px-1.5 py-1">
+    <div className="flex flex-wrap items-center gap-0.5 border-b border-sky-200 bg-slate-50/90 px-1.5 py-1 dark:border-sky-800/60 dark:bg-slate-900/80">
       <ToolbarButton
         title="Undo"
         disabled={disabled || !editor.can().undo()}
@@ -117,7 +187,43 @@ function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolea
       <ToolbarDivider />
 
       <select
-        className="h-7 max-w-[7.5rem] rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-700"
+        className={selectClass}
+        disabled={disabled}
+        aria-label="Font"
+        value={currentFontFamily(editor)}
+        onChange={(e) => {
+          const v = e.target.value
+          if (!v) editor.chain().focus().unsetFontFamily().run()
+          else editor.chain().focus().setFontFamily(v).run()
+        }}
+      >
+        {FONT_FAMILIES.map((f) => (
+          <option key={f.label} value={f.value} style={f.value ? { fontFamily: f.value } : undefined}>
+            {f.label}
+          </option>
+        ))}
+      </select>
+
+      <select
+        className={cn(selectClass, 'max-w-[4.5rem]')}
+        disabled={disabled}
+        aria-label="Font size"
+        value={currentFontSize(editor)}
+        onChange={(e) => {
+          const v = e.target.value
+          if (!v) editor.chain().focus().unsetFontSize().run()
+          else editor.chain().focus().setFontSize(v).run()
+        }}
+      >
+        {FONT_SIZES.map((s) => (
+          <option key={s.label} value={s.value}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+
+      <select
+        className={cn(selectClass, 'max-w-[5.5rem]')}
         disabled={disabled}
         aria-label="Text style"
         value={
@@ -142,6 +248,24 @@ function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolea
         <option value="h1">Heading 1</option>
         <option value="h2">Heading 2</option>
         <option value="h3">Heading 3</option>
+      </select>
+
+      <select
+        className={cn(selectClass, 'max-w-[4.75rem]')}
+        disabled={disabled}
+        aria-label="Line spacing"
+        value={currentLineHeight(editor)}
+        onChange={(e) => {
+          const v = e.target.value
+          if (!v) editor.chain().focus().unsetLineHeight().run()
+          else editor.chain().focus().setLineHeight(v).run()
+        }}
+      >
+        {LINE_HEIGHTS.map((h) => (
+          <option key={h.label} value={h.value}>
+            {h.label === 'Default' ? 'Line' : h.label}
+          </option>
+        ))}
       </select>
 
       <ToolbarDivider />
@@ -178,23 +302,41 @@ function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolea
       >
         <Strikethrough className="size-3.5" />
       </ToolbarButton>
+      <ToolbarButton
+        title="Subscript"
+        active={editor.isActive('subscript')}
+        disabled={disabled}
+        onClick={() => editor.chain().focus().toggleSubscript().run()}
+      >
+        <SubscriptIcon className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Superscript"
+        active={editor.isActive('superscript')}
+        disabled={disabled}
+        onClick={() => editor.chain().focus().toggleSuperscript().run()}
+      >
+        <SuperscriptIcon className="size-3.5" />
+      </ToolbarButton>
 
       <ToolbarDivider />
 
-      <label className="inline-flex h-7 items-center gap-1 rounded px-1 text-[11px] text-slate-600" title="Font color">
+      <label
+        className="inline-flex h-7 items-center gap-1 rounded px-1 text-[11px] text-slate-600 dark:text-white"
+        title="Font color"
+      >
         <span className="sr-only">Font color</span>
         <input
           type="color"
           disabled={disabled}
-          className="h-5 w-5 cursor-pointer rounded border border-slate-200 bg-white p-0"
+          className="h-5 w-5 cursor-pointer rounded border border-sky-200 bg-white p-0 dark:border-sky-800/60"
           value={(editor.getAttributes('textStyle').color as string) || '#0f172a'}
           onChange={(e) => {
-            const color = e.target.value
-            editor.chain().focus().setColor(color).run()
+            editor.chain().focus().setColor(e.target.value).run()
           }}
         />
         <select
-          className="h-6 max-w-[5.5rem] rounded border-0 bg-transparent text-[11px]"
+          className="h-6 max-w-[5.5rem] rounded border-0 bg-transparent text-[11px] dark:text-white dark:[color-scheme:dark]"
           disabled={disabled}
           aria-label="Font color preset"
           value={(editor.getAttributes('textStyle').color as string) || ''}
@@ -247,6 +389,39 @@ function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolea
       >
         <AlignRight className="size-3.5" />
       </ToolbarButton>
+      <ToolbarButton
+        title="Justify"
+        active={editor.isActive({ textAlign: 'justify' })}
+        disabled={disabled}
+        onClick={() => editor.chain().focus().setTextAlign('justify').run()}
+      >
+        <AlignJustify className="size-3.5" />
+      </ToolbarButton>
+
+      <ToolbarDivider />
+
+      <ToolbarButton
+        title="Decrease indent"
+        disabled={disabled}
+        onClick={() => {
+          if (!editor.chain().focus().liftListItem('listItem').run()) {
+            editor.chain().focus().outdent().run()
+          }
+        }}
+      >
+        <IndentDecrease className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Increase indent"
+        disabled={disabled}
+        onClick={() => {
+          if (!editor.chain().focus().sinkListItem('listItem').run()) {
+            editor.chain().focus().indent().run()
+          }
+        }}
+      >
+        <IndentIncrease className="size-3.5" />
+      </ToolbarButton>
 
       <ToolbarDivider />
 
@@ -267,6 +442,14 @@ function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolea
         <ListOrdered className="size-3.5" />
       </ToolbarButton>
       <ToolbarButton
+        title="Quote"
+        active={editor.isActive('blockquote')}
+        disabled={disabled}
+        onClick={() => editor.chain().focus().toggleBlockquote().run()}
+      >
+        <Quote className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
         title="Insert link"
         active={editor.isActive('link')}
         disabled={disabled}
@@ -278,9 +461,45 @@ function EditorToolbar({ editor, disabled }: { editor: Editor; disabled?: boolea
       <ToolbarDivider />
 
       <ToolbarButton
+        title="Insert table"
+        active={editor.isActive('table')}
+        disabled={disabled}
+        onClick={() =>
+          editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+        }
+      >
+        <Table2 className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Add column"
+        disabled={disabled || !editor.can().addColumnAfter()}
+        onClick={() => editor.chain().focus().addColumnAfter().run()}
+      >
+        <Columns3 className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Add row"
+        disabled={disabled || !editor.can().addRowAfter()}
+        onClick={() => editor.chain().focus().addRowAfter().run()}
+      >
+        <Rows3 className="size-3.5" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Delete table"
+        disabled={disabled || !editor.can().deleteTable()}
+        onClick={() => editor.chain().focus().deleteTable().run()}
+      >
+        <Trash2 className="size-3.5" />
+      </ToolbarButton>
+
+      <ToolbarDivider />
+
+      <ToolbarButton
         title="Clear formatting"
         disabled={disabled}
-        onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}
+        onClick={() =>
+          editor.chain().focus().unsetAllMarks().clearNodes().unsetFontFamily().unsetFontSize().unsetLineHeight().run()
+        }
       >
         <RemoveFormatting className="size-3.5" />
       </ToolbarButton>
@@ -308,18 +527,36 @@ export function RichTextEditor({
       }),
       Placeholder.configure({ placeholder }),
       TextStyle,
+      FontFamily,
+      FontSize,
+      LineHeight,
       Color,
       Highlight.configure({ multicolor: true }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      Subscript,
+      Superscript,
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+        alignments: ['left', 'center', 'right', 'justify'],
+      }),
+      Indent,
+      TableKit.configure({
+        table: {
+          resizable: true,
+          HTMLAttributes: { class: 'rich-text-table' },
+        },
+      }),
     ],
     content: normalizeRichHtml(value) || '',
     editorProps: {
       attributes: {
         class: cn(
-          'prose prose-sm max-w-none px-2.5 py-2 text-sm text-slate-800 focus:outline-none',
-          '[&_a]:text-sky-700 [&_a]:underline',
+          'prose prose-sm max-w-none px-2.5 py-2 text-sm text-slate-800 focus:outline-none dark:prose-invert dark:text-white',
+          '[&_a]:text-sky-700 [&_a]:underline dark:[&_a]:text-sky-300',
+          'dark:[&_p]:text-white dark:[&_h1]:text-white dark:[&_h2]:text-white dark:[&_h3]:text-white dark:[&_li]:text-white dark:[&_span]:text-inherit',
           '[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5',
           '[&_h1]:text-lg [&_h1]:font-bold [&_h2]:text-base [&_h2]:font-bold [&_h3]:text-sm [&_h3]:font-semibold',
+          '[&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:italic',
+          '[&_table]:my-2',
           minHeightClass,
         ),
         ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
@@ -352,12 +589,14 @@ export function RichTextEditor({
     return (
       <div
         className={cn(
-          'rounded border border-slate-200 bg-white text-xs text-slate-400',
+          'rounded border border-sky-200 bg-white text-xs text-slate-400 dark:border-sky-800/60 dark:bg-slate-950 dark:text-slate-500',
           minHeightClass,
           className,
         )}
       >
-        <div className="border-b border-slate-100 bg-slate-50 px-2 py-2">Loading editor…</div>
+        <div className="border-b border-sky-100 bg-slate-50 px-2 py-2 dark:border-sky-800/40 dark:bg-slate-900">
+          Loading editor…
+        </div>
       </div>
     )
   }
@@ -365,7 +604,7 @@ export function RichTextEditor({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded border border-slate-200 bg-white shadow-sm focus-within:border-sky-300 focus-within:ring-1 focus-within:ring-sky-200',
+        'overflow-hidden rounded border border-sky-200 bg-white shadow-sm focus-within:border-sky-300 focus-within:ring-1 focus-within:ring-sky-200 dark:border-sky-800/60 dark:bg-slate-950 dark:focus-within:border-sky-600 dark:focus-within:ring-sky-900/50',
         disabled && 'opacity-70',
         className,
       )}

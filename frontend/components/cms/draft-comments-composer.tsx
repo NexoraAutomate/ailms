@@ -9,11 +9,14 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Paperclip, Send, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, Paperclip, Send, Trash2 } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
 import { RichTextEditor } from '@/components/cms/rich-text-editor'
+import { RichTextHtml } from '@/components/cms/rich-text-html'
+import { Badge } from '@/components/cms/ui'
 import { UserMultiSelect } from '@/components/cms/user-multi-select'
+import { cn } from '@/lib/utils'
 import { isRichTextEmpty } from '@/lib/rich-text'
 import {
   ATTACHMENT_KINDS,
@@ -53,6 +56,22 @@ export type DraftCommentsComposerHandle = {
   requestMark: () => void
 }
 
+export type DraftCommentPreviewAttachment = {
+  id: number
+  originalFilename: string
+  attachmentKind: string
+  targetUser: string
+  sendPrivately: boolean
+}
+
+export type DraftCommentPreviewData = {
+  authorUser: string
+  recipients: { toUser: string; action: string }[]
+  commonHtml: string
+  targeted: { toUser: string; html: string; sendPrivately: boolean }[]
+  attachments: DraftCommentPreviewAttachment[]
+}
+
 type DraftCommentsComposerProps = {
   letterId: string
   users: UserOption[]
@@ -62,6 +81,8 @@ type DraftCommentsComposerProps = {
   disabled?: boolean
   /** When true, Mark is rendered by the parent (e.g. Workflow action bar). */
   hideMarkButton?: boolean
+  previewActive?: boolean
+  onPreviewChange?: (preview: DraftCommentPreviewData | null) => void
   onMarkAvailabilityChange?: (state: { canMark: boolean; busy: boolean }) => void
   onRequestMark: (recipients: MarkRecipientInput[]) => void
 }
@@ -136,6 +157,8 @@ export const DraftCommentsComposer = forwardRef<
     onDraftsChange,
     disabled = false,
     hideMarkButton = false,
+    previewActive = false,
+    onPreviewChange,
     onMarkAvailabilityChange,
     onRequestMark,
   },
@@ -458,6 +481,49 @@ export const DraftCommentsComposer = forwardRef<
 
   const canMark = toEntries.length + infoUsers.length > 0 && !disabled
 
+  const buildPreview = useCallback((): DraftCommentPreviewData => {
+    const recipients: DraftCommentPreviewData['recipients'] = [
+      ...toEntries.map((e) => ({ toUser: e.toUser, action: e.action })),
+      ...infoUsers.map((name) => ({ toUser: name, action: 'for_info' })),
+    ]
+    const targeted = toEntries
+      .map((e) => ({
+        toUser: e.toUser,
+        html: perToBodies[e.toUser] ?? '',
+        sendPrivately: perToPrivate[e.toUser] ?? false,
+      }))
+      .filter((row) => !isRichTextEmpty(row.html))
+    const attachments: DraftCommentPreviewAttachment[] = (drafts?.attachments ?? [])
+      .filter((a) => (a.intent || 'forward').toLowerCase() === 'forward')
+      .map((a) => ({
+        id: a.id,
+        originalFilename: a.originalFilename || a.storageKey || 'File',
+        attachmentKind: a.attachmentKind,
+        targetUser: a.targetUser || '',
+        sendPrivately: Boolean(a.sendPrivately),
+      }))
+    return {
+      authorUser: meName,
+      recipients,
+      commonHtml: commonBody,
+      targeted,
+      attachments,
+    }
+  }, [commonBody, drafts?.attachments, infoUsers, meName, perToBodies, perToPrivate, toEntries])
+
+  const canPreview =
+    toEntries.length > 0 ||
+    infoUsers.length > 0 ||
+    !isRichTextEmpty(commonBody) ||
+    Object.values(perToBodies).some((html) => !isRichTextEmpty(html)) ||
+    (drafts?.attachments.some((a) => (a.intent || 'forward').toLowerCase() === 'forward') ??
+      false)
+
+  useEffect(() => {
+    if (!previewActive || !onPreviewChange) return
+    onPreviewChange(buildPreview())
+  }, [buildPreview, onPreviewChange, previewActive])
+
   const markRecipients = useMemo((): MarkRecipientInput[] => {
     const rows: MarkRecipientInput[] = toEntries.map((e) => ({
       toUser: e.toUser,
@@ -513,12 +579,32 @@ export const DraftCommentsComposer = forwardRef<
             Choose recipients, compose comments, then Mark to send.
           </p>
         </div>
-        {!hideMarkButton ? (
-          <Button size="sm" disabled={!canMark || busyAttach} onClick={handleMarkClick}>
-            <Send className="mr-1 h-3.5 w-3.5" />
-            Mark
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!canPreview || disabled}
+            aria-pressed={previewActive}
+            onClick={() => {
+              if (previewActive) onPreviewChange?.(null)
+              else onPreviewChange?.(buildPreview())
+            }}
+          >
+            {previewActive ? (
+              <EyeOff className="mr-1 h-3.5 w-3.5" />
+            ) : (
+              <Eye className="mr-1 h-3.5 w-3.5" />
+            )}
+            {previewActive ? 'Hide Preview' : 'Preview Comments'}
           </Button>
-        ) : null}
+          {!hideMarkButton ? (
+            <Button size="sm" disabled={!canMark || busyAttach} onClick={handleMarkClick}>
+              <Send className="mr-1 h-3.5 w-3.5" />
+              Mark
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="space-y-4 p-3 sm:p-4">
@@ -529,7 +615,11 @@ export const DraftCommentsComposer = forwardRef<
         ) : null}
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">To</label>
+          <label className="mb-1.5 block">
+            <Badge tone="blue" className="text-sm px-2.5 py-1">
+              To
+            </Badge>
+          </label>
           <UserMultiSelect
             users={users}
             value={toEntries.map((e) => e.toUser)}
@@ -558,9 +648,11 @@ export const DraftCommentsComposer = forwardRef<
             </p>
           ) : null}
           {activeEntry ? (
-            <div className="mt-2 rounded-md border border-sky-200 bg-sky-50/60 px-2.5 py-2">
+            <div className="mt-2 rounded-md border border-sky-200 bg-sky-50/60 px-2.5 py-2 dark:border-sky-800/60 dark:bg-sky-950/50">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-800">{activeEntry.toUser}</span>
+                <span className="text-xs font-semibold text-slate-800 dark:text-white">
+                  {activeEntry.toUser}
+                </span>
                 <AppSelect
                   value={activeEntry.action}
                   onValueChange={(v) =>
@@ -596,7 +688,7 @@ export const DraftCommentsComposer = forwardRef<
                       onChange={(e) =>
                         updateToEntry(activeEntry.toUser, { dueAt: e.target.value })
                       }
-                      className="h-7 rounded border border-slate-200 px-2 text-xs"
+                      className="h-7 rounded border border-slate-200 bg-white px-2 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                     />
                     {activeEntry.responseType === 'other' && (
                       <input
@@ -608,20 +700,20 @@ export const DraftCommentsComposer = forwardRef<
                           })
                         }
                         placeholder="Specify…"
-                        className="h-7 min-w-[8rem] flex-1 rounded border border-slate-200 px-2 text-xs"
+                        className="h-7 min-w-[8rem] flex-1 rounded border border-slate-200 bg-white px-2 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                       />
                     )}
                   </>
                 )}
               </div>
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   Optional message &amp; attachments for {activeEntry.toUser}.
                 </p>
-                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-700">
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
                   <input
                     type="checkbox"
-                    className="size-3.5 rounded border-slate-300"
+                    className="size-3.5 rounded border-slate-300 dark:border-slate-500"
                     checked={perToPrivate[activeEntry.toUser] ?? false}
                     disabled={disabled}
                     onChange={(e) => void setSendPrivately(activeEntry.toUser, e.target.checked)}
@@ -629,7 +721,7 @@ export const DraftCommentsComposer = forwardRef<
                   Send Privately
                 </label>
               </div>
-              <p className="mt-1 text-[11px] text-slate-500">
+              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                 {(perToPrivate[activeEntry.toUser] ?? false)
                   ? 'Only this recipient will see this message and its attachments.'
                   : 'All recipients on this mark (including Info) can see this message and its attachments.'}
@@ -662,7 +754,11 @@ export const DraftCommentsComposer = forwardRef<
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-600">Info</label>
+          <label className="mb-1.5 block">
+            <Badge tone="violet" className="text-sm px-2.5 py-1">
+              Info
+            </Badge>
+          </label>
           <UserMultiSelect
             users={users}
             value={infoUsers}
@@ -744,8 +840,8 @@ function AttachmentStrip({
           className="min-w-[8rem]"
           disabled={busy}
         />
-        <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-          <Paperclip className="h-3.5 w-3.5" />
+        <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:text-white dark:hover:bg-slate-800 dark:hover:text-white">
+          <Paperclip className="h-3.5 w-3.5 dark:text-white" />
           Attach
           <input
             type="file"
@@ -786,5 +882,228 @@ function AttachmentStrip({
         </ul>
       )}
     </div>
+  )
+}
+
+/** Live preview of how draft comments will appear as a workflow comment card. */
+export function DraftCommentsPreviewCard({
+  preview,
+  className,
+}: {
+  preview: DraftCommentPreviewData
+  className?: string
+}) {
+  const toRecipients = preview.recipients.filter(
+    (r) => (r.action || '').toLowerCase() !== 'for_info',
+  )
+  const infoRecipients = preview.recipients.filter(
+    (r) => (r.action || '').toLowerCase() === 'for_info',
+  )
+  const showRoster = toRecipients.length > 0 || infoRecipients.length > 0
+  const hasCommon = !isRichTextEmpty(preview.commonHtml)
+  const commonAtts = preview.attachments.filter((a) => !a.targetUser)
+  const recipientBadgeClass =
+    'inline-flex items-center rounded-md border border-slate-300 bg-transparent px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-500 dark:text-white'
+
+  return (
+    <li
+      id="workflow-draft-preview"
+      className={cn(
+        'workflow-comment-card workflow-comment-card--own scroll-mt-24 list-none overflow-hidden rounded-lg border border-dashed border-emerald-300 bg-emerald-50 shadow-sm dark:border-emerald-600/70 dark:bg-emerald-950/40',
+        className,
+      )}
+    >
+      <div className="grid grid-cols-1 md:grid-cols-3">
+        <div className="workflow-comment-card-main divide-y divide-emerald-200/70 px-4 py-1 md:col-span-2 md:border-r md:border-emerald-200/70 dark:divide-emerald-900/40 dark:md:border-transparent">
+          <div className="pt-3 pb-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-base font-bold tracking-wide text-emerald-900 dark:text-emerald-300">
+                {preview.authorUser || 'You'}
+              </p>
+              <span className="rounded-full bg-emerald-200/80 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-emerald-900">
+                YOU
+              </span>
+              <Badge tone="amber" className="text-[10px] uppercase tracking-wide">
+                Draft preview
+              </Badge>
+            </div>
+            {showRoster ? (
+              <div className="mt-1.5 space-y-1">
+                {toRecipients.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge tone="blue">To</Badge>
+                    {toRecipients.map((r) => (
+                      <span key={`preview-to-${r.toUser}`} className={recipientBadgeClass}>
+                        {r.toUser}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {infoRecipients.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge tone="violet">Info</Badge>
+                    {infoRecipients.map((r) => (
+                      <span key={`preview-info-${r.toUser}`} className={recipientBadgeClass}>
+                        {r.toUser}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="py-1">
+            {hasCommon ? (
+              <div className="border-t border-emerald-100 py-2.5 first:border-t-0 dark:border-emerald-900/40">
+                <RichTextHtml
+                  html={preview.commonHtml}
+                  className="text-emerald-950 dark:text-emerald-200"
+                />
+              </div>
+            ) : null}
+
+            {preview.targeted.map((section) => {
+              const sectionAtts = preview.attachments.filter(
+                (a) => a.targetUser === section.toUser,
+              )
+              const sectionPrivate =
+                section.sendPrivately || sectionAtts.some((a) => a.sendPrivately)
+              return (
+                <div key={`preview-for-${section.toUser}`}>
+                  <div className="flex flex-wrap items-center gap-2 pt-2.5">
+                    <p className="text-sm font-bold text-emerald-950 underline underline-offset-2 dark:text-emerald-100">
+                      For {section.toUser}
+                    </p>
+                    {sectionPrivate ? (
+                      <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-900">
+                        Private
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="py-2.5">
+                    <RichTextHtml
+                      html={section.html}
+                      className="text-emerald-950 dark:text-emerald-200"
+                    />
+                  </div>
+                </div>
+              )
+            })}
+
+            {!hasCommon && preview.targeted.length === 0 ? (
+              <p className="py-3 text-xs text-emerald-800/70 dark:text-emerald-300/70">
+                No comment text yet — add a common or To-specific message to preview it here.
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="workflow-comment-card-aside border-t border-emerald-200/70 bg-emerald-100/50 px-3 py-3 md:col-span-1 md:border-t-0 dark:border-transparent dark:bg-emerald-950/60">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-emerald-800/80 dark:text-emerald-400/80">
+            Attachments
+          </p>
+          {preview.attachments.length === 0 ? (
+            <p className="text-xs text-slate-400">None</p>
+          ) : (
+            <ul className="space-y-2">
+              {commonAtts.map((a) => (
+                <li
+                  key={`preview-att-${a.id}`}
+                  className="relative rounded-lg border border-emerald-200/80 bg-white px-2.5 py-2 dark:border-emerald-800/50 dark:bg-emerald-950/30"
+                >
+                  <div className="flex items-start gap-2">
+                    <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700/70 dark:text-emerald-300/80" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold text-emerald-950 dark:text-emerald-100">
+                        {a.originalFilename}
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-emerald-800/70 dark:text-emerald-400/80">
+                        {a.attachmentKind}
+                      </p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+              {preview.targeted.map((section) => {
+                const sectionAtts = preview.attachments.filter(
+                  (a) => a.targetUser === section.toUser,
+                )
+                if (sectionAtts.length === 0) return null
+                const sectionPrivate =
+                  section.sendPrivately || sectionAtts.some((a) => a.sendPrivately)
+                return (
+                  <li key={`preview-att-for-${section.toUser}`} className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1 text-emerald-900 dark:text-emerald-200">
+                      <span className="text-xs font-bold underline underline-offset-2">
+                        For {section.toUser}
+                      </span>
+                      {sectionPrivate ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-900">
+                          Private
+                        </span>
+                      ) : null}
+                    </div>
+                    {sectionAtts.map((a) => (
+                      <div
+                        key={`preview-att-${a.id}`}
+                        className="relative rounded-lg border border-emerald-200/80 bg-white px-2.5 py-2 dark:border-emerald-800/50 dark:bg-emerald-950/30"
+                      >
+                        <div className="flex items-start gap-2">
+                          <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700/70 dark:text-emerald-300/80" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-semibold text-emerald-950 dark:text-emerald-100">
+                              {a.originalFilename}
+                            </p>
+                            <p className="mt-0.5 text-[10px] text-emerald-800/70 dark:text-emerald-400/80">
+                              {a.attachmentKind}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </li>
+                )
+              })}
+              {/* Targeted attachments without a matching text section */}
+              {preview.attachments
+                .filter(
+                  (a) =>
+                    a.targetUser &&
+                    !preview.targeted.some((t) => t.toUser === a.targetUser) &&
+                    !commonAtts.includes(a),
+                )
+                .map((a) => (
+                  <li key={`preview-att-orphan-${a.id}`} className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-xs font-bold text-emerald-900 underline underline-offset-2 dark:text-emerald-200">
+                        For {a.targetUser}
+                      </span>
+                      {a.sendPrivately ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-900">
+                          Private
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="relative rounded-lg border border-emerald-200/80 bg-white px-2.5 py-2 dark:border-emerald-800/50 dark:bg-emerald-950/30">
+                      <div className="flex items-start gap-2">
+                        <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700/70 dark:text-emerald-300/80" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold text-emerald-950 dark:text-emerald-100">
+                            {a.originalFilename}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-emerald-800/70 dark:text-emerald-400/80">
+                            {a.attachmentKind}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </li>
   )
 }

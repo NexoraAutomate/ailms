@@ -76,10 +76,22 @@ const toneClasses: Record<string, string> = {
   red: 'bg-red-100 text-red-800 dark:text-red-200',
 }
 
-export function Badge({ children, tone = 'slate' }: { children: ReactNode; tone?: string }) {
+export function Badge({
+  children,
+  tone = 'slate',
+  className,
+}: {
+  children: ReactNode
+  tone?: string
+  className?: string
+}) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold ${toneClasses[tone] ?? toneClasses.slate}`}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold',
+        toneClasses[tone] ?? toneClasses.slate,
+        className,
+      )}
     >
       {children}
     </span>

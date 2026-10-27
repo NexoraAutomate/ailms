@@ -21,14 +21,34 @@ const ALLOWED_TAGS = [
   'span',
   'mark',
   'div',
+  'sub',
+  'sup',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'th',
+  'td',
+  'colgroup',
+  'col',
 ]
 
-const ALLOWED_ATTR = ['href', 'target', 'rel', 'style', 'class']
+const ALLOWED_ATTR = [
+  'href',
+  'target',
+  'rel',
+  'style',
+  'class',
+  'colspan',
+  'rowspan',
+  'colwidth',
+]
 
-/** True when HTML has no visible text. */
+/** True when HTML has no visible text (tables count as content even if cells are blank). */
 export function isRichTextEmpty(html: string | null | undefined): boolean {
   const raw = (html || '').trim()
   if (!raw) return true
+  if (/<table\b/i.test(raw)) return false
   const text = raw
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
