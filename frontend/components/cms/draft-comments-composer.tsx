@@ -12,7 +12,9 @@ import {
 import { Paperclip, Send, Trash2 } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
+import { RichTextEditor } from '@/components/cms/rich-text-editor'
 import { UserMultiSelect } from '@/components/cms/user-multi-select'
+import { isRichTextEmpty } from '@/lib/rich-text'
 import {
   ATTACHMENT_KINDS,
   RESPONSE_TYPES,
@@ -257,13 +259,13 @@ export const DraftCommentsComposer = forwardRef<
   }, [hydrated, persistRoster, toEntries, infoUsers])
 
   const persistCommonBody = useCallback(
-    async (text: string) => {
+    async (html: string) => {
       if (disabled) return
-      const trimmed = text.trim()
+      const empty = isRichTextEmpty(html)
       const existingId = commonNoteIdRef.current
       savingContentRef.current = true
       try {
-        if (!trimmed) {
+        if (empty) {
           if (existingId != null) {
             const result = await deleteDraftNote(existingId)
             commonNoteIdRef.current = null
@@ -272,11 +274,11 @@ export const DraftCommentsComposer = forwardRef<
           return
         }
         if (existingId != null) {
-          const result = await updateDraftNote(existingId, trimmed)
+          const result = await updateDraftNote(existingId, html)
           onDraftsChange(result.drafts)
         } else {
           const result = await addDraftNote(letterId, {
-            bodyText: trimmed,
+            bodyText: html,
             targetUser: '',
             intent: 'forward',
           })
@@ -294,13 +296,13 @@ export const DraftCommentsComposer = forwardRef<
   )
 
   const persistPerToBody = useCallback(
-    async (user: string, text: string) => {
+    async (user: string, html: string) => {
       if (disabled) return
-      const trimmed = text.trim()
+      const empty = isRichTextEmpty(html)
       const existingId = perToNoteIdsRef.current[user] ?? null
       savingContentRef.current = true
       try {
-        if (!trimmed) {
+        if (empty) {
           if (existingId != null) {
             const result = await deleteDraftNote(existingId)
             perToNoteIdsRef.current[user] = null
@@ -309,11 +311,11 @@ export const DraftCommentsComposer = forwardRef<
           return
         }
         if (existingId != null) {
-          const result = await updateDraftNote(existingId, trimmed)
+          const result = await updateDraftNote(existingId, html)
           onDraftsChange(result.drafts)
         } else {
           const result = await addDraftNote(letterId, {
-            bodyText: trimmed,
+            bodyText: html,
             targetUser: user,
             intent: 'forward',
             sendPrivately: perToPrivate[user] ?? false,
@@ -632,18 +634,20 @@ export const DraftCommentsComposer = forwardRef<
                   ? 'Only this recipient will see this message and its attachments.'
                   : 'All recipients on this mark (including Info) can see this message and its attachments.'}
               </p>
-              <textarea
+              <RichTextEditor
+                key={`to-${activeEntry.toUser}`}
+                className="mt-1"
                 value={perToBodies[activeEntry.toUser] ?? ''}
-                onChange={(e) =>
+                onChange={(html) =>
                   setPerToBodies((prev) => ({
                     ...prev,
-                    [activeEntry.toUser]: e.target.value,
+                    [activeEntry.toUser]: html,
                   }))
                 }
                 disabled={disabled}
-                rows={3}
                 placeholder={`Message for ${activeEntry.toUser}…`}
-                className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                aria-label={`Message for ${activeEntry.toUser}`}
+                minHeightClass="min-h-[5.5rem]"
               />
               <AttachmentStrip
                 attachments={attsForTarget(drafts?.attachments ?? [], activeEntry.toUser)}
@@ -688,13 +692,13 @@ export const DraftCommentsComposer = forwardRef<
           <label className="mb-1 block text-xs font-semibold text-slate-600">
             Common comment (all recipients)
           </label>
-          <textarea
+          <RichTextEditor
             value={commonBody}
-            onChange={(e) => setCommonBody(e.target.value)}
+            onChange={setCommonBody}
             disabled={disabled}
-            rows={4}
             placeholder="Message shared with every To and Info recipient…"
-            className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm"
+            aria-label="Common comment for all recipients"
+            minHeightClass="min-h-[7rem]"
           />
           <AttachmentStrip
             attachments={commonAtts}

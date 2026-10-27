@@ -34,11 +34,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { isRichTextEmpty, richTextDedupeKey } from '@/lib/rich-text'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
 import {
   DraftCommentsComposer,
   type DraftCommentsComposerHandle,
 } from '@/components/cms/draft-comments-composer'
+import { RichTextEditor } from '@/components/cms/rich-text-editor'
+import { RichTextHtml } from '@/components/cms/rich-text-html'
 import { MarkingActiveHolds } from '@/components/cms/marking-active-holds'
 import { MarkingHistoryFlow } from '@/components/cms/marking-history-flow'
 import type { MarkingFlowNodeData } from '@/lib/marking-flow-layout'
@@ -252,7 +255,7 @@ function dedupeCommonNotes(notes: CorrespondenceNote[]): CorrespondenceNote[] {
       out.push(n)
       continue
     }
-    const key = `${(n.authorUser || '').toLowerCase()}|${(n.bodyText || '').trim()}`
+    const key = `${(n.authorUser || '').toLowerCase()}|${richTextDedupeKey(n.bodyText)}`
     if (seen.has(key)) continue
     seen.add(key)
     out.push(n)
@@ -1402,16 +1405,18 @@ export function MarkingWorkflowPanel({
                                 </div>
                                 {editingNoteId === note.id ? (
                                   <div className="space-y-2">
-                                    <textarea
-                                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                                      rows={3}
+                                    <RichTextEditor
                                       value={editingNoteBody}
-                                      onChange={(e) => setEditingNoteBody(e.target.value)}
+                                      onChange={setEditingNoteBody}
+                                      disabled={busy}
+                                      placeholder="Edit message…"
+                                      aria-label="Edit comment"
+                                      minHeightClass="min-h-[5.5rem]"
                                     />
                                     <div className="flex gap-2">
                                       <Button
                                         size="sm"
-                                        disabled={busy}
+                                        disabled={busy || isRichTextEmpty(editingNoteBody)}
                                         onClick={() =>
                                           void run(async () => {
                                             await updateMarkingNote(note.id, editingNoteBody)
@@ -1431,16 +1436,14 @@ export function MarkingWorkflowPanel({
                                     </div>
                                   </div>
                                 ) : (
-                                  <p
-                                    className={cn(
-                                      'whitespace-pre-wrap text-sm leading-relaxed',
+                                  <RichTextHtml
+                                    html={note.bodyText}
+                                    className={
                                       isOwnComments
                                         ? 'text-emerald-950 dark:text-emerald-200'
-                                        : 'text-slate-700',
-                                    )}
-                                  >
-                                    {note.bodyText}
-                                  </p>
+                                        : undefined
+                                    }
+                                  />
                                 )}
                               </div>,
                                 )
@@ -1821,12 +1824,14 @@ export function MarkingWorkflowPanel({
                 />
               </div>
             )}
-            <textarea
-              className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-              rows={4}
+            <RichTextEditor
+              className="mt-2"
               value={noteBody}
-              onChange={(e) => setNoteBody(e.target.value)}
+              onChange={setNoteBody}
+              disabled={busy}
               placeholder="Your response…"
+              aria-label="Response message"
+              minHeightClass="min-h-[6rem]"
             />
             <div className="mt-3 flex justify-end gap-2">
               <Button
@@ -1839,11 +1844,11 @@ export function MarkingWorkflowPanel({
                 Cancel
               </Button>
               <Button
-                disabled={busy || !respondMarkingId}
+                disabled={busy || !respondMarkingId || isRichTextEmpty(noteBody)}
                 onClick={() =>
                   void run(async () => {
                     if (!respondMarkingId) throw new Error('No open Response Required marking')
-                    if (!noteBody.trim()) throw new Error('Response text is required')
+                    if (isRichTextEmpty(noteBody)) throw new Error('Response text is required')
                     await respondToMarking(respondMarkingId, { bodyText: noteBody })
                   })
                 }
@@ -2009,7 +2014,7 @@ export function MarkingWorkflowPanel({
                             key={n.id}
                             className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-700"
                           >
-                            <p className="whitespace-pre-wrap">{n.bodyText}</p>
+                            <RichTextHtml html={n.bodyText} />
                             <p className="mt-1 text-[10px] text-slate-400">
                               {n.createdAt ? formatDateTime(n.createdAt) : ''}
                               {n.isResponse ? ' · Response' : ''}
