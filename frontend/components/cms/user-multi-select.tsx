@@ -19,6 +19,10 @@ type UserMultiSelectProps = {
   disabled?: boolean
   className?: string
   'aria-label'?: string
+  /** Highlighted badge (e.g. whose private editor is open). */
+  activeValue?: string | null
+  /** Fired when a badge is clicked (not the remove control). */
+  onActiveChange?: (name: string) => void
   /** Optional content rendered inside each selected badge (e.g. action picker). */
   renderBadgeExtra?: (name: string) => ReactNode
 }
@@ -36,6 +40,8 @@ export function UserMultiSelect({
   disabled = false,
   className,
   'aria-label': ariaLabel,
+  activeValue = null,
+  onActiveChange,
   renderBadgeExtra,
 }: UserMultiSelectProps) {
   const listId = useId()
@@ -77,6 +83,7 @@ export function UserMultiSelect({
     if (!trimmed) return
     if (selectedSet.has(norm(trimmed)) || excludeSet.has(norm(trimmed))) return
     onChange([...value, trimmed])
+    onActiveChange?.(trimmed)
     setQuery('')
     setOpen(true)
     inputRef.current?.focus()
@@ -84,7 +91,11 @@ export function UserMultiSelect({
 
   const remove = (name: string) => {
     const n = norm(name)
-    onChange(value.filter((v) => norm(v) !== n))
+    const next = value.filter((v) => norm(v) !== n)
+    onChange(next)
+    if (activeValue && norm(activeValue) === n) {
+      onActiveChange?.(next[next.length - 1] ?? '')
+    }
   }
 
   return (
@@ -97,26 +108,50 @@ export function UserMultiSelect({
         )}
         onClick={() => inputRef.current?.focus()}
       >
-        {value.map((name) => (
-          <span
-            key={name}
-            className="inline-flex max-w-full items-center gap-1 rounded-md bg-slate-100 py-0.5 pr-1 pl-2 text-xs font-medium text-slate-800"
-          >
-            <span className="truncate">{name}</span>
-            {renderBadgeExtra?.(name)}
-            <button
-              type="button"
-              className="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800"
-              aria-label={`Remove ${name}`}
+        {value.map((name) => {
+          const isActive = Boolean(activeValue && norm(activeValue) === norm(name))
+          return (
+            <span
+              key={name}
+              role={onActiveChange ? 'button' : undefined}
+              tabIndex={onActiveChange && !disabled ? 0 : undefined}
+              aria-pressed={onActiveChange ? isActive : undefined}
+              className={cn(
+                'inline-flex max-w-full items-center gap-1 rounded-md py-0.5 pr-1 pl-2 text-xs font-medium',
+                isActive
+                  ? 'bg-sky-100 text-sky-900 ring-1 ring-sky-300'
+                  : 'bg-slate-100 text-slate-800 hover:bg-slate-200/80',
+                onActiveChange && 'cursor-pointer',
+              )}
               onClick={(e) => {
                 e.stopPropagation()
-                remove(name)
+                onActiveChange?.(name)
+              }}
+              onKeyDown={(e) => {
+                if (!onActiveChange) return
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onActiveChange(name)
+                }
               }}
             >
-              <X className="size-3" />
-            </button>
-          </span>
-        ))}
+              <span className="truncate">{name}</span>
+              {renderBadgeExtra?.(name)}
+              <button
+                type="button"
+                className="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800"
+                aria-label={`Remove ${name}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  remove(name)
+                }}
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          )
+        })}
         <input
           ref={inputRef}
           type="text"

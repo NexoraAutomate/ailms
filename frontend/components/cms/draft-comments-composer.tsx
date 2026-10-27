@@ -117,6 +117,7 @@ export function DraftCommentsComposer({
 }: DraftCommentsComposerProps) {
   const [toEntries, setToEntries] = useState<ToEntry[]>([])
   const [infoUsers, setInfoUsers] = useState<string[]>([])
+  const [activeToUser, setActiveToUser] = useState<string | null>(null)
   const [commonBody, setCommonBody] = useState('')
   const [perToBodies, setPerToBodies] = useState<Record<string, string>>({})
   const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
@@ -146,6 +147,7 @@ export function DraftCommentsComposer({
     skipRosterSave.current = true
     setToEntries(to)
     setInfoUsers(info)
+    setActiveToUser(to[0]?.toUser ?? null)
     setCommonBody(commonNote?.bodyText ?? '')
     setPerToBodies(bodies)
     commonNoteIdRef.current = commonNote?.id ?? null
@@ -343,6 +345,10 @@ export function DraftCommentsComposer({
       for (const name of names) next[name] = prev[name] ?? ''
       return next
     })
+    setActiveToUser((prev) => {
+      if (prev && names.includes(prev)) return prev
+      return names[names.length - 1] ?? null
+    })
     // Drop Info overlap
     setInfoUsers((prev) => prev.filter((n) => !names.includes(n)))
   }
@@ -423,11 +429,13 @@ export function DraftCommentsComposer({
   const commonAtts = attsForTarget(drafts?.attachments ?? [], '')
   const excludeForTo = [meName, ...infoUsers]
   const excludeForInfo = [meName, ...toEntries.map((e) => e.toUser)]
+  const activeEntry = toEntries.find((e) => e.toUser === activeToUser) ?? null
 
   const handleMarkClick = () => {
     for (const e of toEntries) {
       if (e.action === 'response_required' && !e.responseType) {
         setSaveError(`Choose a response type for ${e.toUser}`)
+        setActiveToUser(e.toUser)
         return
       }
     }
@@ -466,89 +474,108 @@ export function DraftCommentsComposer({
             disabled={disabled}
             aria-label="To recipients"
             placeholder="Add recipients…"
+            activeValue={activeToUser}
+            onActiveChange={(name) => setActiveToUser(name || null)}
+            renderBadgeExtra={(name) => {
+              const entry = toEntries.find((e) => e.toUser === name)
+              if (!entry) return null
+              const label =
+                TO_ACTIONS.find((a) => a.value === entry.action)?.label ?? entry.action
+              return (
+                <span className="rounded bg-white/70 px-1 py-px text-[10px] font-semibold text-slate-600">
+                  {label}
+                </span>
+              )
+            }}
           />
-          {toEntries.length > 0 && (
-            <ul className="mt-2 space-y-2">
-              {toEntries.map((entry) => (
-                <li
-                  key={entry.toUser}
-                  className="rounded-md border border-slate-200 bg-slate-50/80 px-2.5 py-2"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-800">{entry.toUser}</span>
+          {toEntries.length > 0 && !activeEntry ? (
+            <p className="mt-1.5 text-[11px] text-slate-500">
+              Click a recipient badge to set their action and optional private message.
+            </p>
+          ) : null}
+          {activeEntry ? (
+            <div className="mt-2 rounded-md border border-sky-200 bg-sky-50/60 px-2.5 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-800">{activeEntry.toUser}</span>
+                <AppSelect
+                  value={activeEntry.action}
+                  onValueChange={(v) =>
+                    updateToEntry(activeEntry.toUser, {
+                      action: v as MarkingAction,
+                      responseType:
+                        v === 'response_required' ? activeEntry.responseType || 'comments' : '',
+                    })
+                  }
+                  options={TO_ACTIONS.map((a) => ({ value: a.value, label: a.label }))}
+                  size="sm"
+                  className="min-w-[10rem]"
+                  aria-label={`Action for ${activeEntry.toUser}`}
+                />
+                {activeEntry.action === 'response_required' && (
+                  <>
                     <AppSelect
-                      value={entry.action}
+                      value={activeEntry.responseType || ''}
                       onValueChange={(v) =>
-                        updateToEntry(entry.toUser, {
-                          action: v as MarkingAction,
-                          responseType: v === 'response_required' ? entry.responseType || 'comments' : '',
-                        })
+                        updateToEntry(activeEntry.toUser, { responseType: v as ResponseType })
                       }
-                      options={TO_ACTIONS.map((a) => ({ value: a.value, label: a.label }))}
+                      options={RESPONSE_TYPES.map((t) => ({
+                        value: t,
+                        label: RESPONSE_TYPE_LABELS[t],
+                      }))}
                       size="sm"
-                      className="min-w-[10rem]"
-                      aria-label={`Action for ${entry.toUser}`}
+                      placeholder="Response type"
+                      className="min-w-[9rem]"
                     />
-                    {entry.action === 'response_required' && (
-                      <>
-                        <AppSelect
-                          value={entry.responseType || ''}
-                          onValueChange={(v) =>
-                            updateToEntry(entry.toUser, { responseType: v as ResponseType })
-                          }
-                          options={RESPONSE_TYPES.map((t) => ({
-                            value: t,
-                            label: RESPONSE_TYPE_LABELS[t],
-                          }))}
-                          size="sm"
-                          placeholder="Response type"
-                          className="min-w-[9rem]"
-                        />
-                        <input
-                          type="date"
-                          value={entry.dueAt}
-                          onChange={(e) => updateToEntry(entry.toUser, { dueAt: e.target.value })}
-                          className="h-7 rounded border border-slate-200 px-2 text-xs"
-                        />
-                        {entry.responseType === 'other' && (
-                          <input
-                            type="text"
-                            value={entry.responseTypeOther}
-                            onChange={(e) =>
-                              updateToEntry(entry.toUser, { responseTypeOther: e.target.value })
-                            }
-                            placeholder="Specify…"
-                            className="h-7 min-w-[8rem] flex-1 rounded border border-slate-200 px-2 text-xs"
-                          />
-                        )}
-                      </>
+                    <input
+                      type="date"
+                      value={activeEntry.dueAt}
+                      onChange={(e) =>
+                        updateToEntry(activeEntry.toUser, { dueAt: e.target.value })
+                      }
+                      className="h-7 rounded border border-slate-200 px-2 text-xs"
+                    />
+                    {activeEntry.responseType === 'other' && (
+                      <input
+                        type="text"
+                        value={activeEntry.responseTypeOther}
+                        onChange={(e) =>
+                          updateToEntry(activeEntry.toUser, {
+                            responseTypeOther: e.target.value,
+                          })
+                        }
+                        placeholder="Specify…"
+                        className="h-7 min-w-[8rem] flex-1 rounded border border-slate-200 px-2 text-xs"
+                      />
                     )}
-                  </div>
-                  <p className="mt-2 text-[11px] text-slate-500">
-                    Private message &amp; attachments for {entry.toUser} only (optional).
-                  </p>
-                  <textarea
-                    value={perToBodies[entry.toUser] ?? ''}
-                    onChange={(e) =>
-                      setPerToBodies((prev) => ({ ...prev, [entry.toUser]: e.target.value }))
-                    }
-                    disabled={disabled}
-                    rows={3}
-                    placeholder={`Message for ${entry.toUser}…`}
-                    className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                  <AttachmentStrip
-                    attachments={attsForTarget(drafts?.attachments ?? [], entry.toUser)}
-                    defaultKind={defaultKind}
-                    onKindChange={setDefaultKind}
-                    busy={busyAttach || disabled}
-                    onPickFiles={(files) => void uploadFiles(entry.toUser, files)}
-                    onRemove={(id) => void removeAttachment(id)}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
+                  </>
+                )}
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Private message &amp; attachments for {activeEntry.toUser} only (optional).
+              </p>
+              <textarea
+                value={perToBodies[activeEntry.toUser] ?? ''}
+                onChange={(e) =>
+                  setPerToBodies((prev) => ({
+                    ...prev,
+                    [activeEntry.toUser]: e.target.value,
+                  }))
+                }
+                disabled={disabled}
+                rows={3}
+                placeholder={`Message for ${activeEntry.toUser}…`}
+                className="mt-1 w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm"
+              />
+              <AttachmentStrip
+                attachments={attsForTarget(drafts?.attachments ?? [], activeEntry.toUser)}
+                defaultKind={defaultKind}
+                onKindChange={setDefaultKind}
+                busy={busyAttach || disabled}
+                onPickFiles={(files) => void uploadFiles(activeEntry.toUser, files)}
+                onRemove={(id) => void removeAttachment(id)}
+              />
+            </div>
+          ) : null}
         </div>
 
         <div>
@@ -558,7 +585,15 @@ export function DraftCommentsComposer({
             value={infoUsers}
             onChange={(names) => {
               setInfoUsers(names)
-              setToEntries((prev) => prev.filter((e) => !names.includes(e.toUser)))
+              setToEntries((prev) => {
+                const next = prev.filter((e) => !names.includes(e.toUser))
+                setActiveToUser((cur) => {
+                  if (cur && names.includes(cur)) return next[0]?.toUser ?? null
+                  if (cur && next.some((e) => e.toUser === cur)) return cur
+                  return next[0]?.toUser ?? null
+                })
+                return next
+              })
             }}
             exclude={excludeForInfo}
             disabled={disabled}
