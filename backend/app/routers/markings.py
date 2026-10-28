@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.letter_access import assert_letter_access
 from app.marking_workflow_service import (
+    accept_inbox_markings,
     add_attachments_to_marking,
     add_draft_attachments,
     add_draft_note,
@@ -33,6 +34,7 @@ from app.marking_workflow_service import (
     marking_actions_payload,
     marking_tree,
     markings_for_path,
+    reject_inbox_markings,
     replace_draft_roster,
     revoke_marking,
     set_draft_target_privacy,
@@ -113,6 +115,10 @@ class MarkBatchIn(BaseModel):
 
 class RevokeIn(BaseModel):
     remarks: str = ""
+
+
+class RejectInboxIn(BaseModel):
+    reason: str = ""
 
 
 class NoteIn(BaseModel):
@@ -281,6 +287,60 @@ def revoke(
     db.commit()
     db.refresh(marking)
     return {"marking": serialize_marking(marking), "letter": serialize_letter(letter, db=db, viewer=actor)}
+
+
+@router.post("/letters/{letter_id}/accept")
+def accept_inbox(
+    letter_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Recipient accepts a new inbox letter (will work on it)."""
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    rows = accept_inbox_markings(
+        db,
+        letter=letter,
+        actor_name=actor,
+        client_ip=client_ip_from_request(request),
+    )
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return {
+        "markings": [serialize_marking(m) for m in rows],
+        "letter": serialize_letter(letter, db=db, viewer=actor),
+    }
+
+
+@router.post("/letters/{letter_id}/reject")
+def reject_inbox(
+    letter_id: int,
+    payload: RejectInboxIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Recipient rejects a new inbox letter; reason is required."""
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    rows = reject_inbox_markings(
+        db,
+        letter=letter,
+        actor_name=actor,
+        reason=payload.reason,
+        client_ip=client_ip_from_request(request),
+    )
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return {
+        "markings": [serialize_marking(m) for m in rows],
+        "letter": serialize_letter(letter, db=db, viewer=actor),
+    }
 
 
 @router.get("/letters/{letter_id}/drafts")

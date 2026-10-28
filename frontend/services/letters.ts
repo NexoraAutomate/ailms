@@ -86,6 +86,10 @@ export type Letter = {
   viewerHolds?: boolean
   canAssign?: boolean
   canRespond?: boolean
+  /** Inbox: new inbound letter awaiting Accept / Reject. */
+  canAccept?: boolean
+  canDecline?: boolean
+  acceptanceStatus?: string
 }
 
 export type DashboardMetric = { label: string; value: string; icon: string; filter: string }

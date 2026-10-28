@@ -57,6 +57,10 @@ class LetterOut(BaseModel):
     viewerHolds: bool = False
     canAssign: bool = False
     canRespond: bool = False
+    # Inbox: new inbound letter awaiting Accept / Reject.
+    canAccept: bool = False
+    canDecline: bool = False
+    acceptanceStatus: str = ""
 
 
 class LetterCreate(BaseModel):

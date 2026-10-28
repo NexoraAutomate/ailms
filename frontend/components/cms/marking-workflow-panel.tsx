@@ -17,6 +17,7 @@ import {
   Paperclip,
   Pencil,
   Replace,
+  Reply,
   Send,
   Trash2,
   X,
@@ -64,7 +65,10 @@ import {
   type ResponseType,
 } from '@/services/marking-types'
 import {
+  acceptInboxLetter,
   closeMarkedLetter,
+  deleteDraftAttachment,
+  deleteDraftNote,
   deleteMarkingAttachment,
   deleteMarkingNote,
   fetchBatchTracker,
@@ -77,8 +81,9 @@ import {
   flattenMarkings,
   markAttachmentReplaced,
   markLetter,
+  putDraftRoster,
+  rejectInboxLetter,
   markingActionLabel,
-  respondToMarking,
   revokeMarking,
   shortPathId,
   updateMarkingAttachment,
@@ -200,6 +205,15 @@ function timelineClusterKey(item: TimelineItem, markingsById: Map<number, Markin
 
 function emptyRecipient(toUser = ''): MarkRecipientInput {
   return { toUser, action: 'forward', track: true, remindersEnabled: true }
+}
+
+/** Immediate sender for a Reply: previous marker, or RR respondent when hold was returned. */
+function resolveImmediateReplyTarget(hold: MarkingNode, meName: string): string {
+  const me = (meName || '').trim()
+  if (hold.status === 'responded' && (hold.fromUser || '').trim() === me) {
+    return (hold.toUser || '').trim()
+  }
+  return (hold.fromUser || '').trim()
 }
 
 /** Consecutive notes from the same author share one card. */
@@ -666,7 +680,7 @@ export function MarkingWorkflowPanel({
   letter: Letter
   users: WorkflowUser[]
   onDone: () => Promise<void>
-  /** Deep-link from Inbox row: forward | respond */
+  /** Deep-link from Inbox row: forward | reply */
   initialAction?: string | null
 }) {
   const { me } = useAppData()
@@ -681,7 +695,8 @@ export function MarkingWorkflowPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [visibility, setVisibility] = useState<WorkflowVisibility>(DEFAULT_WORKFLOW_VISIBILITY)
-  const [dialog, setDialog] = useState<'forward' | 'respond' | 'close' | 'revoke' | null>(null)
+  const [dialog, setDialog] = useState<'forward' | 'close' | 'revoke' | 'decline' | null>(null)
+  const [composerMode, setComposerMode] = useState<'forward' | 'reply'>('forward')
   const [remarks, setRemarks] = useState('')
   const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
   const [activeRecipientIndex, setActiveRecipientIndex] = useState(0)
@@ -709,7 +724,6 @@ export function MarkingWorkflowPanel({
   const [parentMarkingId, setParentMarkingId] = useState<number | null>(null)
   const [noteBody, setNoteBody] = useState('')
   const [forceClose, setForceClose] = useState(false)
-  const [respondMarkingId, setRespondMarkingId] = useState<number | null>(null)
   const [expandedTrackerBatchId, setExpandedTrackerBatchId] = useState<number | null>(null)
   const [trackerCache, setTrackerCache] = useState<Record<number, BatchTrackerSummary>>({})
   const [busy, setBusy] = useState(false)
@@ -812,8 +826,6 @@ export function MarkingWorkflowPanel({
       } else if (holds.length === 0) {
         setParentMarkingId(null)
       }
-      const rrHolds = holds.filter((n) => n.action === 'response_required' && n.status === 'active')
-      setRespondMarkingId(rrHolds.length === 1 ? rrHolds[0]!.id : rrHolds[0]?.id ?? null)
     } catch (err) {
       if (!silent) {
         setError(err instanceof Error ? err.message : 'Unable to load marking workflow')
@@ -874,17 +886,18 @@ export function MarkingWorkflowPanel({
     busyRef.current = true
     setBusy(true)
     setError('')
-    const marked = dialog === 'forward'
+    const remountComposer = dialog === 'forward' || composerMode === 'reply'
     try {
       await fn()
       setDialog(null)
       resetComposer()
       await onDone()
       await load()
-      // Remount after Mark so the composer re-hydrates from cleared server drafts.
-      if (marked) {
+      // Remount after Mark/Reply so the composer re-hydrates from cleared server drafts.
+      if (remountComposer) {
         draftPreviewOpenRef.current = false
         setDraftPreview(null)
+        setComposerMode('forward')
         setComposerKey((k) => k + 1)
       }
     } catch (err) {
@@ -917,10 +930,17 @@ export function MarkingWorkflowPanel({
     [activeLeaves],
   )
 
-  const rrHoldsForMe = useMemo(
-    () => activeHolds.filter((m) => m.action === 'response_required' && m.status === 'active'),
-    [activeHolds],
-  )
+  const replyParentHold = useMemo(() => {
+    if (parentMarkingId != null) {
+      return activeHolds.find((h) => h.id === parentMarkingId) ?? null
+    }
+    return activeHolds.length === 1 ? activeHolds[0]! : null
+  }, [activeHolds, parentMarkingId])
+
+  const replyTargetUser = useMemo(() => {
+    if (!replyParentHold) return ''
+    return resolveImmediateReplyTarget(replyParentHold, me.name || '')
+  }, [replyParentHold, me.name])
 
   const loadBatchTracker = async (batchId: number) => {
     try {
@@ -991,18 +1011,17 @@ export function MarkingWorkflowPanel({
     if (loading || initialActionHandled.current) return
     const action = (initialAction || '').trim().toLowerCase()
     if (!action) return
-    if (action === 'respond' && actions.includes('respond')) {
+    if (action === 'reply' && actions.includes('reply')) {
       initialActionHandled.current = true
-      const rr = activeHolds.filter((n) => n.action === 'response_required' && n.status === 'active')
-      if (rr.length === 1) setRespondMarkingId(rr[0]!.id)
-      setDialog('respond')
+      if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+      setComposerMode('reply')
       return
     }
     if ((action === 'forward' || action === 'assign') && actions.includes('forward')) {
       // Mark composer is always visible on the Workflow tab; no dialog to open.
       initialActionHandled.current = true
     }
-  }, [loading, initialAction, actions])
+  }, [loading, initialAction, actions, activeHolds])
 
   return (
     <CollapsibleCard collapsible={false} contentClassName="relative">
@@ -1097,16 +1116,67 @@ export function MarkingWorkflowPanel({
 
       {!loading && (
         <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-            {actions.includes('respond') && (
+            {actions.includes('accept') && (
               <Button
                 size="sm"
-                variant="outline"
+                disabled={busy}
                 onClick={() => {
-                  if (rrHoldsForMe.length === 1) setRespondMarkingId(rrHoldsForMe[0]!.id)
-                  setDialog('respond')
+                  void (async () => {
+                    setBusy(true)
+                    setError('')
+                    try {
+                      await acceptInboxLetter(letter.id)
+                      await onDone()
+                      await load({ silent: true })
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : 'Accept failed')
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
                 }}
               >
-                <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Respond
+                <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Accept — I will work on it
+              </Button>
+            )}
+            {actions.includes('decline') && (
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => {
+                  setRemarks('')
+                  setError('')
+                  setDialog('decline')
+                }}
+              >
+                <XCircle className="mr-1 h-3.5 w-3.5" /> Reject
+              </Button>
+            )}
+            {!actions.includes('accept') && actions.includes('reply') && (
+              <Button
+                size="sm"
+                variant={composerMode === 'reply' ? 'default' : 'outline'}
+                disabled={busy || activeHolds.length === 0}
+                onClick={() => {
+                  if (composerMode === 'reply') {
+                    setComposerMode('forward')
+                    setError('')
+                    return
+                  }
+                  if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+                  setError('')
+                  setComposerMode('reply')
+                  window.requestAnimationFrame(() => {
+                    document.getElementById('workflow-draft-composer')?.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'nearest',
+                    })
+                  })
+                }}
+              >
+                <Reply className="mr-1 h-3.5 w-3.5" />
+                {composerMode === 'reply' ? 'Cancel Reply' : 'Reply'}
               </Button>
             )}
             {revokableMarkings.length > 0 && (
@@ -1114,16 +1184,21 @@ export function MarkingWorkflowPanel({
                 <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
               </Button>
             )}
-            {actions.includes('forward') && (
+            {!actions.includes('accept') && actions.includes('forward') && (
               <Button
                 size="sm"
-                disabled={!composerMarkState.canMark || composerMarkState.busy || busy}
+                disabled={
+                  composerMode === 'reply' ||
+                  !composerMarkState.canMark ||
+                  composerMarkState.busy ||
+                  busy
+                }
                 onClick={() => composerRef.current?.requestMark()}
               >
                 <Send className="mr-1 h-3.5 w-3.5" /> Mark
               </Button>
             )}
-            {actions.includes('close') && (
+            {!actions.includes('accept') && actions.includes('close') && (
               <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
                 <XCircle className="mr-1 h-3.5 w-3.5" /> Close
               </Button>
@@ -1190,31 +1265,150 @@ export function MarkingWorkflowPanel({
         </div>
       )}
 
-      {!loading && actions.includes('forward') && (
-        <DraftCommentsComposer
-          key={`composer-${letter.id}-${composerKey}`}
-          ref={composerRef}
-          letterId={letter.id}
-          users={users}
-          meName={me.name}
-          drafts={drafts}
-          onDraftsChange={(next) => setDrafts({ ...next, roster: next.roster ?? [] })}
-          disabled={busy}
-          hideMarkButton
-          previewActive={draftPreview != null}
-          onPreviewChange={handleDraftPreviewChange}
-          onMarkAvailabilityChange={setComposerMarkState}
-          onRequestMark={(nextRecipients) => {
-            setError('')
-            draftPreviewOpenRef.current = false
-            setDraftPreview(null)
-            setRecipients(nextRecipients.length ? nextRecipients : [emptyRecipient()])
-            setActiveRecipientIndex(0)
-            if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
-            else if (activeHolds.length === 0) setParentMarkingId(null)
-            setDialog('forward')
-          }}
-        />
+      {!loading &&
+        !actions.includes('accept') &&
+        (actions.includes('forward') || actions.includes('reply')) && (
+        <div id="workflow-draft-composer">
+          {composerMode === 'reply' && activeHolds.length > 1 && (
+            <div className="mb-3 rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2.5">
+              <label className="block text-xs font-medium text-slate-600">
+                Reply under which hold?
+              </label>
+              <AppSelect
+                value={parentMarkingId != null ? String(parentMarkingId) : ''}
+                onValueChange={(v) => setParentMarkingId(v ? Number(v) : null)}
+                options={[
+                  { value: '', label: 'Select hold…' },
+                  ...activeHolds.map((h) => ({
+                    value: String(h.id),
+                    label:
+                      h.status === 'responded'
+                        ? `Response from ${h.toUser} · ${markingActionLabel(h.action)}`
+                        : `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
+                  })),
+                ]}
+                className="mt-1 w-full max-w-md text-sm"
+              />
+            </div>
+          )}
+          <DraftCommentsComposer
+            key={`composer-${letter.id}-${composerKey}-${composerMode}`}
+            ref={composerRef}
+            letterId={letter.id}
+            users={users}
+            meName={me.name}
+            drafts={drafts}
+            onDraftsChange={(next) => setDrafts({ ...next, roster: next.roster ?? [] })}
+            disabled={busy}
+            hideMarkButton
+            mode={composerMode}
+            lockedToUser={composerMode === 'reply' ? replyTargetUser : null}
+            onCancelReply={() => {
+              setComposerMode('forward')
+              setError('')
+            }}
+            previewActive={draftPreview != null}
+            onPreviewChange={handleDraftPreviewChange}
+            onMarkAvailabilityChange={setComposerMarkState}
+            onRequestMark={(nextRecipients) => {
+              setError('')
+              draftPreviewOpenRef.current = false
+              setDraftPreview(null)
+              setRecipients(nextRecipients.length ? nextRecipients : [emptyRecipient()])
+              setActiveRecipientIndex(0)
+              if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+              else if (activeHolds.length === 0) setParentMarkingId(null)
+              setDialog('forward')
+            }}
+            onRequestSend={(nextRecipients) => {
+              setError('')
+              draftPreviewOpenRef.current = false
+              setDraftPreview(null)
+              void run(async () => {
+                if (!replyParentHold) {
+                  throw new Error('Select which hold you are replying under')
+                }
+                const toUser = resolveImmediateReplyTarget(replyParentHold, me.name || '')
+                if (!toUser) throw new Error('Cannot determine reply recipient')
+                const cleaned = nextRecipients.filter((r) => r.toUser.trim())
+                const recipient =
+                  cleaned.find((r) => r.toUser === toUser) ??
+                  cleaned[0] ?? {
+                    toUser,
+                    action: 'forward' as const,
+                    track: true,
+                    remindersEnabled: false,
+                  }
+                const commonNotes = (drafts?.notes ?? [])
+                  .filter((n) => !(n.targetUser || '').trim() && !isRichTextEmpty(n.bodyText))
+                  .map((n) => ({ bodyText: n.bodyText }))
+                const commonAttachments = (drafts?.attachments ?? [])
+                  .filter((a) => !(a.targetUser || '').trim())
+                  .map((a) => ({
+                    attachmentKind: a.attachmentKind,
+                    documentId: a.documentId,
+                    storageKey: a.storageKey,
+                    originalFilename: a.originalFilename,
+                  }))
+                const personalNotes = (drafts?.notes ?? [])
+                  .filter(
+                    (n) =>
+                      (n.targetUser || '').trim() === toUser && !isRichTextEmpty(n.bodyText),
+                  )
+                  .map((n) => ({ bodyText: n.bodyText }))
+                const personalAtts = (drafts?.attachments ?? [])
+                  .filter((a) => (a.targetUser || '').trim() === toUser)
+                  .map((a) => ({
+                    attachmentKind: a.attachmentKind,
+                    documentId: a.documentId,
+                    storageKey: a.storageKey,
+                    originalFilename: a.originalFilename,
+                  }))
+                await markLetter(letter.id, {
+                  recipients: [
+                    {
+                      ...recipient,
+                      toUser,
+                      track: true,
+                      remindersEnabled: recipient.action === 'response_required',
+                      notes: personalNotes.length ? personalNotes : undefined,
+                      attachments: personalAtts.length ? personalAtts : undefined,
+                    },
+                  ],
+                  remarks: '',
+                  pathwayNotify: false,
+                  parentMarkingId: replyParentHold.id,
+                  direction: 'reply',
+                  // Stage from current drafts; avoid clashing with Mark (forward) draft intent.
+                  consumeDrafts: false,
+                  commonNotes: commonNotes.length ? commonNotes : undefined,
+                  commonAttachments: commonAttachments.length ? commonAttachments : undefined,
+                })
+                // Clear leftover Mark/Reply drafts so the card resets.
+                for (const n of drafts?.notes ?? []) {
+                  try {
+                    await deleteDraftNote(n.id)
+                  } catch {
+                    /* ignore */
+                  }
+                }
+                for (const a of drafts?.attachments ?? []) {
+                  try {
+                    await deleteDraftAttachment(a.id)
+                  } catch {
+                    /* ignore */
+                  }
+                }
+                try {
+                  await putDraftRoster(letter.id, [])
+                } catch {
+                  /* ignore */
+                }
+                setComposerMode('forward')
+              })
+            }}
+          />
+        </div>
       )}
 
       <div>
@@ -1941,57 +2135,49 @@ export function MarkingWorkflowPanel({
         </div>
       )}
 
-      {dialog === 'respond' && (
+      {dialog === 'decline' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold">Submit response</h2>
-            {rrHoldsForMe.length > 1 && (
-              <div className="mt-2">
-                <label className="block text-xs font-medium text-slate-600">Respond to</label>
-                <AppSelect
-                  value={respondMarkingId != null ? String(respondMarkingId) : ''}
-                  onValueChange={(v) => setRespondMarkingId(v ? Number(v) : null)}
-                  options={[
-                    { value: '', label: 'Select Response Required…' },
-                    ...rrHoldsForMe.map((h) => ({
-                      value: String(h.id),
-                      label: `From ${h.fromUser}${h.dueAt ? ` · due ${h.dueAt}` : ''}`,
-                    })),
-                  ]}
-                  className="mt-1 w-full text-sm"
-                />
-              </div>
-            )}
-            <RichTextEditor
-              className="mt-2"
-              value={noteBody}
-              onChange={setNoteBody}
-              disabled={busy}
-              placeholder="Your response…"
-              aria-label="Response message"
-              minHeightClass="min-h-[6rem]"
-            />
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setDialog(null)
-                  setNoteBody('')
-                }}
-              >
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold">Reject letter</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Provide a reason for rejecting this letter. The sender will be notified.
+            </p>
+            <label className="mt-3 flex flex-col gap-1">
+              <span className="text-xs font-semibold text-slate-600">Rejection reason</span>
+              <textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                className="min-h-24 rounded-md border border-slate-200 px-3 py-2 text-xs"
+                placeholder="Required — why you cannot take this letter…"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setDialog(null)} disabled={busy}>
                 Cancel
               </Button>
               <Button
-                disabled={busy || !respondMarkingId || isRichTextEmpty(noteBody)}
+                type="button"
+                variant="destructive"
+                disabled={busy || !remarks.trim()}
                 onClick={() =>
-                  void run(async () => {
-                    if (!respondMarkingId) throw new Error('No open Response Required marking')
-                    if (isRichTextEmpty(noteBody)) throw new Error('Response text is required')
-                    await respondToMarking(respondMarkingId, { bodyText: noteBody })
-                  })
+                  void (async () => {
+                    setBusy(true)
+                    setError('')
+                    try {
+                      await rejectInboxLetter(letter.id, remarks.trim())
+                      setDialog(null)
+                      setRemarks('')
+                      await onDone()
+                      await load({ silent: true })
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : 'Reject failed')
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
                 }
               >
-                <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Submit
+                Reject
               </Button>
             </div>
           </div>

@@ -1236,6 +1236,7 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                         "ON cms_markings (direction)"
                     )
                 )
+            acceptance_added = False
             if "acceptance_status" not in columns:
                 conn.execute(
                     text(
@@ -1249,6 +1250,7 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                         "ON cms_markings (acceptance_status)"
                     )
                 )
+                acceptance_added = True
             if "accepted_at" not in columns:
                 conn.execute(
                     text("ALTER TABLE cms_markings ADD COLUMN accepted_at TIMESTAMP NULL")
@@ -1262,6 +1264,20 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                     text(
                         "ALTER TABLE cms_markings "
                         "ADD COLUMN rejection_reason TEXT DEFAULT ''"
+                    )
+                )
+            # One-time: existing active holds were already in progress — treat as accepted
+            # so only newly marked letters require Accept / Reject.
+            if acceptance_added:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE cms_markings
+                        SET acceptance_status = 'accepted',
+                            accepted_at = COALESCE(created_at, NOW())
+                        WHERE status = 'active'
+                          AND (acceptance_status IS NULL OR acceptance_status = '')
+                        """
                     )
                 )
         _backfill_marking_path_ids(engine)

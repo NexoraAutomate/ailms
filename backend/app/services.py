@@ -172,6 +172,9 @@ def serialize_letter(
         viewerHolds=False,
         canAssign=False,
         canRespond=False,
+        canAccept=False,
+        canDecline=False,
+        acceptanceStatus="",
     )
 
 
@@ -185,13 +188,19 @@ def attach_inbox_holder_actions(
     *,
     can_assign: bool,
     can_respond: bool,
+    can_accept: bool = False,
+    can_decline: bool = False,
+    acceptance_status: str = "",
 ) -> LetterOut:
-    """Clone a letter DTO with Inbox Assign / Respond affordances for the holder."""
+    """Clone a letter DTO with Inbox Accept / Reject / Assign / Respond affordances."""
     return letter_out.model_copy(
         update={
             "viewerHolds": True,
             "canAssign": bool(can_assign),
             "canRespond": bool(can_respond),
+            "canAccept": bool(can_accept),
+            "canDecline": bool(can_decline),
+            "acceptanceStatus": (acceptance_status or "").strip(),
         }
     )
 

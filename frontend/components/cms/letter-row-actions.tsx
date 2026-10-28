@@ -24,7 +24,6 @@ import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { Card } from '@/components/cms/ui'
-import { ReplyDialog } from '@/components/cms/reply-dialog'
 import {
   actionNeedsInput,
   letterActionLabel,
@@ -32,6 +31,7 @@ import {
   type LetterRowActionId,
 } from '@/services/letter-actions'
 import { updateLetter, type Letter, type Priority } from '@/services/letters'
+import { acceptInboxLetter, rejectInboxLetter } from '@/services/markings'
 import { executeWorkflow } from '@/services/workflow'
 
 type Person = { name: string; department?: string }
@@ -65,6 +65,8 @@ const ACTION_ICONS: Record<LetterRowActionId, ComponentType<{ className?: string
   draft_response: MessageSquare,
   approve_step: CheckCircle2,
   dispatch: Send,
+  accept: CheckCircle2,
+  decline: XCircle,
 }
 
 export function LetterRowActions({
@@ -88,28 +90,31 @@ export function LetterRowActions({
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<LetterRowActionId | null>(null)
   const [editing, setEditing] = useState(false)
-  const [replyOpen, setReplyOpen] = useState(false)
   const [remarks, setRemarks] = useState('')
   const [assignedTo, setAssignedTo] = useState(letter.assignedTo || '')
   const [level, setLevel] = useState('Level 1')
 
-  /** Assign / Forward / Reassign open Workflow Forward; Respond opens the RR dialog. */
-  const openWorkflow = (action: 'forward' | 'respond' = 'forward') => {
+  /** Assign / Forward / Reassign open Workflow Mark; Reply opens the reply dialog. */
+  const openWorkflow = (action: 'forward' | 'reply' = 'forward') => {
     router.push(`/letters/${letter.id}?tab=workflow&action=${action}`)
   }
 
   const runWorkflow = async (action: LetterRowActionId, input?: { remarks: string; assignedTo: string; level: string }) => {
-    if (action === 'edit' || action === 'delete' || action === 'reply') return
+    if (action === 'edit' || action === 'delete') return
     if (action === 'assign' || action === 'forward' || action === 'reassign') {
       openWorkflow('forward')
       return
     }
-    if (action === 'respond') {
-      openWorkflow('respond')
+    if (action === 'respond' || action === 'reply') {
+      openWorkflow('reply')
       return
     }
     const note = input?.remarks ?? ''
     const person = input?.assignedTo ?? ''
+    if (action === 'decline' && !note.trim()) {
+      setError('Please provide a reason for rejecting this letter.')
+      return
+    }
     if ((action === 'submit_for_approval') && !person.trim()) {
       setError('Select a person before continuing.')
       return
@@ -125,14 +130,20 @@ export function LetterRowActions({
     setBusy(true)
     setError('')
     try {
-      await executeWorkflow(letter.id, {
-        action,
-        remarks: note,
-        assignedTo: person.trim() ? person : undefined,
-        reviewerName: action === 'submit_for_approval' ? person : undefined,
-        escalatedTo: action === 'escalate' ? person : undefined,
-        escalationLevel: action === 'escalate' ? input?.level : undefined,
-      })
+      if (action === 'accept') {
+        await acceptInboxLetter(letter.id)
+      } else if (action === 'decline') {
+        await rejectInboxLetter(letter.id, note.trim())
+      } else {
+        await executeWorkflow(letter.id, {
+          action,
+          remarks: note,
+          assignedTo: person.trim() ? person : undefined,
+          reviewerName: action === 'submit_for_approval' ? person : undefined,
+          escalatedTo: action === 'escalate' ? person : undefined,
+          escalationLevel: action === 'escalate' ? input?.level : undefined,
+        })
+      }
       setPending(null)
       setRemarks('')
       await onChanged()
@@ -153,16 +164,16 @@ export function LetterRowActions({
       setEditing(true)
       return
     }
-    if (action === 'reply') {
-      setReplyOpen(true)
+    if (action === 'reply' || action === 'respond') {
+      openWorkflow('reply')
       return
     }
     if (action === 'assign' || action === 'forward' || action === 'reassign') {
       openWorkflow('forward')
       return
     }
-    if (action === 'respond') {
-      openWorkflow('respond')
+    if (action === 'accept') {
+      void runWorkflow(action)
       return
     }
     if (actionNeedsInput(action)) {
@@ -184,12 +195,12 @@ export function LetterRowActions({
           key={action}
           label={letterActionLabel[action]}
           icon={ACTION_ICONS[action]}
-          tone={action === 'delete' || action === 'reject' ? 'danger' : 'default'}
+          tone={action === 'delete' || action === 'reject' || action === 'decline' ? 'danger' : 'default'}
           disabled={busy}
           onClick={() => start(action)}
         />
       ))}
-      {error && !pending && !editing && !replyOpen && <p className="basis-full text-[11px] text-red-600">{error}</p>}
+      {error && !pending && !editing && <p className="basis-full text-[11px] text-red-600">{error}</p>}
       {editing && (
         <EditLetterDialog
           letter={letter}
@@ -202,15 +213,6 @@ export function LetterRowActions({
           }}
         />
       )}
-      {replyOpen && (
-        <ReplyDialog
-          letter={letter}
-          users={users}
-          role={role}
-          onClose={() => setReplyOpen(false)}
-          onDone={onChanged}
-        />
-      )}
       {pending && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/30 p-4">
           <Card className="w-full max-w-lg p-5" role="dialog" aria-modal="true" aria-labelledby="letter-action-title">
@@ -219,6 +221,16 @@ export function LetterRowActions({
               <IconActionButton label="Close" icon={X} onClick={() => setPending(null)} />
             </div>
             {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
+            {pending === 'decline' && (
+              <p className="mb-3 text-xs text-slate-500">
+                Explain why you are rejecting this letter. The sender will be notified.
+              </p>
+            )}
+            {pending === 'accept' && (
+              <p className="mb-3 text-xs text-slate-500">
+                Accepting means you will work on this letter.
+              </p>
+            )}
             {(pending === 'submit_for_approval' || pending === 'escalate') && (
               <label className="mb-3 flex flex-col gap-1">
                 <span className="text-xs font-semibold text-slate-600">
@@ -250,13 +262,25 @@ export function LetterRowActions({
               </label>
             )}
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-semibold text-slate-600">Remarks</span>
-              <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-24 rounded-md border border-slate-200 px-3 py-2 text-xs" />
+              <span className="text-xs font-semibold text-slate-600">
+                {pending === 'decline' ? 'Rejection reason' : 'Remarks'}
+              </span>
+              <textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                className="min-h-24 rounded-md border border-slate-200 px-3 py-2 text-xs"
+                placeholder={pending === 'decline' ? 'Required — why you cannot take this letter…' : undefined}
+              />
             </label>
             <div className="mt-4 flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setPending(null)} disabled={busy}>Cancel</Button>
-              <Button type="button" onClick={() => void runWorkflow(pending, { remarks, assignedTo, level })} disabled={busy}>
-                {letterActionLabel[pending]}
+              <Button
+                type="button"
+                variant={pending === 'decline' ? 'destructive' : 'default'}
+                onClick={() => void runWorkflow(pending, { remarks, assignedTo, level })}
+                disabled={busy}
+              >
+                {pending === 'accept' ? 'Accept — I will work on it' : letterActionLabel[pending]}
               </Button>
             </div>
           </Card>

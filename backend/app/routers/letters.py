@@ -105,6 +105,7 @@ def list_letters(
             available_marking_actions,
             letter_ids_held_by_user,
             marked_by_for_holder,
+            pending_acceptance_markings,
         )
         from app.services import attach_inbox_holder_actions, attach_inbox_marked_by
 
@@ -118,6 +119,18 @@ def list_letters(
             actions = (
                 available_marking_actions(db, letter_row, actor) if letter_row is not None else []
             )
+            pending = (
+                pending_acceptance_markings(db, int(item.id), actor)
+                if letter_row is not None
+                else []
+            )
+            acceptance_status = ""
+            if not pending and letter_row is not None:
+                from app.marking_workflow_service import leaf_inbound_markings
+
+                leaves = leaf_inbound_markings(db, int(item.id), actor)
+                if leaves:
+                    acceptance_status = (leaves[0].acceptance_status or "").strip()
             enriched = attach_inbox_marked_by(
                 item, marked_by_for_holder(db, int(item.id), actor)
             )
@@ -126,6 +139,9 @@ def list_letters(
                     enriched,
                     can_assign="forward" in actions,
                     can_respond="respond" in actions,
+                    can_accept="accept" in actions or bool(pending),
+                    can_decline="decline" in actions or bool(pending),
+                    acceptance_status=acceptance_status,
                 )
             )
         items = inbox_items

@@ -28,6 +28,8 @@ export type LetterRowActionId =
   | 'draft_response'
   | 'approve_step'
   | 'dispatch'
+  | 'accept'
+  | 'decline'
 
 const ENTERPRISE_PERMS = [
   'validate', 'classify', 'approve_routing', 'route_info', 'acknowledge_info', 'close_information',
@@ -172,6 +174,8 @@ export const letterActionLabel: Record<LetterRowActionId, string> = {
   draft_response: 'Draft reply',
   approve_step: 'Approve step',
   dispatch: 'Dispatch',
+  accept: 'Accept — I will work on it',
+  decline: 'Reject',
 }
 
 export function isAdministrator(role: string) {
@@ -206,12 +210,22 @@ export function letterRowActions(letter: Letter, role: string): LetterRowActionI
     // Soft-archived: admin may delete only when not marked out to another user.
     return isAdministrator(role) && letter.hasActiveMarkings !== true ? ['delete'] : []
   }
-  // Inbox holder: Assign (forward onward) + Respond (RR) from the table.
-  if (letter.viewerHolds === true || letter.canAssign === true || letter.canRespond === true) {
+  // Inbox holder: Accept/Reject new letters; then Assign + Respond after acceptance.
+  if (
+    letter.viewerHolds === true ||
+    letter.canAssign === true ||
+    letter.canRespond === true ||
+    letter.canAccept === true ||
+    letter.canDecline === true
+  ) {
     const inboxActions: LetterRowActionId[] = []
-    // Holders can always Assign/Forward; Respond only when RR is outstanding.
-    if (letter.canAssign === true || letter.viewerHolds === true) inboxActions.push('assign')
-    if (letter.canRespond === true) inboxActions.push('respond')
+    if (letter.canAccept === true) inboxActions.push('accept')
+    if (letter.canDecline === true) inboxActions.push('decline')
+    // After accept (or initiator / returned RR): Assign/Forward + Respond when RR.
+    if (letter.canAccept !== true) {
+      if (letter.canAssign === true || letter.viewerHolds === true) inboxActions.push('assign')
+      if (letter.canRespond === true) inboxActions.push('respond')
+    }
     return inboxActions
   }
   // While marked to another user, sender must revoke on the Workflow tab before
@@ -244,6 +258,7 @@ export function actionNeedsInput(action: LetterRowActionId) {
     'submit_for_approval',
     'approve',
     'reject',
+    'decline',
     'return_for_revision',
     'escalate',
     'classify',

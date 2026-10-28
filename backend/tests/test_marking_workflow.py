@@ -13,6 +13,7 @@ from app.database import SessionLocal, engine
 from app.db_upgrade import upgrade_simple_marking_schema
 from app.marking_reminders import process_marking_reminders
 from app.marking_workflow_service import (
+    accept_inbox_markings,
     add_attachments_to_marking,
     add_draft_attachments,
     add_draft_note,
@@ -37,6 +38,8 @@ from app.marking_workflow_service import (
     marking_tree,
     note_is_editable,
     path_ids_visible_to_user,
+    pending_acceptance_markings,
+    reject_inbox_markings,
     revoke_marking,
     update_note,
     user_holds_letter,
@@ -1762,6 +1765,83 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.assertEqual(atts[0]["originalFilename"], "test.pdf")
         remaining = list_drafts(self.db, self.letter.id, self.initiator.name)
         self.assertEqual(remaining["attachments"], [])
+
+    def test_inbox_accept_and_reject_with_reason(self) -> None:
+        """New inbound letters require Accept (will work on it) or Reject with a reason."""
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+        )
+        self.db.flush()
+
+        pending = pending_acceptance_markings(self.db, self.letter.id, self.user_a.name)
+        self.assertEqual(len(pending), 1)
+        actions = available_marking_actions(self.db, self.letter, self.user_a.name)
+        self.assertIn("accept", actions)
+        self.assertIn("decline", actions)
+
+        accepted = accept_inbox_markings(
+            self.db, letter=self.letter, actor_name=self.user_a.name, client_ip="10.0.0.8"
+        )
+        self.db.flush()
+        self.assertEqual(accepted[0].acceptance_status, "accepted")
+        self.assertIsNotNone(accepted[0].accepted_at)
+        self.assertEqual(pending_acceptance_markings(self.db, self.letter.id, self.user_a.name), [])
+        self.assertNotIn("accept", available_marking_actions(self.db, self.letter, self.user_a.name))
+
+        # Fresh letter for reject path
+        letter2 = Letter(
+            number=_num(),
+            letter_date=date.today(),
+            received_date=date.today(),
+            type="Incoming",
+            subject="Reject me",
+            sender="Ext",
+            recipient="Org",
+            department="Wing",
+            priority="Routine",
+            status="Open",
+            created_by=self.initiator.name,
+            initiator_user_id=self.initiator.id,
+            last_action="Registered",
+        )
+        self.db.add(letter2)
+        self.db.flush()
+        try:
+            create_mark_batch(
+                self.db,
+                letter=letter2,
+                actor_name=self.initiator.name,
+                recipients=[{"toUser": self.user_b.name, "action": "forward"}],
+            )
+            self.db.flush()
+
+            with self.assertRaises(HTTPException) as missing_reason:
+                reject_inbox_markings(
+                    self.db, letter=letter2, actor_name=self.user_b.name, reason="  "
+                )
+            self.assertEqual(missing_reason.exception.status_code, 400)
+
+            rejected = reject_inbox_markings(
+                self.db,
+                letter=letter2,
+                actor_name=self.user_b.name,
+                reason="Outside my remit",
+                client_ip="10.0.0.9",
+            )
+            self.db.flush()
+            self.assertEqual(rejected[0].acceptance_status, "rejected")
+            self.assertEqual(rejected[0].status, "rejected")
+            self.assertEqual(rejected[0].rejection_reason, "Outside my remit")
+            self.assertNotIn(letter2.id, letter_ids_held_by_user(self.db, self.user_b.name))
+            # Initiator regains hold after the only marking is rejected.
+            self.assertIn(letter2.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        finally:
+            self.db.query(Marking).filter(Marking.letter_id == letter2.id).delete()
+            self.db.query(Letter).filter(Letter.id == letter2.id).delete()
+            self.db.flush()
 
 
 if __name__ == "__main__":

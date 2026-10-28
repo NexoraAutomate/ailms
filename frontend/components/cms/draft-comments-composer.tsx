@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Eye, EyeOff, Paperclip, Send, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, Paperclip, Reply, Send, Trash2 } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
 import { RichTextEditor } from '@/components/cms/rich-text-editor'
@@ -81,10 +81,16 @@ type DraftCommentsComposerProps = {
   disabled?: boolean
   /** When true, Mark is rendered by the parent (e.g. Workflow action bar). */
   hideMarkButton?: boolean
+  /** Reply locks To to the immediate sender and shows Send at the card footer. */
+  mode?: 'forward' | 'reply'
+  lockedToUser?: string | null
+  onCancelReply?: () => void
   previewActive?: boolean
   onPreviewChange?: (preview: DraftCommentPreviewData | null) => void
   onMarkAvailabilityChange?: (state: { canMark: boolean; busy: boolean }) => void
   onRequestMark: (recipients: MarkRecipientInput[]) => void
+  /** Reply Send — same recipient payload as Mark, parent submits with direction=reply. */
+  onRequestSend?: (recipients: MarkRecipientInput[]) => void
 }
 
 const TO_ACTIONS: { value: MarkingAction; label: string }[] = [
@@ -157,13 +163,19 @@ export const DraftCommentsComposer = forwardRef<
     onDraftsChange,
     disabled = false,
     hideMarkButton = false,
+    mode = 'forward',
+    lockedToUser = null,
+    onCancelReply,
     previewActive = false,
     onPreviewChange,
     onMarkAvailabilityChange,
     onRequestMark,
+    onRequestSend,
   },
   ref,
 ) {
+  const isReplyMode = mode === 'reply'
+  const lockedTo = (lockedToUser || '').trim()
   const [toEntries, setToEntries] = useState<ToEntry[]>([])
   const [infoUsers, setInfoUsers] = useState<string[]>([])
   const [activeToUser, setActiveToUser] = useState<string | null>(null)
@@ -220,6 +232,29 @@ export const DraftCommentsComposer = forwardRef<
     hydratedLetterRef.current = letterId
     applyHydration(drafts)
   }, [applyHydration, drafts, letterId])
+
+  // Reply: lock To to the immediate sender (immutable) and clear Info.
+  useEffect(() => {
+    if (!isReplyMode || !lockedTo) return
+    skipRosterSave.current = true
+    setToEntries((prev) => {
+      const existing = prev.find((e) => e.toUser === lockedTo)
+      return [
+        {
+          toUser: lockedTo,
+          action: existing?.action === 'response_required' ? 'response_required' : 'forward',
+          responseType: existing?.responseType || '',
+          responseTypeOther: existing?.responseTypeOther || '',
+          dueAt: existing?.dueAt || '',
+        },
+      ]
+    })
+    setInfoUsers([])
+    setActiveToUser(lockedTo)
+    window.setTimeout(() => {
+      skipRosterSave.current = false
+    }, 50)
+  }, [isReplyMode, lockedTo])
 
   // After Mark consumes drafts, reset the composer when the server roster/content is empty.
   useEffect(() => {
@@ -383,6 +418,7 @@ export const DraftCommentsComposer = forwardRef<
   }, [hydrated, perToBodies, persistPerToBody, toEntries])
 
   const setToUsers = (names: string[]) => {
+    if (isReplyMode) return
     setToEntries((prev) => {
       const byName = new Map(prev.map((e) => [e.toUser, e]))
       return names.map(
@@ -564,6 +600,31 @@ export const DraftCommentsComposer = forwardRef<
     onRequestMark(markRecipients)
   }, [markRecipients, onRequestMark, toEntries])
 
+  const canSendReply =
+    Boolean(lockedTo) && !disabled && !busyAttach && !isRichTextEmpty(commonBody)
+
+  const handleSendClick = useCallback(() => {
+    if (!onRequestSend) return
+    if (!lockedTo) {
+      setSaveError('Reply recipient is not set')
+      return
+    }
+    if (isRichTextEmpty(commonBody)) {
+      setSaveError('Reply comment is required')
+      return
+    }
+    setSaveError('')
+    // Reply: locked immediate sender only — no Mark actions / Info / per-recipient extras.
+    onRequestSend([
+      {
+        toUser: lockedTo,
+        action: 'forward',
+        track: true,
+        remindersEnabled: false,
+      },
+    ])
+  }, [commonBody, lockedTo, onRequestSend])
+
   useImperativeHandle(ref, () => ({ requestMark: handleMarkClick }), [handleMarkClick])
 
   useEffect(() => {
@@ -571,15 +632,27 @@ export const DraftCommentsComposer = forwardRef<
   }, [busyAttach, canMark, onMarkAvailabilityChange])
 
   return (
-    <section className="mb-5 rounded-lg border border-slate-200 bg-white shadow-sm">
+    <section
+      className={cn(
+        'mb-5 rounded-lg border bg-white shadow-sm',
+        isReplyMode ? 'border-violet-300 ring-1 ring-violet-200' : 'border-slate-200',
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5 sm:px-4">
         <div>
           <h2 className="text-sm font-bold text-slate-700">My Draft Comments</h2>
           <p className="text-[11px] text-slate-400">
-            Choose recipients, compose comments, then Mark to send.
+            {isReplyMode
+              ? 'Replying to the immediate sender — write a reply comment, then Send.'
+              : 'Choose recipients, compose comments, then Mark to send.'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isReplyMode && onCancelReply ? (
+            <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onCancelReply}>
+              Cancel Reply
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -598,7 +671,7 @@ export const DraftCommentsComposer = forwardRef<
             )}
             {previewActive ? 'Hide Preview' : 'Preview Comments'}
           </Button>
-          {!hideMarkButton ? (
+          {!hideMarkButton && !isReplyMode ? (
             <Button size="sm" disabled={!canMark || busyAttach} onClick={handleMarkClick}>
               <Send className="mr-1 h-3.5 w-3.5" />
               Mark
@@ -616,38 +689,48 @@ export const DraftCommentsComposer = forwardRef<
 
         <div>
           <label className="mb-1.5 block">
-            <Badge tone="blue" className="text-sm px-2.5 py-1">
+            <Badge tone={isReplyMode ? 'violet' : 'blue'} className="text-sm px-2.5 py-1">
               To
             </Badge>
           </label>
-          <UserMultiSelect
-            users={users}
-            value={toEntries.map((e) => e.toUser)}
-            onChange={setToUsers}
-            exclude={excludeForTo}
-            disabled={disabled}
-            aria-label="To recipients"
-            placeholder="Add recipients…"
-            activeValue={activeToUser}
-            onActiveChange={(name) => setActiveToUser(name || null)}
-            renderBadgeExtra={(name) => {
-              const entry = toEntries.find((e) => e.toUser === name)
-              if (!entry) return null
-              const label =
-                TO_ACTIONS.find((a) => a.value === entry.action)?.label ?? entry.action
-              return (
-                <span className="rounded bg-white/70 px-1 py-px text-[10px] font-semibold text-slate-600">
-                  {label}
-                </span>
-              )
-            }}
-          />
-          {toEntries.length > 0 && !activeEntry ? (
+          {isReplyMode ? (
+            <div
+              className="flex flex-wrap items-center gap-2 rounded-md border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-slate-800"
+              aria-label="Reply recipient (locked)"
+            >
+              <span className="font-semibold">{lockedTo || '—'}</span>
+              <Badge tone="violet">Locked · immediate sender</Badge>
+            </div>
+          ) : (
+            <UserMultiSelect
+              users={users}
+              value={toEntries.map((e) => e.toUser)}
+              onChange={setToUsers}
+              exclude={excludeForTo}
+              disabled={disabled}
+              aria-label="To recipients"
+              placeholder="Add recipients…"
+              activeValue={activeToUser}
+              onActiveChange={(name) => setActiveToUser(name || null)}
+              renderBadgeExtra={(name) => {
+                const entry = toEntries.find((e) => e.toUser === name)
+                if (!entry) return null
+                const label =
+                  TO_ACTIONS.find((a) => a.value === entry.action)?.label ?? entry.action
+                return (
+                  <span className="rounded bg-white/70 px-1 py-px text-[10px] font-semibold text-slate-600">
+                    {label}
+                  </span>
+                )
+              }}
+            />
+          )}
+          {!isReplyMode && toEntries.length > 0 && !activeEntry ? (
             <p className="mt-1.5 text-[11px] text-slate-500">
               Click a recipient badge to set their action and optional To-specific message.
             </p>
           ) : null}
-          {activeEntry ? (
+          {!isReplyMode && activeEntry ? (
             <div className="mt-2 rounded-md border border-sky-200 bg-sky-50/60 px-2.5 py-2 dark:border-sky-800/60 dark:bg-sky-950/50">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-semibold text-slate-800 dark:text-white">
@@ -753,47 +836,53 @@ export const DraftCommentsComposer = forwardRef<
           ) : null}
         </div>
 
-        <div>
-          <label className="mb-1.5 block">
-            <Badge tone="violet" className="text-sm px-2.5 py-1">
-              Info
-            </Badge>
-          </label>
-          <UserMultiSelect
-            users={users}
-            value={infoUsers}
-            onChange={(names) => {
-              setInfoUsers(names)
-              setToEntries((prev) => {
-                const next = prev.filter((e) => !names.includes(e.toUser))
-                setActiveToUser((cur) => {
-                  if (cur && names.includes(cur)) return next[0]?.toUser ?? null
-                  if (cur && next.some((e) => e.toUser === cur)) return cur
-                  return next[0]?.toUser ?? null
+        {!isReplyMode ? (
+          <div>
+            <label className="mb-1.5 block">
+              <Badge tone="violet" className="text-sm px-2.5 py-1">
+                Info
+              </Badge>
+            </label>
+            <UserMultiSelect
+              users={users}
+              value={infoUsers}
+              onChange={(names) => {
+                setInfoUsers(names)
+                setToEntries((prev) => {
+                  const next = prev.filter((e) => !names.includes(e.toUser))
+                  setActiveToUser((cur) => {
+                    if (cur && names.includes(cur)) return next[0]?.toUser ?? null
+                    if (cur && next.some((e) => e.toUser === cur)) return cur
+                    return next[0]?.toUser ?? null
+                  })
+                  return next
                 })
-                return next
-              })
-            }}
-            exclude={excludeForInfo}
-            disabled={disabled}
-            aria-label="Info recipients"
-            placeholder="Add info-only users…"
-          />
-          <p className="mt-1 text-[11px] text-slate-500">
-            Info recipients receive the common comment/attachments with action For Information.
-          </p>
-        </div>
+              }}
+              exclude={excludeForInfo}
+              disabled={disabled}
+              aria-label="Info recipients"
+              placeholder="Add info-only users…"
+            />
+            <p className="mt-1 text-[11px] text-slate-500">
+              Info recipients receive the common comment/attachments with action For Information.
+            </p>
+          </div>
+        ) : null}
 
         <div>
           <label className="mb-1 block text-xs font-semibold text-slate-600">
-            Common comment (all recipients)
+            {isReplyMode ? 'Reply comment (required)' : 'Common comment (all recipients)'}
           </label>
           <RichTextEditor
             value={commonBody}
             onChange={setCommonBody}
             disabled={disabled}
-            placeholder="Message shared with every To and Info recipient…"
-            aria-label="Common comment for all recipients"
+            placeholder={
+              isReplyMode
+                ? 'Write your reply to the immediate sender…'
+                : 'Message shared with every To and Info recipient…'
+            }
+            aria-label={isReplyMode ? 'Reply comment' : 'Common comment for all recipients'}
             minHeightClass="min-h-[7rem]"
           />
           <AttachmentStrip
@@ -803,10 +892,33 @@ export const DraftCommentsComposer = forwardRef<
             busy={busyAttach || disabled}
             onPickFiles={(files) => void uploadFiles('', files)}
             onRemove={(id) => void removeAttachment(id)}
-            caption="Common attachments — visible to all recipients on this mark."
+            caption={
+              isReplyMode
+                ? 'Optional attachments included with this reply.'
+                : 'Common attachments — visible to all recipients on this mark.'
+            }
           />
         </div>
       </div>
+
+      {isReplyMode ? (
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-violet-100 bg-violet-50/40 px-3 py-3 sm:px-4">
+          {onCancelReply ? (
+            <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onCancelReply}>
+              Cancel
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canSendReply}
+            onClick={handleSendClick}
+          >
+            <Reply className="mr-1 h-3.5 w-3.5" />
+            Send
+          </Button>
+        </div>
+      ) : null}
     </section>
   )
 })

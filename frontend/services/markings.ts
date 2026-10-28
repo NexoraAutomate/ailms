@@ -31,6 +31,10 @@ export type MarkingNode = {
   track: boolean
   remindersEnabled: boolean
   status: string
+  acceptanceStatus?: string
+  acceptedAt?: string
+  rejectedAt?: string
+  rejectionReason?: string
   clientIp: string
   createdAt: string
   revokedAt: string
@@ -171,6 +175,8 @@ export type CorrespondenceNote = {
 }
 
 export function markingActionLabel(action: string) {
+  if (action === 'accept') return 'Accept — I will work on it'
+  if (action === 'decline') return 'Reject'
   return ACTION_LABELS[action as MarkingAction] ?? action.replace(/_/g, ' ')
 }
 
@@ -359,6 +365,22 @@ export async function revokeMarking(markingId: number, remarks = '') {
   return api.post<{ marking: MarkingNode; letter: Letter }>(`/api/markings/${markingId}/revoke`, {
     remarks,
   })
+}
+
+/** Accept a new inbox letter — recipient will work on it. */
+export async function acceptInboxLetter(letterId: string) {
+  return api.post<{ markings: MarkingNode[]; letter: Letter }>(
+    `/api/markings/letters/${letterId}/accept`,
+    {},
+  )
+}
+
+/** Reject a new inbox letter with a required reason. */
+export async function rejectInboxLetter(letterId: string, reason: string) {
+  return api.post<{ markings: MarkingNode[]; letter: Letter }>(
+    `/api/markings/letters/${letterId}/reject`,
+    { reason },
+  )
 }
 
 export async function addMarkingNote(

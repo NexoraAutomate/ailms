@@ -495,6 +495,22 @@ def assert_can_mutate(db: Session, letter: Letter, actor_name: str) -> None:
         raise HTTPException(status_code=403, detail="You do not currently hold this correspondence")
 
 
+def auto_accept_pending_holds(db: Session, letter: Letter, actor_name: str) -> None:
+    """Implicitly accept pending inbox holds when the holder starts working on the letter."""
+    name = (actor_name or "").strip()
+    pending = pending_acceptance_markings(db, letter.id, name)
+    if not pending:
+        return
+    now = datetime.now()
+    for marking in pending:
+        marking.acceptance_status = "accepted"
+        marking.accepted_at = now
+        marking.rejected_at = None
+        marking.rejection_reason = ""
+    if letter.last_action != f"Accepted by {name}":
+        sync_letter_from_markings(db, letter, last_action=f"Accepted by {name}")
+
+
 def serialize_marking(row: Marking, children: list[dict] | None = None) -> dict:
     return {
         "id": row.id,
@@ -1356,6 +1372,7 @@ def create_mark_batch(
     consume_drafts: bool = False,
 ) -> MarkingBatch:
     assert_can_mutate(db, letter, actor_name)
+    auto_accept_pending_holds(db, letter, actor_name)
     if letter.status not in {CLOSED_LETTER, ARCHIVED_LETTER} and letter.status != OPEN_LETTER:
         # Normalize in-place for new activity
         if letter.status not in {OPEN_LETTER}:
@@ -2050,6 +2067,7 @@ def add_note(
     client_ip: str = "",
 ) -> CorrespondenceNote:
     assert_can_mutate(db, letter, actor_name)
+    auto_accept_pending_holds(db, letter, actor_name)
     body = (body_text or "").strip()
     if not body:
         raise HTTPException(status_code=400, detail="bodyText is required")
@@ -2553,6 +2571,7 @@ def add_attachments_to_marking(
     client_ip: str = "",
 ) -> list[CorrespondenceAttachment]:
     assert_can_mutate(db, letter, actor_name)
+    auto_accept_pending_holds(db, letter, actor_name)
     resolved = resolve_hold_marking_id(db, letter, actor_name, marking_id)
     created: list[CorrespondenceAttachment] = []
     for att in attachments:
@@ -2932,10 +2951,11 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
         actions = []
         holds = user_holds_letter(db, letter, actor_name)
         pending = pending_acceptance_markings(db, letter.id, actor_name) if holds else []
-        # New inbound letters must be accepted or rejected before other holder actions.
+        # New inbound letters: offer Accept / Reject first (UI prioritizes these).
         if pending and not _is_admin(db, actor_name):
             actions.extend(["accept", "decline"])
-        elif holds or _is_admin(db, actor_name):
+        # After marking onward, marker is revoke-only (Admin may still mutate).
+        if holds or _is_admin(db, actor_name):
             # "forward" is the onward path (formerly "mark"); "reply" is back to previous marker.
             actions.extend(["forward", "add_note"])
             leaves = leaf_inbound_markings(db, letter.id, actor_name)
@@ -2944,8 +2964,8 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
                 actions.append("reply")
             if any(m.action == "response_required" for m in leaves):
                 actions.append("respond")
-            if is_initiator(letter, actor_name) and holds:
-                actions.append("close")
+        if is_initiator(letter, actor_name) and holds:
+            actions.append("close")
         # Revoke only while recipient has not remade onward or contributed.
         outbound = (
             db.query(Marking)

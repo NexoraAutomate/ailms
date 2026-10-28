@@ -21,7 +21,7 @@ export const ATTACHMENT_KINDS = [
 ] as const
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number]
 
-export const MARKING_STATUSES = ['active', 'responded', 'revoked', 'superseded'] as const
+export const MARKING_STATUSES = ['active', 'responded', 'revoked', 'superseded', 'rejected'] as const
 export type MarkingStatus = (typeof MARKING_STATUSES)[number]
 
 export const LETTER_LIFECYCLE_STATUSES = ['Open', 'Closed', 'Archived'] as const
