@@ -984,6 +984,10 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                         track BOOLEAN DEFAULT TRUE,
                         reminders_enabled BOOLEAN DEFAULT FALSE,
                         status VARCHAR(40) DEFAULT 'active',
+                        acceptance_status VARCHAR(20) DEFAULT '',
+                        accepted_at TIMESTAMP NULL,
+                        rejected_at TIMESTAMP NULL,
+                        rejection_reason TEXT DEFAULT '',
                         client_ip VARCHAR(80) DEFAULT '',
                         created_at TIMESTAMP DEFAULT NOW(),
                         revoked_at TIMESTAMP NULL,
@@ -1005,6 +1009,7 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                 "to_user",
                 "action",
                 "status",
+                "acceptance_status",
                 "track",
             ):
                 conn.execute(
@@ -1229,6 +1234,34 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                     text(
                         "CREATE INDEX IF NOT EXISTS ix_cms_markings_direction "
                         "ON cms_markings (direction)"
+                    )
+                )
+            if "acceptance_status" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_markings "
+                        "ADD COLUMN acceptance_status VARCHAR(20) DEFAULT ''"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_markings_acceptance_status "
+                        "ON cms_markings (acceptance_status)"
+                    )
+                )
+            if "accepted_at" not in columns:
+                conn.execute(
+                    text("ALTER TABLE cms_markings ADD COLUMN accepted_at TIMESTAMP NULL")
+                )
+            if "rejected_at" not in columns:
+                conn.execute(
+                    text("ALTER TABLE cms_markings ADD COLUMN rejected_at TIMESTAMP NULL")
+                )
+            if "rejection_reason" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_markings "
+                        "ADD COLUMN rejection_reason TEXT DEFAULT ''"
                     )
                 )
         _backfill_marking_path_ids(engine)

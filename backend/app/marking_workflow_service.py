@@ -328,6 +328,15 @@ def marking_has_children(db: Session, marking_id: int) -> bool:
     )
 
 
+def pending_acceptance_markings(db: Session, letter_id: int, user_name: str) -> list[Marking]:
+    """Active inbound leaf markings the user has not yet accepted or rejected."""
+    return [
+        m
+        for m in leaf_inbound_markings(db, letter_id, user_name)
+        if not (getattr(m, "acceptance_status", None) or "").strip()
+    ]
+
+
 def marking_recipient_has_activity(db: Session, marking: Marking) -> bool:
     """True if the marked-to user has contributed on this marking.
 
@@ -338,6 +347,8 @@ def marking_recipient_has_activity(db: Session, marking: Marking) -> bool:
     recipient = (marking.to_user or "").strip()
     if not recipient:
         return False
+    if (getattr(marking, "acceptance_status", None) or "").strip() == "accepted":
+        return True
     if marking.status == "responded":
         return True
     has_note = (
@@ -503,6 +514,10 @@ def serialize_marking(row: Marking, children: list[dict] | None = None) -> dict:
         "track": row.track,
         "remindersEnabled": row.reminders_enabled,
         "status": row.status,
+        "acceptanceStatus": getattr(row, "acceptance_status", None) or "",
+        "acceptedAt": row.accepted_at.isoformat() if getattr(row, "accepted_at", None) else "",
+        "rejectedAt": row.rejected_at.isoformat() if getattr(row, "rejected_at", None) else "",
+        "rejectionReason": getattr(row, "rejection_reason", None) or "",
         "clientIp": row.client_ip,
         "createdAt": row.created_at.isoformat() if row.created_at else "",
         "revokedAt": row.revoked_at.isoformat() if row.revoked_at else "",
@@ -1801,6 +1816,117 @@ def create_mark_batch(
     return batch
 
 
+def accept_inbox_markings(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    client_ip: str = "",
+) -> list[Marking]:
+    """Recipient accepts inbound markings — commits to work on the letter."""
+    assert_can_mutate(db, letter, actor_name)
+    name = (actor_name or "").strip()
+    pending = pending_acceptance_markings(db, letter.id, name)
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending inbox letter to accept")
+    now = datetime.now()
+    for marking in pending:
+        if marking.to_user != name and not _is_admin(db, name):
+            raise HTTPException(status_code=403, detail="Only the recipient can accept")
+        marking.acceptance_status = "accepted"
+        marking.accepted_at = now
+        marking.rejected_at = None
+        marking.rejection_reason = ""
+    sync_letter_from_markings(db, letter, last_action=f"Accepted by {name}")
+    markers = {(m.from_user or "").strip() for m in pending if (m.from_user or "").strip()}
+    for marker in markers:
+        if marker == name:
+            continue
+        add_notification(
+            db,
+            title="Letter Accepted",
+            description=f"{letter.number}: {name} accepted the letter and will work on it.",
+            priority="Low",
+            letter_id=letter.id,
+            notification_type="Letter Accepted",
+            recipient_name=marker,
+            related_entity_type="marking",
+            related_entity_id=str(pending[0].id),
+        )
+    add_audit(
+        db,
+        user=name,
+        module="Marking",
+        action="Accept",
+        record=letter.number,
+        description="Accepted inbox letter — will work on it",
+        source=f"Web · {client_ip or 'unknown'}",
+    )
+    db.flush()
+    return pending
+
+
+def reject_inbox_markings(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    reason: str,
+    client_ip: str = "",
+) -> list[Marking]:
+    """Recipient rejects inbound markings with a required reason; leaves their inbox."""
+    assert_can_mutate(db, letter, actor_name)
+    name = (actor_name or "").strip()
+    reason_clean = (reason or "").strip()
+    if not reason_clean:
+        raise HTTPException(status_code=400, detail="Rejection reason is required")
+    pending = pending_acceptance_markings(db, letter.id, name)
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending inbox letter to reject")
+    now = datetime.now()
+    for marking in pending:
+        if marking.to_user != name and not _is_admin(db, name):
+            raise HTTPException(status_code=403, detail="Only the recipient can reject")
+        marking.acceptance_status = "rejected"
+        marking.rejected_at = now
+        marking.accepted_at = None
+        marking.rejection_reason = reason_clean
+        marking.status = "rejected"
+        marking.track = False
+    derived = derive_last_action_from_markings(db, letter)
+    sync_letter_from_markings(
+        db,
+        letter,
+        last_action=derived or f"Rejected by {name}",
+    )
+    markers = {(m.from_user or "").strip() for m in pending if (m.from_user or "").strip()}
+    for marker in markers:
+        if marker == name:
+            continue
+        add_notification(
+            db,
+            title="Letter Rejected",
+            description=f"{letter.number}: {name} rejected the letter. Reason: {reason_clean}",
+            priority="High",
+            letter_id=letter.id,
+            notification_type="Letter Rejected",
+            recipient_name=marker,
+            related_entity_type="marking",
+            related_entity_id=str(pending[0].id),
+        )
+    add_audit(
+        db,
+        user=name,
+        module="Marking",
+        action="Reject",
+        record=letter.number,
+        description=reason_clean,
+        source=f"Web · {client_ip or 'unknown'}",
+    )
+    db.flush()
+    return pending
+
+
 def revoke_marking(
     db: Session,
     *,
@@ -2805,8 +2931,11 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
     else:
         actions = []
         holds = user_holds_letter(db, letter, actor_name)
-        # After marking onward, marker is revoke-only (Admin may still mutate).
-        if holds or _is_admin(db, actor_name):
+        pending = pending_acceptance_markings(db, letter.id, actor_name) if holds else []
+        # New inbound letters must be accepted or rejected before other holder actions.
+        if pending and not _is_admin(db, actor_name):
+            actions.extend(["accept", "decline"])
+        elif holds or _is_admin(db, actor_name):
             # "forward" is the onward path (formerly "mark"); "reply" is back to previous marker.
             actions.extend(["forward", "add_note"])
             leaves = leaf_inbound_markings(db, letter.id, actor_name)
@@ -2815,8 +2944,8 @@ def available_marking_actions(db: Session, letter: Letter, actor_name: str) -> l
                 actions.append("reply")
             if any(m.action == "response_required" for m in leaves):
                 actions.append("respond")
-        if is_initiator(letter, actor_name) and holds:
-            actions.append("close")
+            if is_initiator(letter, actor_name) and holds:
+                actions.append("close")
         # Revoke only while recipient has not remade onward or contributed.
         outbound = (
             db.query(Marking)

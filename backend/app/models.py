@@ -324,6 +324,11 @@ class Marking(Base):
     track: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    # Inbox decision by recipient: '' (pending) | accepted | rejected
+    acceptance_status: Mapped[str] = mapped_column(String(20), default="", index=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejection_reason: Mapped[str] = mapped_column(Text, default="")
     client_ip: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
