@@ -1327,6 +1327,42 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                 )
 
     inspector = inspect(engine)
+    if not inspector.has_table("cms_correspondence_draft_recipients"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE cms_correspondence_draft_recipients (
+                        id SERIAL PRIMARY KEY,
+                        letter_id INTEGER NOT NULL REFERENCES cms_letters(id) ON DELETE CASCADE,
+                        author_user VARCHAR(120) DEFAULT '',
+                        to_user VARCHAR(120) DEFAULT '',
+                        role VARCHAR(20) DEFAULT 'to',
+                        action VARCHAR(40) DEFAULT 'forward',
+                        response_type VARCHAR(40) DEFAULT '',
+                        response_type_other VARCHAR(255) DEFAULT '',
+                        instructions TEXT DEFAULT '',
+                        due_at DATE NULL,
+                        priority VARCHAR(40) DEFAULT '',
+                        track BOOLEAN DEFAULT TRUE,
+                        reminders_enabled BOOLEAN DEFAULT TRUE,
+                        client_ip VARCHAR(80) DEFAULT '',
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        CONSTRAINT uq_cms_draft_recipient_letter_author_user
+                            UNIQUE (letter_id, author_user, to_user)
+                    )
+                    """
+                )
+            )
+            for idx in ("letter_id", "author_user", "to_user", "role"):
+                conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS ix_cms_correspondence_draft_recipients_{idx} "
+                        f"ON cms_correspondence_draft_recipients ({idx})"
+                    )
+                )
+
+    inspector = inspect(engine)
     if not inspector.has_table("cms_outbound_emails"):
         with engine.begin() as conn:
             conn.execute(
@@ -1452,6 +1488,66 @@ def upgrade_simple_marking_schema(engine: Engine) -> None:
                     text(
                         "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_audience "
                         "ON cms_correspondence_attachments (audience)"
+                    )
+                )
+
+    # for_user: empty = common section; set = "For {name}" in batch comment cards.
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_notes"):
+        note_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_notes")}
+        if "for_user" not in note_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_notes "
+                        "ADD COLUMN for_user VARCHAR(120) DEFAULT ''"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_notes_for_user "
+                        "ON cms_correspondence_notes (for_user)"
+                    )
+                )
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_attachments"):
+        att_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_attachments")}
+        if "for_user" not in att_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_attachments "
+                        "ADD COLUMN for_user VARCHAR(120) DEFAULT ''"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_cms_correspondence_attachments_for_user "
+                        "ON cms_correspondence_attachments (for_user)"
+                    )
+                )
+
+    # Draft Send Privately flag (default off = visible to all mark recipients).
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_draft_notes"):
+        note_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_draft_notes")}
+        if "send_privately" not in note_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_draft_notes "
+                        "ADD COLUMN send_privately BOOLEAN DEFAULT FALSE"
+                    )
+                )
+    inspector = inspect(engine)
+    if inspector.has_table("cms_correspondence_draft_attachments"):
+        att_cols = {c["name"] for c in inspector.get_columns("cms_correspondence_draft_attachments")}
+        if "send_privately" not in att_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE cms_correspondence_draft_attachments "
+                        "ADD COLUMN send_privately BOOLEAN DEFAULT FALSE"
                     )
                 )
 

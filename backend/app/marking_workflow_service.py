@@ -14,6 +14,7 @@ from app.models import (
     CorrespondenceAttachmentEvent,
     CorrespondenceDraftAttachment,
     CorrespondenceDraftNote,
+    CorrespondenceDraftRecipient,
     CorrespondenceNote,
     DocumentVersion,
     Letter,
@@ -562,6 +563,25 @@ def marking_visible_on_paths(marking: Marking | None, visible_paths: set[str] | 
     return pid in visible_paths
 
 
+def actor_in_marking_batch(db: Session, batch_id: int | None, actor_name: str) -> bool:
+    """True if actor is from_user or to_user on any non-revoked marking in the batch."""
+    if batch_id is None:
+        return False
+    name = (actor_name or "").strip()
+    if not name:
+        return False
+    row = (
+        db.query(Marking.id)
+        .filter(
+            Marking.batch_id == int(batch_id),
+            Marking.status != "revoked",
+            (Marking.from_user == name) | (Marking.to_user == name),
+        )
+        .first()
+    )
+    return row is not None
+
+
 def marking_content_visible_to_actor(
     db: Session,
     marking: Marking | None,
@@ -575,6 +595,8 @@ def marking_content_visible_to_actor(
 
     - audience=all: any user on the same pathway (including later remakes /
       juniors) may see the content — "for all" comments travel with the letter.
+      Also visible to co-recipients on the same mark batch (Info / sibling To)
+      so shared To-specific messages are readable by everyone in that mark.
     - audience=recipient: only direct hop participants (from_user / to_user)
       plus upstream participants on ancestor markings. Downstream juniors do
       not see recipient-only comments written for a senior hop.
@@ -586,13 +608,19 @@ def marking_content_visible_to_actor(
         return False
     if visible_paths is None:
         return True
-    if not marking_visible_on_paths(marking, visible_paths):
-        return False
-
-    if normalize_audience(audience) == AUDIENCE_ALL:
-        return True
 
     name = (actor_name or "").strip()
+    on_path = marking_visible_on_paths(marking, visible_paths)
+
+    if normalize_audience(audience) == AUDIENCE_ALL:
+        if on_path:
+            return True
+        # Shared (non-private) To content: visible to Info / sibling To in the batch.
+        return actor_in_marking_batch(db, marking.batch_id, name)
+
+    if not on_path:
+        return False
+
     if not name:
         return False
     if marking.from_user == name or marking.to_user == name:
@@ -764,7 +792,7 @@ def _publish_staged_on_marking(
     letter: Letter,
     actor_name: str,
     marking: Marking,
-    notes: list[dict[str, str]],
+    notes: list[dict[str, Any]],
     attachments: list[dict[str, Any]],
     client_ip: str = "",
 ) -> None:
@@ -780,6 +808,7 @@ def _publish_staged_on_marking(
                 author_user=actor_name,
                 body_text=body,
                 audience=normalize_audience(entry.get("audience")),
+                for_user=str(entry.get("for_user") or "").strip(),
                 is_response=False,
                 client_ip=client_ip or "",
             )
@@ -794,6 +823,7 @@ def _publish_staged_on_marking(
                 document_id=att.get("document_id"),
                 attachment_kind=att["attachment_kind"],
                 audience=normalize_audience(att.get("audience")),
+                for_user=str(att.get("for_user") or "").strip(),
                 storage_key=att.get("storage_key") or "",
                 original_filename=att.get("original_filename") or "",
                 client_ip=client_ip or "",
@@ -819,6 +849,7 @@ def serialize_draft_note(row: CorrespondenceDraftNote) -> dict:
         "targetUser": row.target_user or "",
         "intent": (row.intent or "forward").strip().lower() or "forward",
         "bodyText": row.body_text,
+        "sendPrivately": bool(getattr(row, "send_privately", False)),
         "clientIp": row.client_ip,
         "createdAt": row.created_at.isoformat() if row.created_at else "",
     }
@@ -835,13 +866,34 @@ def serialize_draft_attachment(row: CorrespondenceDraftAttachment) -> dict:
         "attachmentKind": row.attachment_kind,
         "storageKey": row.storage_key,
         "originalFilename": row.original_filename,
+        "sendPrivately": bool(getattr(row, "send_privately", False)),
         "clientIp": row.client_ip,
         "createdAt": row.created_at.isoformat() if row.created_at else "",
     }
 
 
+def serialize_draft_recipient(row: CorrespondenceDraftRecipient) -> dict:
+    return {
+        "id": row.id,
+        "letterId": str(row.letter_id),
+        "authorUser": row.author_user,
+        "toUser": row.to_user or "",
+        "role": (row.role or "to").strip().lower() or "to",
+        "action": (row.action or "forward").strip().lower() or "forward",
+        "responseType": row.response_type or "",
+        "responseTypeOther": row.response_type_other or "",
+        "instructions": row.instructions or "",
+        "dueAt": row.due_at.isoformat() if row.due_at else "",
+        "priority": row.priority or "",
+        "track": bool(row.track),
+        "remindersEnabled": bool(row.reminders_enabled),
+        "clientIp": row.client_ip or "",
+        "createdAt": row.created_at.isoformat() if row.created_at else "",
+    }
+
+
 def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
-    """Draft comments/attachments authored by the actor, grouped for Forward/Reply confirm."""
+    """Draft comments/attachments/roster authored by the actor for Mark confirm."""
     name = (actor_name or "").strip()
     notes = (
         db.query(CorrespondenceDraftNote)
@@ -861,6 +913,15 @@ def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
         .order_by(CorrespondenceDraftAttachment.id.asc())
         .all()
     )
+    roster_rows = (
+        db.query(CorrespondenceDraftRecipient)
+        .filter(
+            CorrespondenceDraftRecipient.letter_id == letter_id,
+            CorrespondenceDraftRecipient.author_user == name,
+        )
+        .order_by(CorrespondenceDraftRecipient.id.asc())
+        .all()
+    )
     forward_targets: set[str] = set()
     reply_targets: set[str] = set()
     for n in notes:
@@ -877,20 +938,29 @@ def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
             reply_targets.add(t)
         elif t:
             forward_targets.add(t)
+    for r in roster_rows:
+        t = (r.to_user or "").strip()
+        if t:
+            forward_targets.add(t)
     has_reply = any(
         ((n.intent or "forward").strip().lower() or "forward") == "reply" for n in notes
     ) or any(
         ((a.intent or "forward").strip().lower() or "forward") == "reply" for a in atts
     )
-    has_forward = any(
-        ((n.intent or "forward").strip().lower() or "forward") == "forward" for n in notes
-    ) or any(
-        ((a.intent or "forward").strip().lower() or "forward") == "forward" for a in atts
+    has_forward = (
+        bool(roster_rows)
+        or any(
+            ((n.intent or "forward").strip().lower() or "forward") == "forward" for n in notes
+        )
+        or any(
+            ((a.intent or "forward").strip().lower() or "forward") == "forward" for a in atts
+        )
     )
     targets = forward_targets | reply_targets
     return {
         "notes": [serialize_draft_note(n) for n in notes],
         "attachments": [serialize_draft_attachment(a) for a in atts],
+        "roster": [serialize_draft_recipient(r) for r in roster_rows],
         "targetUsers": sorted(targets),
         "forwardTargetUsers": sorted(forward_targets),
         "replyTargetUsers": sorted(reply_targets),
@@ -911,6 +981,158 @@ def list_drafts(db: Session, letter_id: int, actor_name: str) -> dict[str, Any]:
     }
 
 
+def replace_draft_roster(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    recipients: list[dict[str, Any]],
+    client_ip: str = "",
+) -> list[CorrespondenceDraftRecipient]:
+    """Replace the actor's draft roster for a letter (To + Info)."""
+    assert_can_mutate(db, letter, actor_name)
+    name = (actor_name or "").strip()
+    existing = list_drafts(db, letter.id, name)
+    if existing["hasReplyDrafts"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Delete reply drafts before updating the mark roster",
+        )
+
+    seen: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for raw in recipients:
+        to_user = str(raw.get("toUser") or raw.get("to_user") or "").strip()
+        if not to_user:
+            raise HTTPException(status_code=400, detail="Each roster entry requires toUser")
+        if to_user == name:
+            raise HTTPException(status_code=400, detail="Cannot mark to yourself")
+        if not _user_by_name(db, to_user):
+            raise HTTPException(status_code=400, detail=f"Unknown user '{to_user}'")
+        key = to_user.lower()
+        if key in seen:
+            raise HTTPException(status_code=400, detail=f"Duplicate recipient '{to_user}'")
+        seen.add(key)
+
+        role = str(raw.get("role") or "to").strip().lower() or "to"
+        if role not in {"to", "info"}:
+            raise HTTPException(status_code=400, detail="role must be 'to' or 'info'")
+
+        if role == "info":
+            action = "for_info"
+        else:
+            action = str(raw.get("action") or "forward").strip().lower() or "forward"
+            if action not in MARKING_ACTIONS:
+                raise HTTPException(status_code=400, detail=f"Invalid action '{action}'")
+            if action == "for_info":
+                # Info-only users belong in the Info field, not To.
+                role = "info"
+
+        response_type = str(raw.get("responseType") or raw.get("response_type") or "").strip()
+        response_type_other = str(
+            raw.get("responseTypeOther") or raw.get("response_type_other") or ""
+        ).strip()
+        due_raw = raw.get("dueAt") if "dueAt" in raw else raw.get("due_at")
+        due_at: date | None = None
+        if due_raw:
+            if isinstance(due_raw, date) and not isinstance(due_raw, datetime):
+                due_at = due_raw
+            else:
+                try:
+                    due_at = date.fromisoformat(str(due_raw)[:10])
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail="Invalid dueAt") from exc
+
+        if action == "response_required" and not response_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"responseType is required for Response Required ({to_user})",
+            )
+
+        normalized.append(
+            {
+                "to_user": to_user,
+                "role": role,
+                "action": action,
+                "response_type": response_type,
+                "response_type_other": response_type_other,
+                "instructions": str(raw.get("instructions") or "").strip(),
+                "due_at": due_at,
+                "priority": str(raw.get("priority") or "").strip(),
+                "track": bool(raw.get("track", True)),
+                "reminders_enabled": bool(
+                    raw.get("remindersEnabled", raw.get("reminders_enabled", True))
+                ),
+            }
+        )
+
+    db.query(CorrespondenceDraftRecipient).filter(
+        CorrespondenceDraftRecipient.letter_id == letter.id,
+        CorrespondenceDraftRecipient.author_user == name,
+    ).delete(synchronize_session=False)
+
+    created: list[CorrespondenceDraftRecipient] = []
+    for item in normalized:
+        row = CorrespondenceDraftRecipient(
+            letter_id=letter.id,
+            author_user=name,
+            to_user=item["to_user"],
+            role=item["role"],
+            action=item["action"],
+            response_type=item["response_type"],
+            response_type_other=item["response_type_other"],
+            instructions=item["instructions"],
+            due_at=item["due_at"],
+            priority=item["priority"],
+            track=item["track"],
+            reminders_enabled=item["reminders_enabled"],
+            client_ip=client_ip or "",
+        )
+        db.add(row)
+        created.append(row)
+    db.flush()
+    return created
+
+
+def _draft_privacy_for_target(
+    db: Session,
+    *,
+    letter_id: int,
+    actor_name: str,
+    target_user: str,
+    fallback: bool = False,
+) -> bool:
+    """Reuse existing Send Privately flag for this To target, else fallback."""
+    target = (target_user or "").strip()
+    if not target:
+        return False
+    note = (
+        db.query(CorrespondenceDraftNote)
+        .filter(
+            CorrespondenceDraftNote.letter_id == letter_id,
+            CorrespondenceDraftNote.author_user == actor_name,
+            CorrespondenceDraftNote.target_user == target,
+        )
+        .order_by(CorrespondenceDraftNote.id.desc())
+        .first()
+    )
+    if note is not None:
+        return bool(getattr(note, "send_privately", False))
+    att = (
+        db.query(CorrespondenceDraftAttachment)
+        .filter(
+            CorrespondenceDraftAttachment.letter_id == letter_id,
+            CorrespondenceDraftAttachment.created_by == actor_name,
+            CorrespondenceDraftAttachment.target_user == target,
+        )
+        .order_by(CorrespondenceDraftAttachment.id.desc())
+        .first()
+    )
+    if att is not None:
+        return bool(getattr(att, "send_privately", False))
+    return bool(fallback)
+
+
 def add_draft_note(
     db: Session,
     *,
@@ -919,6 +1141,7 @@ def add_draft_note(
     body_text: str,
     target_user: str,
     intent: str = "forward",
+    send_privately: bool | None = None,
     client_ip: str = "",
 ) -> CorrespondenceDraftNote:
     assert_can_mutate(db, letter, actor_name)
@@ -945,12 +1168,22 @@ def add_draft_note(
             status_code=400,
             detail="Delete reply drafts before adding a forwarding draft",
         )
+    private = False
+    if target:
+        private = (
+            bool(send_privately)
+            if send_privately is not None
+            else _draft_privacy_for_target(
+                db, letter_id=letter.id, actor_name=actor_name, target_user=target
+            )
+        )
     row = CorrespondenceDraftNote(
         letter_id=letter.id,
         author_user=actor_name,
         target_user=target,
         intent=draft_intent,
         body_text=body,
+        send_privately=private,
         client_ip=client_ip or "",
     )
     db.add(row)
@@ -966,6 +1199,7 @@ def add_draft_attachments(
     target_user: str,
     attachments: list[dict],
     intent: str = "forward",
+    send_privately: bool | None = None,
     client_ip: str = "",
 ) -> list[CorrespondenceDraftAttachment]:
     assert_can_mutate(db, letter, actor_name)
@@ -990,6 +1224,15 @@ def add_draft_attachments(
             status_code=400,
             detail="Delete reply drafts before adding a forwarding draft",
         )
+    private = False
+    if target:
+        private = (
+            bool(send_privately)
+            if send_privately is not None
+            else _draft_privacy_for_target(
+                db, letter_id=letter.id, actor_name=actor_name, target_user=target
+            )
+        )
     created: list[CorrespondenceDraftAttachment] = []
     for att in _normalize_staged_attachments(attachments):
         row = CorrespondenceDraftAttachment(
@@ -1001,12 +1244,52 @@ def add_draft_attachments(
             attachment_kind=att["attachment_kind"],
             storage_key=att.get("storage_key") or "",
             original_filename=att.get("original_filename") or "",
+            send_privately=private,
             client_ip=client_ip or "",
         )
         db.add(row)
         created.append(row)
     db.flush()
     return created
+
+
+def set_draft_target_privacy(
+    db: Session,
+    *,
+    letter: Letter,
+    actor_name: str,
+    target_user: str,
+    send_privately: bool,
+) -> None:
+    """Set Send Privately on all To-targeted draft notes/attachments for this user."""
+    assert_can_mutate(db, letter, actor_name)
+    target = (target_user or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="targetUser is required")
+    private = bool(send_privately)
+    notes = (
+        db.query(CorrespondenceDraftNote)
+        .filter(
+            CorrespondenceDraftNote.letter_id == letter.id,
+            CorrespondenceDraftNote.author_user == actor_name,
+            CorrespondenceDraftNote.target_user == target,
+        )
+        .all()
+    )
+    for n in notes:
+        n.send_privately = private
+    atts = (
+        db.query(CorrespondenceDraftAttachment)
+        .filter(
+            CorrespondenceDraftAttachment.letter_id == letter.id,
+            CorrespondenceDraftAttachment.created_by == actor_name,
+            CorrespondenceDraftAttachment.target_user == target,
+        )
+        .all()
+    )
+    for a in atts:
+        a.send_privately = private
+    db.flush()
 
 
 def update_draft_note(
@@ -1217,7 +1500,8 @@ def create_mark_batch(
 
     draft_note_rows: list[CorrespondenceDraftNote] = []
     draft_att_rows: list[CorrespondenceDraftAttachment] = []
-    draft_notes_by_target: dict[str, list[str]] = {}
+    # Target-specific drafts: {target: [{body/att fields, audience, for_user}, ...]}
+    draft_notes_by_target: dict[str, list[dict[str, Any]]] = {}
     draft_atts_by_target: dict[str, list[dict[str, Any]]] = {}
     draft_common_notes: list[str] = []
     draft_common_atts: list[dict[str, Any]] = []
@@ -1275,7 +1559,14 @@ def create_mark_batch(
                 if draft_intent == "forward":
                     draft_common_notes.append(body)
             else:
-                draft_notes_by_target.setdefault(target, []).append(body)
+                private = bool(getattr(n, "send_privately", False))
+                draft_notes_by_target.setdefault(target, []).append(
+                    {
+                        "body": body,
+                        "audience": AUDIENCE_RECIPIENT if private else AUDIENCE_ALL,
+                        "for_user": target,
+                    }
+                )
         for a in draft_att_rows:
             payload = {
                 "attachment_kind": a.attachment_kind,
@@ -1288,27 +1579,17 @@ def create_mark_batch(
                 if draft_intent == "forward":
                     draft_common_atts.append(payload)
             else:
-                draft_atts_by_target.setdefault(target, []).append(payload)
-
-        for item in normalized:
-            # Admin in-place edit of an existing marking may change action/type without new drafts.
-            if item.get("update_id"):
-                continue
-            target = item["to_user"]
-            has_personal = bool(
-                item["notes"]
-                or item["attachments"]
-                or draft_notes_by_target.get(target)
-                or draft_atts_by_target.get(target)
-            )
-            if not has_personal:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"No draft comments or attachments for '{target}'. "
-                        "Use Add Reply/Forwarding Comment or Attachment first."
-                    ),
+                private = bool(getattr(a, "send_privately", False))
+                draft_atts_by_target.setdefault(target, []).append(
+                    {
+                        **payload,
+                        "audience": AUDIENCE_RECIPIENT if private else AUDIENCE_ALL,
+                        "for_user": target,
+                    }
                 )
+
+        # Composer may Mark with roster-only recipients (optional personal/common content).
+        # Personal drafts are no longer required per recipient when consumeDrafts is set.
 
     to_create = [item for item in normalized if not item.get("update_id")]
     to_update = [item for item in normalized if item.get("update_id")]
@@ -1395,22 +1676,22 @@ def create_mark_batch(
             actor_name=actor_name,
             marking=marking,
             notes=[
-                *[{"body": b, "audience": AUDIENCE_RECIPIENT} for b in item["notes"]],
-                *[{"body": b, "audience": AUDIENCE_ALL} for b in shared_notes],
                 *[
-                    {"body": b, "audience": AUDIENCE_RECIPIENT}
-                    for b in draft_notes_by_target.get(target, [])
+                    {"body": b, "audience": AUDIENCE_RECIPIENT, "for_user": target}
+                    for b in item["notes"]
                 ],
-                *[{"body": b, "audience": AUDIENCE_ALL} for b in draft_common_notes],
+                *[{"body": b, "audience": AUDIENCE_ALL, "for_user": ""} for b in shared_notes],
+                *draft_notes_by_target.get(target, []),
+                *[
+                    {"body": b, "audience": AUDIENCE_ALL, "for_user": ""}
+                    for b in draft_common_notes
+                ],
             ],
             attachments=[
-                *[{**a, "audience": AUDIENCE_RECIPIENT} for a in item["attachments"]],
-                *[{**a, "audience": AUDIENCE_ALL} for a in shared_attachments],
-                *[
-                    {**a, "audience": AUDIENCE_RECIPIENT}
-                    for a in draft_atts_by_target.get(target, [])
-                ],
-                *[{**a, "audience": AUDIENCE_ALL} for a in draft_common_atts],
+                *[{**a, "audience": AUDIENCE_RECIPIENT, "for_user": target} for a in item["attachments"]],
+                *[{**a, "audience": AUDIENCE_ALL, "for_user": ""} for a in shared_attachments],
+                *draft_atts_by_target.get(target, []),
+                *[{**a, "audience": AUDIENCE_ALL, "for_user": ""} for a in draft_common_atts],
             ],
             client_ip=client_ip or "",
         )
@@ -1426,6 +1707,18 @@ def create_mark_batch(
             target = (a.target_user or "").strip()
             if not target or target in consumed_targets:
                 db.delete(a)
+        roster_rows = (
+            db.query(CorrespondenceDraftRecipient)
+            .filter(
+                CorrespondenceDraftRecipient.letter_id == letter.id,
+                CorrespondenceDraftRecipient.author_user == (actor_name or "").strip(),
+            )
+            .all()
+        )
+        for r in roster_rows:
+            target = (r.to_user or "").strip()
+            if not target or target in consumed_targets:
+                db.delete(r)
 
     db.flush()
 
@@ -1727,6 +2020,17 @@ def _record_attachment_event(
     return event
 
 
+def _attachment_for_user(db: Session, row: CorrespondenceAttachment) -> str:
+    for_user = (getattr(row, "for_user", None) or "").strip()
+    if for_user:
+        return for_user
+    if normalize_audience(getattr(row, "audience", None)) == AUDIENCE_RECIPIENT and row.marking_id:
+        marking = db.get(Marking, int(row.marking_id))
+        if marking is not None:
+            return (marking.to_user or "").strip()
+    return ""
+
+
 def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable: bool = False) -> dict:
     version_id: int | None = getattr(row, "current_version_id", None)
     previewable = False
@@ -1754,10 +2058,22 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable
             previewable = can_preview(current.file_type or "")
             mime_type = current.mime_type or ""
             filename = filename or current.original_filename or ""
+    batch_id: int | None = None
+    to_user = ""
+    marking_action = ""
+    if row.marking_id is not None:
+        linked = db.get(Marking, int(row.marking_id))
+        if linked is not None:
+            batch_id = linked.batch_id
+            to_user = (linked.to_user or "").strip()
+            marking_action = (linked.action or "").strip()
     return {
         "id": row.id,
         "letterId": str(row.letter_id) if row.letter_id else "",
         "markingId": row.marking_id,
+        "batchId": batch_id,
+        "toUser": to_user,
+        "markingAction": marking_action,
         "createdBy": row.created_by,
         "documentId": row.document_id,
         "versionId": version_id,
@@ -1765,6 +2081,7 @@ def serialize_attachment(db: Session, row: CorrespondenceAttachment, *, editable
         "mimeType": mime_type,
         "attachmentKind": row.attachment_kind,
         "audience": normalize_audience(getattr(row, "audience", None)),
+        "forUser": _attachment_for_user(db, row),
         "storageKey": row.storage_key,
         "originalFilename": filename,
         "clientIp": row.client_ip,
@@ -1897,14 +2214,26 @@ def list_notes(db: Session, letter_id: int, actor_name: str | None = None) -> li
             ):
                 continue
         editable = note_is_editable(db, note, actor_name) if actor_name else False
+        linked = None
+        if note.marking_id is not None:
+            linked = marking_cache.get(int(note.marking_id))
+        for_user = (getattr(note, "for_user", None) or "").strip()
+        if not for_user and normalize_audience(getattr(note, "audience", None)) == AUDIENCE_RECIPIENT:
+            # Legacy hop-private notes: treat as addressed to the marking recipient.
+            if linked is not None:
+                for_user = (linked.to_user or "").strip()
         out.append(
             {
                 "id": note.id,
                 "letterId": str(note.letter_id),
                 "markingId": note.marking_id,
+                "batchId": linked.batch_id if linked is not None else None,
+                "toUser": (linked.to_user or "").strip() if linked is not None else "",
+                "markingAction": (linked.action or "").strip() if linked is not None else "",
                 "authorUser": note.author_user,
                 "bodyText": note.body_text,
                 "audience": normalize_audience(getattr(note, "audience", None)),
+                "forUser": for_user,
                 "isResponse": note.is_response,
                 "clientIp": note.client_ip,
                 "createdAt": note.created_at.isoformat() if note.created_at else "",

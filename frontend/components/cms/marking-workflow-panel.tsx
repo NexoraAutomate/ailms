@@ -1,17 +1,22 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import {
   CheckCircle2,
   CornerUpLeft,
   ExternalLink,
   Eye,
   Lock,
-  MessageSquare,
   Paperclip,
   Pencil,
   Replace,
-  Reply,
   Send,
   Trash2,
   X,
@@ -29,7 +34,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { isRichTextEmpty, richTextDedupeKey } from '@/lib/rich-text'
 import { CollapsibleCard } from '@/components/ui/collapsible-card'
+import {
+  DraftCommentsComposer,
+  DraftCommentsPreviewCard,
+  type DraftCommentPreviewData,
+  type DraftCommentsComposerHandle,
+} from '@/components/cms/draft-comments-composer'
+import { RichTextEditor } from '@/components/cms/rich-text-editor'
+import { RichTextHtml } from '@/components/cms/rich-text-html'
 import { MarkingActiveHolds } from '@/components/cms/marking-active-holds'
 import { MarkingHistoryFlow } from '@/components/cms/marking-history-flow'
 import type { MarkingFlowNodeData } from '@/lib/marking-flow-layout'
@@ -42,27 +56,17 @@ import {
   documentDownloadUrl,
   documentPreviewUrl,
   uploadDocumentVersion,
-  uploadLetterDocument,
 } from '@/services/documents'
 import {
   ACTION_LABELS,
   ATTACHMENT_KINDS,
-  MARKING_ACTIONS,
-  RESPONSE_TYPES,
   RESPONSE_TYPE_LABELS,
-  type AttachmentKind,
-  type MarkingAction,
   type ResponseType,
 } from '@/services/marking-types'
 import {
-  addDraftAttachments,
-  addDraftNote,
   closeMarkedLetter,
-  deleteDraftAttachment,
-  deleteDraftNote,
   deleteMarkingAttachment,
   deleteMarkingNote,
-  updateDraftNote,
   fetchBatchTracker,
   fetchAttachmentEvents,
   fetchMarkingActions,
@@ -82,22 +86,15 @@ import {
   type AttachmentEvent,
   type CorrespondenceAttachment,
   type CorrespondenceNote,
-  type DraftAttachment,
-  type DraftIntent,
-  type DraftNote,
   type MarkRecipientInput,
-  type MarkingDirection,
   type MarkingDrafts,
   type MarkingNode,
 } from '@/services/markings'
 
-type PendingAttachment = {
-  id: string
-  file: File
-  kind: AttachmentKind
-}
-
 type WorkflowUser = { name: string; avatarUrl?: string; department?: string }
+
+type MarkingIncidentKey = number | 'root'
+type ContentIncidentKey = MarkingIncidentKey | `batch:${number}`
 
 type BatchTrackerSummary = {
   batchId: number
@@ -149,31 +146,39 @@ function onwardMarkedAt(
 
 /**
  * Subtitle under an author on a content card.
- * Outbound published notes: "For {recipient} · Marked onward {date}".
- * Notes still on an inbound hold that was remade: "Marked onward {date}".
+ * Batch cards use internal "For {name}" sections — only show remade timing here.
  */
 function contentAuthorSubtitle(
-  incidentKey: MarkingIncidentKey,
+  incidentKey: ContentIncidentKey,
   author: string,
   markings: MarkingNode[],
 ): string | undefined {
   const authorNorm = (author || '').trim().toLowerCase()
   if (!authorNorm) return undefined
 
-  if (incidentKey !== 'root') {
+  if (typeof incidentKey === 'string' && incidentKey.startsWith('batch:')) {
+    const batchId = Number(incidentKey.slice('batch:'.length))
+    const mine = markings.find(
+      (m) =>
+        m.batchId === batchId && (m.fromUser || '').trim().toLowerCase() === authorNorm,
+    )
+    if (mine?.createdAt) return `Marked onward ${formatDateTime(mine.createdAt)}`
+    return undefined
+  }
+
+  if (incidentKey !== 'root' && typeof incidentKey === 'number') {
     const marking = markings.find((m) => m.id === incidentKey)
-    if (
-      marking &&
-      (marking.fromUser || '').trim().toLowerCase() === authorNorm &&
-      (marking.toUser || '').trim()
-    ) {
-      const forPart = `For ${(marking.toUser || '').trim()}`
+    if (marking && (marking.fromUser || '').trim().toLowerCase() === authorNorm) {
       const markedAt = marking.createdAt ? formatDateTime(marking.createdAt) : ''
-      return markedAt ? `${forPart} · Marked onward ${markedAt}` : forPart
+      return markedAt ? `Marked onward ${markedAt}` : undefined
     }
   }
 
-  const remadeAt = onwardMarkedAt(incidentKey, author, markings)
+  const remadeAt = onwardMarkedAt(
+    typeof incidentKey === 'number' || incidentKey === 'root' ? incidentKey : 'root',
+    author,
+    markings,
+  )
   if (remadeAt) return `Marked onward ${formatDateTime(remadeAt)}`
   return undefined
 }
@@ -182,34 +187,19 @@ function contentAuthorSubtitle(
 function timelineClusterKey(item: TimelineItem, markingsById: Map<number, MarkingNode>): string {
   if (item.kind === 'markBatch') return `batch:${item.batchId}`
   if (item.kind === 'mark') return `batch:${item.marking.batchId}`
-  if (item.kind === 'content' && item.incident.key !== 'root') {
-    const marking = markingsById.get(item.incident.key)
-    if (marking) return `batch:${marking.batchId}`
+  if (item.kind === 'content') {
+    const key = item.incident.key
+    if (typeof key === 'string' && key.startsWith('batch:')) return key
+    if (key !== 'root' && typeof key === 'number') {
+      const marking = markingsById.get(key)
+      if (marking) return `batch:${marking.batchId}`
+    }
   }
   return `content:${item.kind === 'content' ? item.incident.key : 'x'}`
 }
 
 function emptyRecipient(toUser = ''): MarkRecipientInput {
   return { toUser, action: 'forward', track: true, remindersEnabled: true }
-}
-
-function recipientFromExistingMarking(marking: MarkingNode): MarkRecipientInput {
-  const due = (marking.dueAt || '').slice(0, 10)
-  return {
-    toUser: marking.toUser,
-    action: marking.action,
-    track: marking.track !== false,
-    remindersEnabled: marking.remindersEnabled !== false,
-    responseType: (marking.responseType as ResponseType) || 'draft_letter',
-    responseTypeOther: marking.responseTypeOther || undefined,
-    dueAt: due || undefined,
-  }
-}
-
-/** Who Reply / Draft Reply targets for a given hold (usually the sender). */
-function replyTargetForHold(hold: MarkingNode, meName: string): string {
-  if (hold.status === 'responded' && hold.fromUser === meName) return hold.toUser
-  return hold.fromUser
 }
 
 /** Consecutive notes from the same author share one card. */
@@ -226,10 +216,72 @@ function groupNotesByAuthor(notes: CorrespondenceNote[]): CorrespondenceNote[][]
   return groups
 }
 
-type MarkingIncidentKey = number | 'root'
-
 function markingKey(id: number | null | undefined): MarkingIncidentKey {
   return id == null ? 'root' : id
+}
+
+function contentSectionLabel(forUser: string | null | undefined): string {
+  return (forUser || '').trim()
+}
+
+/** Common (empty forUser) first, then alphabetical "For {name}" sections. */
+function partitionByForUser<T extends { forUser?: string }>(
+  items: T[],
+): { label: string; items: T[] }[] {
+  const common: T[] = []
+  const byUser = new Map<string, T[]>()
+  for (const item of items) {
+    const label = contentSectionLabel(item.forUser)
+    if (!label) {
+      common.push(item)
+      continue
+    }
+    if (!byUser.has(label)) byUser.set(label, [])
+    byUser.get(label)!.push(item)
+  }
+  const sections: { label: string; items: T[] }[] = []
+  if (common.length) sections.push({ label: '', items: common })
+  for (const label of [...byUser.keys()].sort((a, b) => a.localeCompare(b))) {
+    sections.push({ label, items: byUser.get(label)! })
+  }
+  return sections
+}
+
+/** Dedupe common (forUser empty) notes copied onto every recipient marking in a batch. */
+function dedupeCommonNotes(notes: CorrespondenceNote[]): CorrespondenceNote[] {
+  const seen = new Set<string>()
+  const out: CorrespondenceNote[] = []
+  const sorted = [...notes].sort((a, b) => a.id - b.id)
+  for (const n of sorted) {
+    if (contentSectionLabel(n.forUser)) {
+      out.push(n)
+      continue
+    }
+    const key = `${(n.authorUser || '').toLowerCase()}|${richTextDedupeKey(n.bodyText)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(n)
+  }
+  return out
+}
+
+function dedupeCommonAttachments(
+  attachments: CorrespondenceAttachment[],
+): CorrespondenceAttachment[] {
+  const seen = new Set<string>()
+  const out: CorrespondenceAttachment[] = []
+  const sorted = [...attachments].sort((a, b) => a.id - b.id)
+  for (const a of sorted) {
+    if (contentSectionLabel(a.forUser)) {
+      out.push(a)
+      continue
+    }
+    const key = `${(a.createdBy || '').toLowerCase()}|${a.documentId ?? ''}|${a.originalFilename || a.storageKey}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(a)
+  }
+  return out
 }
 
 function sameWorkflowUser(a?: string | null, b?: string | null) {
@@ -287,8 +339,6 @@ const WORKFLOW_VISIBILITY_KEY = 'ailms.markingWorkflow.visibility'
 type WorkflowVisibility = {
   /** Emerald highlight + YOU badge on the logged-in user's comment cards. */
   highlightOwnComments: boolean
-  /** Show date/time and IP on each comment. */
-  showCommentMeta: boolean
   /** Show active holders strip (parallel leaves). */
   showActiveHolds: boolean
   /** Show React Flow marking pathway graph. */
@@ -299,7 +349,6 @@ type WorkflowVisibility = {
 
 const DEFAULT_WORKFLOW_VISIBILITY: WorkflowVisibility = {
   highlightOwnComments: true,
-  showCommentMeta: true,
   showActiveHolds: true,
   showFlowGraph: true,
   showMarkingCards: true,
@@ -310,8 +359,11 @@ function readWorkflowVisibility(): WorkflowVisibility {
   try {
     const raw = localStorage.getItem(WORKFLOW_VISIBILITY_KEY)
     if (!raw) return DEFAULT_WORKFLOW_VISIBILITY
-    const parsed = JSON.parse(raw) as Partial<WorkflowVisibility> & { showStepper?: boolean }
-    const { showStepper, ...rest } = parsed
+    const parsed = JSON.parse(raw) as Partial<WorkflowVisibility> & {
+      showStepper?: boolean
+      showCommentMeta?: boolean
+    }
+    const { showStepper, showCommentMeta: _removedCommentMeta, ...rest } = parsed
     return {
       ...DEFAULT_WORKFLOW_VISIBILITY,
       ...rest,
@@ -336,10 +388,42 @@ function writeWorkflowVisibility(next: WorkflowVisibility) {
   }
 }
 
+type BatchRecipient = {
+  toUser: string
+  action: string
+}
+
 type ContentIncident = {
-  key: MarkingIncidentKey
+  key: ContentIncidentKey
+  /** Marking ids in this card (for scroll / highlight anchors). */
+  markingIds: number[]
+  /** All To / For Info recipients on the mark batch (when known). */
+  recipients: BatchRecipient[]
   notes: CorrespondenceNote[]
   attachments: CorrespondenceAttachment[]
+}
+
+function isInfoAction(action: string | null | undefined) {
+  return (action || '').trim().toLowerCase() === 'for_info'
+}
+
+/** Prefer actionable To over Info if the same name appears twice. */
+function mergeBatchRecipient(
+  map: Map<string, BatchRecipient>,
+  toUser: string,
+  action: string,
+) {
+  const name = (toUser || '').trim()
+  if (!name) return
+  const nextAction = (action || 'forward').trim() || 'forward'
+  const prev = map.get(name.toLowerCase())
+  if (!prev) {
+    map.set(name.toLowerCase(), { toUser: name, action: nextAction })
+    return
+  }
+  if (isInfoAction(prev.action) && !isInfoAction(nextAction)) {
+    map.set(name.toLowerCase(), { toUser: name, action: nextAction })
+  }
 }
 
 type TimelineItem =
@@ -347,27 +431,157 @@ type TimelineItem =
   | { kind: 'markBatch'; batchId: number; markings: MarkingNode[]; sortAt: number }
   | { kind: 'content'; incident: ContentIncident; sortAt: number }
 
-/** Group notes + attachments by marking incident; newest items first within each group. */
-function groupByMarkingIncident(
+/**
+ * Group notes + attachments into one card per mark batch (multi-recipient marks
+ * share a card). Common content is deduped; To-specific rows keep forUser labels.
+ */
+function groupContentIncidents(
+  markings: MarkingNode[],
   notes: CorrespondenceNote[],
   attachments: CorrespondenceAttachment[],
 ): ContentIncident[] {
-  const map = new Map<MarkingIncidentKey, ContentIncident>()
-  const ensure = (key: MarkingIncidentKey) => {
-    if (!map.has(key)) {
-      map.set(key, { key, notes: [], attachments: [] })
-    }
-    return map.get(key)!
+  const markingsById = new Map(markings.map((m) => [m.id, m]))
+  type Acc = {
+    key: ContentIncidentKey
+    markingIds: Set<number>
+    recipients: Map<string, BatchRecipient>
+    notes: CorrespondenceNote[]
+    attachments: CorrespondenceAttachment[]
   }
+  const map = new Map<string, Acc>()
+  const ensure = (key: ContentIncidentKey, markingId: number | null) => {
+    const mapKey = String(key)
+    if (!map.has(mapKey)) {
+      map.set(mapKey, {
+        key,
+        markingIds: new Set(),
+        recipients: new Map(),
+        notes: [],
+        attachments: [],
+      })
+    }
+    const acc = map.get(mapKey)!
+    if (markingId != null) acc.markingIds.add(markingId)
+    return acc
+  }
+  const resolveKey = (
+    markingId: number | null | undefined,
+    batchId?: number | null,
+  ): ContentIncidentKey => {
+    // Prefer batchId from the API so recipients still merge sibling copies even when
+    // sibling markings are hidden from their pathway tree.
+    if (batchId != null && Number.isFinite(Number(batchId))) {
+      return `batch:${Number(batchId)}`
+    }
+    if (markingId == null) return 'root'
+    const marking = markingsById.get(markingId)
+    if (marking) return `batch:${marking.batchId}`
+    return markingKey(markingId)
+  }
+  const rememberRecipient = (
+    acc: Acc,
+    markingId: number | null | undefined,
+    toUser?: string | null,
+    markingAction?: string | null,
+  ) => {
+    if (toUser) {
+      mergeBatchRecipient(acc.recipients, toUser, markingAction || 'forward')
+      return
+    }
+    if (markingId == null) return
+    const marking = markingsById.get(markingId)
+    if (marking) mergeBatchRecipient(acc.recipients, marking.toUser, marking.action)
+  }
+
   const notesDesc = [...notes].sort(
     (a, b) => activityTime(b.createdAt, b.id) - activityTime(a.createdAt, a.id),
   )
   const attachmentsDesc = [...attachments].sort(
     (a, b) => activityTime(b.createdAt, b.id) - activityTime(a.createdAt, a.id),
   )
-  for (const note of notesDesc) ensure(markingKey(note.markingId)).notes.push(note)
-  for (const att of attachmentsDesc) ensure(markingKey(att.markingId)).attachments.push(att)
-  return [...map.values()]
+  for (const note of notesDesc) {
+    const key = resolveKey(note.markingId, note.batchId)
+    const acc = ensure(key, note.markingId)
+    rememberRecipient(acc, note.markingId, note.toUser, note.markingAction)
+    acc.notes.push(note)
+  }
+  for (const att of attachmentsDesc) {
+    const key = resolveKey(att.markingId, att.batchId)
+    const acc = ensure(key, att.markingId)
+    rememberRecipient(acc, att.markingId, att.toUser, att.markingAction)
+    acc.attachments.push(att)
+  }
+
+  // Fill any remaining batch siblings from the pathway tree (Info with no notes, etc.).
+  for (const acc of map.values()) {
+    if (typeof acc.key !== 'string' || !acc.key.startsWith('batch:')) continue
+    const batchId = Number(acc.key.slice('batch:'.length))
+    for (const m of markings) {
+      if (m.batchId !== batchId || m.status === 'revoked') continue
+      mergeBatchRecipient(acc.recipients, m.toUser, m.action)
+    }
+  }
+
+  return [...map.values()].map((acc) => ({
+    key: acc.key,
+    markingIds: [...acc.markingIds],
+    recipients: [...acc.recipients.values()].sort((a, b) =>
+      a.toUser.localeCompare(b.toUser, undefined, { sensitivity: 'base' }),
+    ),
+    // Always dedupe common copies (fan-out publishes the same common note on each hop).
+    notes: dedupeCommonNotes(acc.notes),
+    attachments: dedupeCommonAttachments(acc.attachments),
+  }))
+}
+
+function hasCommonContent(incident: ContentIncident) {
+  return (
+    incident.notes.some((n) => !contentSectionLabel(n.forUser)) ||
+    incident.attachments.some((a) => !contentSectionLabel(a.forUser))
+  )
+}
+
+function ContentRecipientRoster({
+  recipients,
+  show,
+  mutedClassName,
+}: {
+  recipients: BatchRecipient[]
+  show: boolean
+  mutedClassName?: string
+}) {
+  if (!show || recipients.length === 0) return null
+  const toRecipients = recipients.filter((r) => !isInfoAction(r.action))
+  const infoRecipients = recipients.filter((r) => isInfoAction(r.action))
+  if (toRecipients.length === 0 && infoRecipients.length === 0) return null
+
+  const recipientBadgeClass =
+    'inline-flex items-center rounded-md border border-slate-300 bg-transparent px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-500 dark:text-white'
+
+  return (
+    <div className={cn('mt-1.5 space-y-1', mutedClassName)}>
+      {toRecipients.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone="blue">To</Badge>
+          {toRecipients.map((r) => (
+            <span key={`to-${r.toUser}`} className={recipientBadgeClass}>
+              {r.toUser}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {infoRecipients.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone="violet">Info</Badge>
+          {infoRecipients.map((r) => (
+            <span key={`info-${r.toUser}`} className={recipientBadgeClass}>
+              {r.toUser}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function latestIncidentActivity(incident: ContentIncident): number {
@@ -408,7 +622,7 @@ function buildCommentsTimeline(
     }
   }
 
-  for (const incident of groupByMarkingIncident(notes, attachments)) {
+  for (const incident of groupContentIncidents(markings, notes, attachments)) {
     if (incident.notes.length === 0 && incident.attachments.length === 0) continue
     items.push({
       kind: 'content',
@@ -467,23 +681,33 @@ export function MarkingWorkflowPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [visibility, setVisibility] = useState<WorkflowVisibility>(DEFAULT_WORKFLOW_VISIBILITY)
-  const [dialog, setDialog] = useState<
-    'forward' | 'reply' | 'note' | 'respond' | 'attach' | 'close' | 'revoke' | null
-  >(null)
+  const [dialog, setDialog] = useState<'forward' | 'respond' | 'close' | 'revoke' | null>(null)
   const [remarks, setRemarks] = useState('')
   const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
-  /** Which recipient row the single User/Action card is editing. */
   const [activeRecipientIndex, setActiveRecipientIndex] = useState(0)
   const [drafts, setDrafts] = useState<MarkingDrafts | null>(null)
-  /** '' = common draft (forward only); else target user name. */
-  const [draftTargetUser, setDraftTargetUser] = useState<string>('')
-  /** Which draft flow the open note/attach dialog is using. */
-  const [draftIntent, setDraftIntent] = useState<DraftIntent>('forward')
+  /** Remount composer after a successful Mark so local draft state resets. */
+  const [composerKey, setComposerKey] = useState(0)
+  const composerRef = useRef<DraftCommentsComposerHandle>(null)
+  const [composerMarkState, setComposerMarkState] = useState({ canMark: false, busy: false })
+  const [draftPreview, setDraftPreview] = useState<DraftCommentPreviewData | null>(null)
+  const draftPreviewOpenRef = useRef(false)
+
+  const handleDraftPreviewChange = useCallback((next: DraftCommentPreviewData | null) => {
+    const opening = next != null && !draftPreviewOpenRef.current
+    draftPreviewOpenRef.current = next != null
+    setDraftPreview(next)
+    if (opening) {
+      window.requestAnimationFrame(() => {
+        document.getElementById('workflow-draft-preview')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+        })
+      })
+    }
+  }, [])
   const [parentMarkingId, setParentMarkingId] = useState<number | null>(null)
-  const [contextMarkingId, setContextMarkingId] = useState<number | null>(null)
   const [noteBody, setNoteBody] = useState('')
-  const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([])
-  const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
   const [forceClose, setForceClose] = useState(false)
   const [respondMarkingId, setRespondMarkingId] = useState<number | null>(null)
   const [expandedTrackerBatchId, setExpandedTrackerBatchId] = useState<number | null>(null)
@@ -495,8 +719,6 @@ export function MarkingWorkflowPanel({
   const [previewVersionId, setPreviewVersionId] = useState<number | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
   const [editingNoteBody, setEditingNoteBody] = useState('')
-  const [editingDraftNoteId, setEditingDraftNoteId] = useState<number | null>(null)
-  const [editingDraftNoteBody, setEditingDraftNoteBody] = useState('')
   /** DOM id of timeline row highlighted after a pathway node click. */
   const [highlightedTimelineId, setHighlightedTimelineId] = useState<string | null>(null)
   const highlightClearRef = useRef<number | null>(null)
@@ -518,7 +740,8 @@ export function MarkingWorkflowPanel({
 
   const jumpToMarkingInTimeline = useCallback(
     (markingId: number, batchId?: number) => {
-      // Prefer the comments published with that mark; fall back to the mark/batch chip.
+      // Prefer the batch comments card; fall back to legacy per-marking / mark chips.
+      if (batchId != null && scrollToTimelineAnchor(`workflow-incident-batch:${batchId}`)) return
       if (scrollToTimelineAnchor(`workflow-incident-${markingId}`)) return
       if (batchId != null && scrollToTimelineAnchor(`workflow-batch-${batchId}`)) return
       scrollToTimelineAnchor(`workflow-mark-${markingId}`)
@@ -535,28 +758,11 @@ export function MarkingWorkflowPanel({
   const resetComposer = () => {
     setRemarks('')
     setNoteBody('')
-    setPendingFiles([])
     setForceClose(false)
     setRecipients([emptyRecipient()])
     setActiveRecipientIndex(0)
     setParentMarkingId(null)
-    setContextMarkingId(null)
-    setDraftTargetUser('')
-    setDraftIntent('forward')
-    setEditingDraftNoteId(null)
-    setEditingDraftNoteBody('')
   }
-
-  const activeRecipient = recipients[activeRecipientIndex] ?? recipients[0] ?? emptyRecipient()
-
-  const updateActiveRecipient = (patch: Partial<MarkRecipientInput>) => {
-    setRecipients((prev) => {
-      const idx = Math.min(activeRecipientIndex, Math.max(0, prev.length - 1))
-      return prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
-    })
-  }
-
-  const canAddAttachment = actions.includes('add_note')
 
   const flatMarkings = useMemo(() => flattenMarkings(tree), [tree])
 
@@ -564,86 +770,6 @@ export function MarkingWorkflowPanel({
     () => buildCommentsTimeline(flatMarkings, notes, attachments),
     [attachments, flatMarkings, notes],
   )
-
-  /** Pending drafts shown like content cards under Comments & Attachments. */
-  const draftGroups = useMemo(() => {
-    if (!drafts) {
-      return [] as {
-        key: string
-        intent: DraftIntent
-        targetLabel: string
-        notes: DraftNote[]
-        attachments: DraftAttachment[]
-      }[]
-    }
-    const groups: {
-      key: string
-      intent: DraftIntent
-      targetLabel: string
-      notes: DraftNote[]
-      attachments: DraftAttachment[]
-    }[] = []
-    const intentOf = (raw: string | undefined): DraftIntent =>
-      (raw || 'forward').toLowerCase() === 'reply' ? 'reply' : 'forward'
-
-    const commonNotes = drafts.notes.filter((n) => !n.targetUser && intentOf(n.intent) === 'forward')
-    const commonAtts = drafts.attachments.filter(
-      (a) => !a.targetUser && intentOf(a.intent) === 'forward',
-    )
-    if (commonNotes.length > 0 || commonAtts.length > 0) {
-      groups.push({
-        key: 'forward:common',
-        intent: 'forward',
-        targetLabel: 'Common to all recipients',
-        notes: commonNotes,
-        attachments: commonAtts,
-      })
-    }
-    for (const user of drafts.forwardTargetUsers ?? drafts.targetUsers) {
-      const notes = drafts.notes.filter(
-        (n) => n.targetUser === user && intentOf(n.intent) === 'forward',
-      )
-      const attachments = drafts.attachments.filter(
-        (a) => a.targetUser === user && intentOf(a.intent) === 'forward',
-      )
-      if (!notes.length && !attachments.length) continue
-      groups.push({
-        key: `forward:${user}`,
-        intent: 'forward',
-        targetLabel: `For ${user}`,
-        notes,
-        attachments,
-      })
-    }
-    for (const user of drafts.replyTargetUsers ?? []) {
-      const notes = drafts.notes.filter(
-        (n) => n.targetUser === user && intentOf(n.intent) === 'reply',
-      )
-      const attachments = drafts.attachments.filter(
-        (a) => a.targetUser === user && intentOf(a.intent) === 'reply',
-      )
-      if (!notes.length && !attachments.length) continue
-      groups.push({
-        key: `reply:${user}`,
-        intent: 'reply',
-        targetLabel: `For ${user}`,
-        notes,
-        attachments,
-      })
-    }
-    return groups
-  }, [drafts])
-
-  /** Stable serials: oldest comment = 1, newest = N. */
-  const noteSerialById = useMemo(() => {
-    const ordered = [...notes].sort((a, b) => {
-      const byTime = activityTime(a.createdAt, a.id) - activityTime(b.createdAt, b.id)
-      return byTime !== 0 ? byTime : a.id - b.id
-    })
-    const map = new Map<number, number>()
-    ordered.forEach((note, index) => map.set(note.id, index + 1))
-    return map
-  }, [notes])
 
   /** Stable letters: oldest attachment = A, then B…Z, AA, AB… */
   const attachmentLetterById = useMemo(() => {
@@ -655,25 +781,6 @@ export function MarkingWorkflowPanel({
     ordered.forEach((att, index) => map.set(att.id, attachmentLetterLabel(index)))
     return map
   }, [attachments])
-
-  const uploadPendingAttachments = async () => {
-    const uploaded: { attachmentKind: string; documentId: number; originalFilename: string }[] = []
-    for (const item of pendingFiles) {
-      const doc = await uploadLetterDocument(
-        letter.id,
-        item.file,
-        item.kind,
-        `Workflow attachment (${item.kind})`,
-        'workflow',
-      )
-      uploaded.push({
-        attachmentKind: item.kind,
-        documentId: Number(doc.id),
-        originalFilename: item.file.name,
-      })
-    }
-    return uploaded
-  }
 
   const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     // Background polls skip when a refresh is already running; explicit reloads always run.
@@ -698,14 +805,12 @@ export function MarkingWorkflowPanel({
       setTree(markingTree)
       setNotes(noteRows)
       setAttachments(attachmentRows)
-      setDrafts(draftBundle)
+      setDrafts({ ...draftBundle, roster: draftBundle.roster ?? [] })
       const holds = available.activeHolds ?? []
       if (holds.length === 1) {
         setParentMarkingId(holds[0]!.id)
-        setContextMarkingId(holds[0]!.id)
       } else if (holds.length === 0) {
         setParentMarkingId(null)
-        setContextMarkingId(null)
       }
       const rrHolds = holds.filter((n) => n.action === 'response_required' && n.status === 'active')
       setRespondMarkingId(rrHolds.length === 1 ? rrHolds[0]!.id : rrHolds[0]?.id ?? null)
@@ -769,12 +874,19 @@ export function MarkingWorkflowPanel({
     busyRef.current = true
     setBusy(true)
     setError('')
+    const marked = dialog === 'forward'
     try {
       await fn()
       setDialog(null)
       resetComposer()
       await onDone()
       await load()
+      // Remount after Mark so the composer re-hydrates from cleared server drafts.
+      if (marked) {
+        draftPreviewOpenRef.current = false
+        setDraftPreview(null)
+        setComposerKey((k) => k + 1)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Action failed')
     } finally {
@@ -856,11 +968,8 @@ export function MarkingWorkflowPanel({
     }
   }, [busy, dialog, revokableMarkings.length])
 
-  const forwardTargetUsers = drafts?.forwardTargetUsers ?? []
-  const hasReplyDrafts = Boolean(drafts?.hasReplyDrafts)
-  const hasForwardDrafts = Boolean(drafts?.hasForwardDrafts)
   const isAdminActor = isAdministrator(me.role || '')
-  /** Active leaf outbound markings from me — used to detect re-forward / admin edit. */
+  /** Active leaf outbound markings from me — used to detect re-mark / admin edit. */
   const myOutboundLeafByUser = useMemo(() => {
     const meName = (me.name || '').trim()
     const map = new Map<string, MarkingNode>()
@@ -877,9 +986,6 @@ export function MarkingWorkflowPanel({
     }
     return map
   }, [allMarkings, me.name])
-  const canForwardWithDrafts =
-    (forwardTargetUsers.length > 0 || (isAdminActor && myOutboundLeafByUser.size > 0)) &&
-    !hasReplyDrafts
 
   useEffect(() => {
     if (loading || initialActionHandled.current) return
@@ -893,96 +999,10 @@ export function MarkingWorkflowPanel({
       return
     }
     if ((action === 'forward' || action === 'assign') && actions.includes('forward')) {
+      // Mark composer is always visible on the Workflow tab; no dialog to open.
       initialActionHandled.current = true
-      setError('')
-      // Open Forward when drafts already exist; otherwise land on Workflow to stage them.
-      if (!canForwardWithDrafts) return
-      const rawNames =
-        forwardTargetUsers.length > 0
-          ? forwardTargetUsers
-          : isAdminActor
-            ? [...myOutboundLeafByUser.keys()]
-            : []
-      const names = isAdminActor
-        ? rawNames
-        : rawNames.filter((name) => !myOutboundLeafByUser.has(name))
-      if (!names.length) return
-      setRecipients(
-        names.map((name) => {
-          const existing = myOutboundLeafByUser.get(name)
-          return existing && isAdminActor
-            ? recipientFromExistingMarking(existing)
-            : emptyRecipient(name)
-        }),
-      )
-      setActiveRecipientIndex(0)
-      if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
-      else if (activeHolds.length === 0) setParentMarkingId(null)
-      setDialog('forward')
     }
-  }, [
-    loading,
-    initialAction,
-    actions,
-    activeHolds,
-    canForwardWithDrafts,
-    forwardTargetUsers,
-    isAdminActor,
-    myOutboundLeafByUser,
-  ])
-
-  const replyHoldForActions =
-    activeHolds.length === 1
-      ? activeHolds[0]!
-      : activeHolds.find((h) => h.id === parentMarkingId) ?? activeHolds[0]
-  const replyTargetName = replyHoldForActions
-    ? replyTargetForHold(replyHoldForActions, me.name)
-    : ''
-  const canReplyWithDraft =
-    Boolean(replyTargetName) &&
-    !hasForwardDrafts &&
-    (drafts?.replyTargetUsers ?? []).includes(replyTargetName)
-
-  const openDraftNote = (intent: DraftIntent) => {
-    if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
-    setDraftIntent(intent)
-    if (intent === 'reply') {
-      const hold =
-        activeHolds.length === 1
-          ? activeHolds[0]!
-          : activeHolds.find((h) => h.id === contextMarkingId) ?? activeHolds[0]
-      if (hold) {
-        setContextMarkingId(hold.id)
-        setDraftTargetUser(replyTargetForHold(hold, me.name))
-      } else {
-        setDraftTargetUser('')
-      }
-    } else {
-      setDraftTargetUser('')
-    }
-    setDialog('note')
-  }
-
-  const openDraftAttach = (intent: DraftIntent) => {
-    setPendingFiles([])
-    if (activeHolds.length === 1) setContextMarkingId(activeHolds[0]!.id)
-    setDraftIntent(intent)
-    if (intent === 'reply') {
-      const hold =
-        activeHolds.length === 1
-          ? activeHolds[0]!
-          : activeHolds.find((h) => h.id === contextMarkingId) ?? activeHolds[0]
-      if (hold) {
-        setContextMarkingId(hold.id)
-        setDraftTargetUser(replyTargetForHold(hold, me.name))
-      } else {
-        setDraftTargetUser('')
-      }
-    } else {
-      setDraftTargetUser('')
-    }
-    setDialog('attach')
-  }
+  }, [loading, initialAction, actions])
 
   return (
     <CollapsibleCard collapsible={false} contentClassName="relative">
@@ -1027,12 +1047,6 @@ export function MarkingWorkflowPanel({
                 onCheckedChange={(checked) => updateVisibility('highlightOwnComments', checked === true)}
               >
                 Highlight my comments
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={visibility.showCommentMeta}
-                onCheckedChange={(checked) => updateVisibility('showCommentMeta', checked === true)}
-              >
-                Comment date & IP
               </DropdownMenuCheckboxItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -1082,141 +1096,7 @@ export function MarkingWorkflowPanel({
       )}
 
       {!loading && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-2">
-            {actions.includes('add_note') && actions.includes('reply') && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={hasForwardDrafts}
-                title={
-                  hasForwardDrafts
-                    ? 'Delete forwarding drafts before adding a reply comment'
-                    : undefined
-                }
-                onClick={() => openDraftNote('reply')}
-              >
-                <Reply className="mr-1 h-3.5 w-3.5" /> Add Reply Comment
-              </Button>
-            )}
-            {actions.includes('add_note') && actions.includes('forward') && (
-              <Button
-                size="sm"
-                disabled={hasReplyDrafts}
-                title={
-                  hasReplyDrafts
-                    ? 'Delete reply drafts before adding a forwarding comment'
-                    : undefined
-                }
-                onClick={() => openDraftNote('forward')}
-              >
-                <MessageSquare className="mr-1 h-3.5 w-3.5" /> Add Forwarding Comment
-              </Button>
-            )}
-            {canAddAttachment && actions.includes('reply') && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={hasForwardDrafts}
-                title={
-                  hasForwardDrafts
-                    ? 'Delete forwarding drafts before adding a reply attachment'
-                    : undefined
-                }
-                onClick={() => openDraftAttach('reply')}
-              >
-                <Paperclip className="mr-1 h-3.5 w-3.5" /> Add Reply Attachment
-              </Button>
-            )}
-            {canAddAttachment && actions.includes('forward') && (
-              <Button
-                size="sm"
-                disabled={hasReplyDrafts}
-                title={
-                  hasReplyDrafts
-                    ? 'Delete reply drafts before adding a forwarding attachment'
-                    : undefined
-                }
-                onClick={() => openDraftAttach('forward')}
-              >
-                <Paperclip className="mr-1 h-3.5 w-3.5" /> Add Forwarding Attachment
-              </Button>
-            )}
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            {actions.includes('forward') && (
-              <Button
-                size="sm"
-                disabled={!canForwardWithDrafts}
-                title={
-                  hasReplyDrafts
-                    ? 'Delete all reply drafts before Forward'
-                    : canForwardWithDrafts
-                      ? undefined
-                      : 'Add a forwarding comment or attachment for a recipient first'
-                }
-                onClick={() => {
-                  if (!canForwardWithDrafts) return
-                  setError('')
-                  const rawNames =
-                    forwardTargetUsers.length > 0
-                      ? forwardTargetUsers
-                      : isAdminActor
-                        ? [...myOutboundLeafByUser.keys()]
-                        : []
-                  // Non-admin must revoke before re-forwarding / editing action for the same user.
-                  const names = isAdminActor
-                    ? rawNames
-                    : rawNames.filter((name) => !myOutboundLeafByUser.has(name))
-                  if (!names.length) {
-                    setError(
-                      'Revoke the existing marking before forwarding again or changing action / response type.',
-                    )
-                    return
-                  }
-                  setRecipients(
-                    names.map((name) => {
-                      const existing = myOutboundLeafByUser.get(name)
-                      return existing && isAdminActor
-                        ? recipientFromExistingMarking(existing)
-                        : emptyRecipient(name)
-                    }),
-                  )
-                  setActiveRecipientIndex(0)
-                  if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
-                  else if (activeHolds.length === 0) setParentMarkingId(null)
-                  setDialog('forward')
-                }}
-              >
-                <Send className="mr-1 h-3.5 w-3.5" /> Forward
-              </Button>
-            )}
-            {actions.includes('reply') && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!canReplyWithDraft}
-                title={
-                  hasForwardDrafts
-                    ? 'Delete all forwarding drafts before Reply'
-                    : canReplyWithDraft
-                      ? undefined
-                      : replyTargetName
-                        ? `Add a reply comment or attachment for ${replyTargetName} first`
-                        : 'Add a reply comment or attachment first'
-                }
-                onClick={() => {
-                  if (!replyHoldForActions || !canReplyWithDraft) return
-                  setError('')
-                  setParentMarkingId(replyHoldForActions.id)
-                  setRecipients([emptyRecipient(replyTargetName)])
-                  setActiveRecipientIndex(0)
-                  setDialog('reply')
-                }}
-              >
-                <Reply className="mr-1 h-3.5 w-3.5" /> Reply
-              </Button>
-            )}
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
             {actions.includes('respond') && (
               <Button
                 size="sm"
@@ -1234,12 +1114,20 @@ export function MarkingWorkflowPanel({
                 <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
               </Button>
             )}
+            {actions.includes('forward') && (
+              <Button
+                size="sm"
+                disabled={!composerMarkState.canMark || composerMarkState.busy || busy}
+                onClick={() => composerRef.current?.requestMark()}
+              >
+                <Send className="mr-1 h-3.5 w-3.5" /> Mark
+              </Button>
+            )}
             {actions.includes('close') && (
               <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
                 <XCircle className="mr-1 h-3.5 w-3.5" /> Close
               </Button>
             )}
-          </div>
         </div>
       )}
 
@@ -1302,185 +1190,43 @@ export function MarkingWorkflowPanel({
         </div>
       )}
 
+      {!loading && actions.includes('forward') && (
+        <DraftCommentsComposer
+          key={`composer-${letter.id}-${composerKey}`}
+          ref={composerRef}
+          letterId={letter.id}
+          users={users}
+          meName={me.name}
+          drafts={drafts}
+          onDraftsChange={(next) => setDrafts({ ...next, roster: next.roster ?? [] })}
+          disabled={busy}
+          hideMarkButton
+          previewActive={draftPreview != null}
+          onPreviewChange={handleDraftPreviewChange}
+          onMarkAvailabilityChange={setComposerMarkState}
+          onRequestMark={(nextRecipients) => {
+            setError('')
+            draftPreviewOpenRef.current = false
+            setDraftPreview(null)
+            setRecipients(nextRecipients.length ? nextRecipients : [emptyRecipient()])
+            setActiveRecipientIndex(0)
+            if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+            else if (activeHolds.length === 0) setParentMarkingId(null)
+            setDialog('forward')
+          }}
+        />
+      )}
+
       <div>
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Comments & Attachments</h3>
         {timelineItems.filter(
           (item) => item.kind === 'content' || visibility.showMarkingCards,
         ).length === 0 &&
-          draftGroups.length === 0 && (
+          !draftPreview && (
           <p className="text-xs text-slate-500">No notes, attachments, or markings yet.</p>
         )}
         <ul className="space-y-3">
-          {draftGroups.map((group) => {
-            const author = me.name || group.notes[0]?.authorUser || 'You'
-            return (
-              <li
-                key={`draft-${group.key}`}
-                className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/40"
-              >
-                <div className="grid grid-cols-1 md:grid-cols-3">
-                  <div className="divide-y divide-amber-200/70 px-4 py-1 md:col-span-2 md:border-r md:border-amber-200/70 dark:divide-amber-800/50 dark:md:border-amber-800/50">
-                    <div className="pt-3 pb-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-base font-bold tracking-wide text-amber-950 dark:text-amber-200">
-                          {author}
-                        </p>
-                        <span className="rounded-full bg-amber-200/80 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-amber-950">
-                          YOU
-                        </span>
-                        <Badge tone="amber">Draft</Badge>
-                        <Badge tone={group.intent === 'reply' ? 'violet' : 'blue'}>
-                          {group.intent === 'reply' ? 'Reply' : 'Forward'}
-                        </Badge>
-                      </div>
-                      <p className="mt-0.5 text-[11px] text-amber-900/75 dark:text-amber-300/75">
-                        {group.targetLabel} · confirm with{' '}
-                        {group.intent === 'reply' ? 'Reply' : 'Forward'}
-                      </p>
-                    </div>
-                    {group.notes.length === 0 ? (
-                      <p className="pb-3 text-xs text-amber-800/60 dark:text-amber-400/60">No draft comments</p>
-                    ) : (
-                      <div className="py-1">
-                        {group.notes.map((note) => (
-                          <div
-                            key={`draft-note-${note.id}`}
-                            className="border-t border-amber-100 py-2.5 first:border-t-0 dark:border-amber-900/40"
-                          >
-                            <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-amber-900/80 dark:text-amber-300/80">
-                              {visibility.showCommentMeta ? (
-                                <>
-                                  <span>{note.createdAt ? formatDateTime(note.createdAt) : ''}</span>
-                                  {note.clientIp ? <span>IP {note.clientIp}</span> : null}
-                                </>
-                              ) : null}
-                              <span className="ml-auto flex flex-wrap gap-1.5">
-                                <Button
-                                  type="button"
-                                  size="xs"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setEditingDraftNoteId(note.id)
-                                    setEditingDraftNoteBody(note.bodyText)
-                                  }}
-                                >
-                                  <Pencil data-icon="inline-start" /> Edit
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="xs"
-                                  variant="destructive"
-                                  disabled={busy}
-                                  onClick={() =>
-                                    void run(async () => {
-                                      const result = await deleteDraftNote(note.id)
-                                      setDrafts(result.drafts)
-                                      if (editingDraftNoteId === note.id) {
-                                        setEditingDraftNoteId(null)
-                                      }
-                                    })
-                                  }
-                                >
-                                  <Trash2 data-icon="inline-start" /> Delete
-                                </Button>
-                              </span>
-                            </div>
-                            {editingDraftNoteId === note.id ? (
-                              <div className="space-y-2">
-                                <textarea
-                                  className="w-full rounded border border-amber-200 bg-white px-2 py-1.5 text-sm dark:border-amber-800 dark:bg-amber-950/40"
-                                  rows={3}
-                                  value={editingDraftNoteBody}
-                                  onChange={(e) => setEditingDraftNoteBody(e.target.value)}
-                                />
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    disabled={busy}
-                                    onClick={() =>
-                                      void run(async () => {
-                                        if (!editingDraftNoteBody.trim()) {
-                                          throw new Error('Note text is required')
-                                        }
-                                        const result = await updateDraftNote(
-                                          note.id,
-                                          editingDraftNoteBody,
-                                        )
-                                        setDrafts(result.drafts)
-                                        setEditingDraftNoteId(null)
-                                      })
-                                    }
-                                  >
-                                    Save
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setEditingDraftNoteId(null)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : (
-                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-amber-950 dark:text-amber-100">
-                                {note.bodyText}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="border-t border-amber-200/70 bg-amber-100/50 px-3 py-3 md:col-span-1 md:border-t-0 dark:border-amber-800/50 dark:bg-amber-950/60">
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-amber-800/80 dark:text-amber-400/80">
-                      Attachments
-                    </p>
-                    {group.attachments.length === 0 ? (
-                      <p className="text-xs text-amber-800/50 dark:text-amber-400/50">None</p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {group.attachments.map((a) => (
-                          <li
-                            key={`draft-att-${a.id}`}
-                            className="rounded-lg border border-amber-200/80 bg-white px-2.5 py-2 shadow-sm dark:border-amber-800/50 dark:bg-amber-950/40"
-                          >
-                            <div className="flex items-start gap-2">
-                              <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-xs font-semibold text-slate-800 dark:text-amber-100">
-                                  {a.originalFilename || a.attachmentKind}
-                                </p>
-                                <p className="mt-0.5 text-[10px] font-medium text-slate-500">
-                                  {a.attachmentKind}
-                                </p>
-                                <div className="mt-1.5">
-                                  <Button
-                                    type="button"
-                                    size="xs"
-                                    variant="destructive"
-                                    disabled={busy}
-                                    onClick={() =>
-                                      void run(async () => {
-                                        const result = await deleteDraftAttachment(a.id)
-                                        setDrafts(result.drafts)
-                                      })
-                                    }
-                                  >
-                                    <Trash2 data-icon="inline-start" /> Delete
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              </li>
-            )
-          })}
+          {draftPreview ? <DraftCommentsPreviewCard preview={draftPreview} /> : null}
           {timelineItems.map((item) => {
             if (item.kind === 'mark' || item.kind === 'markBatch') {
               if (!visibility.showMarkingCards) return null
@@ -1601,10 +1347,10 @@ export function MarkingWorkflowPanel({
                 id={`workflow-incident-${incident.key}`}
                 key={`incident-${incident.key}`}
                 className={cn(
-                  'scroll-mt-24 overflow-hidden rounded-xl border shadow-sm transition ring-offset-2',
+                  'workflow-comment-card scroll-mt-24 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition ring-offset-2',
                   isOwnComments
-                    ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/40'
-                    : 'border-slate-200 bg-white',
+                    ? 'workflow-comment-card--own border-emerald-200 bg-emerald-50 dark:bg-emerald-950/40'
+                    : 'dark:bg-white',
                   highlightedTimelineId === `workflow-incident-${incident.key}` &&
                     'ring-2 ring-[#1769aa]/50',
                 )}
@@ -1612,10 +1358,10 @@ export function MarkingWorkflowPanel({
                 <div className="grid grid-cols-1 md:grid-cols-3">
                   <div
                     className={cn(
-                      'divide-y px-4 py-1 md:col-span-2 md:border-r',
+                      'workflow-comment-card-main divide-y px-4 py-1 md:col-span-2 md:border-r',
                       isOwnComments
-                        ? 'divide-emerald-200/70 md:border-emerald-200/70 dark:divide-emerald-800/50 dark:md:border-emerald-800/50'
-                        : 'divide-slate-100 md:border-slate-100',
+                        ? 'divide-emerald-200/70 md:border-emerald-200/70 dark:divide-emerald-900/40 dark:md:border-transparent'
+                        : 'divide-slate-100 md:border-slate-100 dark:divide-slate-700/50 dark:md:border-transparent',
                     )}
                   >
                     {incident.notes.length === 0 ? (
@@ -1640,6 +1386,7 @@ export function MarkingWorkflowPanel({
                           author,
                           allMarkings,
                         )
+                        const showRecipientRoster = hasCommonContent(incident)
                         return [
                           <div key={`${groupKey}-heading`} className="pt-3 pb-2">
                             <div className="flex flex-wrap items-center gap-2">
@@ -1683,98 +1430,121 @@ export function MarkingWorkflowPanel({
                                 {authorSubtitle}
                               </p>
                             ) : null}
+                            <ContentRecipientRoster
+                              recipients={incident.recipients}
+                              show={showRecipientRoster}
+                            />
                           </div>,
                           <div key={groupKey} className="py-1">
-                            {group.map((note) => (
+                            {partitionByForUser(group).flatMap((section) => {
+                              const sectionNodes: ReactNode[] = []
+                              const sectionIsPrivate = section.items.some(
+                                (n) => n.audience === 'recipient',
+                              )
+                              if (section.label) {
+                                sectionNodes.push(
+                                  <div
+                                    key={`${groupKey}-for-${section.label}`}
+                                    className="flex flex-wrap items-center gap-2 pt-2.5"
+                                  >
+                                    <p
+                                      className={cn(
+                                        'text-sm font-bold underline underline-offset-2',
+                                        isOwnComments
+                                          ? 'text-emerald-950 dark:text-emerald-100'
+                                          : 'text-slate-800',
+                                      )}
+                                    >
+                                      For {section.label}
+                                    </p>
+                                    {sectionIsPrivate ? (
+                                      <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-900">
+                                        Private
+                                      </span>
+                                    ) : null}
+                                  </div>,
+                                )
+                              }
+                              for (let noteIdx = 0; noteIdx < section.items.length; noteIdx++) {
+                                const note = section.items[noteIdx]!
+                                const showTopBorder = noteIdx > 0
+                                sectionNodes.push(
                               <div
                                 key={note.id}
                                 className={cn(
-                                  'border-t py-2.5 first:border-t-0',
-                                  isOwnComments
-                                    ? 'border-emerald-100 dark:border-emerald-900/40'
-                                    : 'border-slate-50',
+                                  'py-2.5',
+                                  showTopBorder && 'border-t',
+                                  showTopBorder &&
+                                    (isOwnComments
+                                      ? 'border-emerald-100 dark:border-emerald-900/40'
+                                      : 'border-slate-50'),
                                 )}
                               >
-                                <div
-                                  className={cn(
-                                    'mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]',
-                                    isOwnComments
-                                      ? 'text-emerald-800/80 dark:text-emerald-300/80'
-                                      : 'text-slate-500',
-                                  )}
-                                >
-                                  <span
+                                {(note.isResponse || note.editable) && (
+                                  <div
                                     className={cn(
-                                      'inline-flex min-w-7 items-center justify-center rounded-full px-2 py-0.5 text-base font-bold tabular-nums leading-none',
+                                      'mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]',
                                       isOwnComments
-                                        ? 'bg-emerald-200/90 text-emerald-950 dark:bg-emerald-800/80 dark:text-emerald-100'
-                                        : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
+                                        ? 'text-emerald-800/80 dark:text-emerald-300/80'
+                                        : 'text-slate-500',
                                     )}
-                                    aria-label={`Comment ${noteSerialById.get(note.id) ?? ''}`}
                                   >
-                                    {noteSerialById.get(note.id) ?? '—'}
-                                  </span>
-                                  {visibility.showCommentMeta ? (
-                                    <>
-                                      <span>
-                                        {note.createdAt ? formatDateTime(note.createdAt) : ''}
+                                    {note.isResponse ? (
+                                      <span
+                                        className={cn(
+                                          'font-medium',
+                                          isOwnComments
+                                            ? 'text-emerald-900 dark:text-emerald-300'
+                                            : 'text-slate-600',
+                                        )}
+                                      >
+                                        Response
                                       </span>
-                                      {note.clientIp ? <span>IP {note.clientIp}</span> : null}
-                                    </>
-                                  ) : null}
-                                  {note.isResponse ? (
-                                    <span
-                                      className={cn(
-                                        'font-medium',
-                                        isOwnComments
-                                          ? 'text-emerald-900 dark:text-emerald-300'
-                                          : 'text-slate-600',
-                                      )}
-                                    >
-                                      Response
-                                    </span>
-                                  ) : null}
-                                  {note.editable && (
-                                    <span className="ml-auto flex flex-wrap gap-1.5">
-                                      <Button
-                                        type="button"
-                                        size="xs"
-                                        variant="outline"
-                                        onClick={() => {
-                                          setEditingNoteId(note.id)
-                                          setEditingNoteBody(note.bodyText)
-                                        }}
-                                      >
-                                        <Pencil data-icon="inline-start" /> Edit
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        size="xs"
-                                        variant="destructive"
-                                        disabled={busy}
-                                        onClick={() =>
-                                          void run(async () => {
-                                            await deleteMarkingNote(note.id)
-                                          })
-                                        }
-                                      >
-                                        <Trash2 data-icon="inline-start" /> Delete
-                                      </Button>
-                                    </span>
-                                  )}
-                                </div>
+                                    ) : null}
+                                    {note.editable && (
+                                      <span className="ml-auto flex flex-wrap gap-1.5">
+                                        <Button
+                                          type="button"
+                                          size="xs"
+                                          variant="outline"
+                                          onClick={() => {
+                                            setEditingNoteId(note.id)
+                                            setEditingNoteBody(note.bodyText)
+                                          }}
+                                        >
+                                          <Pencil data-icon="inline-start" /> Edit
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          size="xs"
+                                          variant="destructive"
+                                          disabled={busy}
+                                          onClick={() =>
+                                            void run(async () => {
+                                              await deleteMarkingNote(note.id)
+                                            })
+                                          }
+                                        >
+                                          <Trash2 data-icon="inline-start" /> Delete
+                                        </Button>
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                                 {editingNoteId === note.id ? (
                                   <div className="space-y-2">
-                                    <textarea
-                                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                                      rows={3}
+                                    <RichTextEditor
                                       value={editingNoteBody}
-                                      onChange={(e) => setEditingNoteBody(e.target.value)}
+                                      onChange={setEditingNoteBody}
+                                      disabled={busy}
+                                      placeholder="Edit message…"
+                                      aria-label="Edit comment"
+                                      minHeightClass="min-h-[5.5rem]"
                                     />
                                     <div className="flex gap-2">
                                       <Button
                                         size="sm"
-                                        disabled={busy}
+                                        disabled={busy || isRichTextEmpty(editingNoteBody)}
                                         onClick={() =>
                                           void run(async () => {
                                             await updateMarkingNote(note.id, editingNoteBody)
@@ -1794,19 +1564,20 @@ export function MarkingWorkflowPanel({
                                     </div>
                                   </div>
                                 ) : (
-                                  <p
-                                    className={cn(
-                                      'whitespace-pre-wrap text-sm leading-relaxed',
+                                  <RichTextHtml
+                                    html={note.bodyText}
+                                    className={
                                       isOwnComments
                                         ? 'text-emerald-950 dark:text-emerald-200'
-                                        : 'text-slate-700',
-                                    )}
-                                  >
-                                    {note.bodyText}
-                                  </p>
+                                        : undefined
+                                    }
+                                  />
                                 )}
-                              </div>
-                            ))}
+                              </div>,
+                                )
+                              }
+                              return sectionNodes
+                            })}
                           </div>,
                         ]
                       })
@@ -1814,10 +1585,10 @@ export function MarkingWorkflowPanel({
                   </div>
                   <div
                     className={cn(
-                      'border-t px-3 py-3 md:col-span-1 md:border-t-0',
+                      'workflow-comment-card-aside border-t px-3 py-3 md:col-span-1 md:border-t-0',
                       isOwnComments
-                        ? 'border-emerald-200/70 bg-emerald-100/50 dark:border-emerald-800/50 dark:bg-emerald-950/60'
-                        : 'border-slate-100 bg-slate-50/80',
+                        ? 'border-emerald-200/70 bg-emerald-100/50 dark:border-transparent dark:bg-emerald-950/60'
+                        : 'border-slate-100 bg-slate-50/80 dark:border-transparent dark:bg-slate-50/80',
                     )}
                   >
                     <p
@@ -1834,10 +1605,33 @@ export function MarkingWorkflowPanel({
                       <p className="text-xs text-slate-400">None</p>
                     ) : (
                       <ul className="space-y-2">
-                        {incident.attachments.map((a) => (
+                        {partitionByForUser(incident.attachments).flatMap((section) => {
+                          const rows: ReactNode[] = []
+                          const sectionIsPrivate = section.items.some(
+                            (a) => a.audience === 'recipient',
+                          )
+                          if (section.label) {
+                            rows.push(
+                              <li
+                                key={`att-for-${section.label}`}
+                                className="flex flex-wrap items-center gap-1.5 pt-1 text-slate-700"
+                              >
+                                <span className="text-xs font-bold underline underline-offset-2">
+                                  For {section.label}
+                                </span>
+                                {sectionIsPrivate ? (
+                                  <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-900">
+                                    Private
+                                  </span>
+                                ) : null}
+                              </li>,
+                            )
+                          }
+                          for (const a of section.items) {
+                            rows.push(
                           <li
                             key={a.id}
-                            className="relative rounded-lg border border-slate-200 bg-white px-2.5 py-2 pr-9 shadow-sm"
+                            className="relative rounded-lg border border-slate-200 bg-white px-2.5 py-2 pr-9 shadow-sm dark:border-[0.5px] dark:border-slate-400 dark:shadow-none"
                           >
                             <span
                               className="absolute top-1.5 right-1.5 inline-flex min-w-6 items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-sm font-bold tabular-nums leading-none text-slate-800 dark:bg-slate-700 dark:text-slate-100"
@@ -1945,8 +1739,11 @@ export function MarkingWorkflowPanel({
                                 </div>
                               </div>
                             </div>
-                          </li>
-                        ))}
+                          </li>,
+                            )
+                          }
+                          return rows
+                        })}
                       </ul>
                     )}
                   </div>
@@ -1985,48 +1782,30 @@ export function MarkingWorkflowPanel({
         </div>
       )}
 
-      {(dialog === 'forward' || dialog === 'reply') && (
+      {dialog === 'forward' && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold text-slate-800">
-              {dialog === 'reply' ? 'Reply correspondence' : 'Forward correspondence'}
-            </h2>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
+            <h2 className="text-sm font-bold text-slate-800">Confirm Mark</h2>
             <p className="mt-1 text-xs text-slate-500">
-              {dialog === 'reply'
-                ? 'Confirms reply to the previous sender and publishes drafts prepared with Add Comment / Add Attachment.'
-                : 'Confirms forwarding only to users who already have draft comments or attachments.'}
+              Send this marking to the recipients below and publish any draft comments or
+              attachments.
             </p>
-            {dialog === 'forward' &&
-              recipients.some((r) => myOutboundLeafByUser.has(r.toUser.trim())) && (
-                <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
-                  {isAdminActor
-                    ? 'This recipient already has an active marking from you. Saving updates action / response type (admin). Others must revoke first.'
-                    : 'This recipient already has an active marking from you. Revoke it before forwarding again or changing action / response type.'}
-                </p>
-              )}
+            {recipients.some((r) => myOutboundLeafByUser.has(r.toUser.trim())) && (
+              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+                {isAdminActor
+                  ? 'A recipient already has an active marking from you. Saving updates action / response type (admin). Others must revoke first.'
+                  : 'A recipient already has an active marking from you. Revoke it before marking again or changing action / response type.'}
+              </p>
+            )}
 
             {activeHolds.length > 1 && (
               <div className="mt-3">
                 <label className="block text-xs font-medium text-slate-600">
-                  {dialog === 'reply' ? 'Replying under which hold?' : 'Forwarding under which hold?'}
+                  Marking under which hold?
                 </label>
                 <AppSelect
                   value={parentMarkingId != null ? String(parentMarkingId) : ''}
-                  onValueChange={(v) => {
-                    const id = v ? Number(v) : null
-                    setParentMarkingId(id)
-                    if (dialog === 'reply' && id != null) {
-                      const hold = activeHolds.find((h) => h.id === id)
-                      if (hold) {
-                        const replyTo =
-                          hold.status === 'responded' && hold.fromUser === me.name
-                            ? hold.toUser
-                            : hold.fromUser
-                        setRecipients([{ ...emptyRecipient(), toUser: replyTo, action: 'forward' }])
-                        setActiveRecipientIndex(0)
-                      }
-                    }
-                  }}
+                  onValueChange={(v) => setParentMarkingId(v ? Number(v) : null)}
                   options={[
                     { value: '', label: 'Select hold…' },
                     ...activeHolds.map((h) => ({
@@ -2046,83 +1825,36 @@ export function MarkingWorkflowPanel({
               </div>
             )}
 
-            {dialog === 'forward' && recipients.some((r) => r.toUser.trim()) && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {recipients.map((row, idx) => {
-                  if (!row.toUser.trim()) return null
-                  const isActive = idx === activeRecipientIndex
-                  return (
-                    <button
-                      type="button"
-                      key={`recipient-badge-${idx}-${row.toUser}`}
-                      className={cn(
-                        'inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold',
-                        isActive
-                          ? 'border-[#1769aa]/40 bg-sky-50 text-slate-800 dark:border-sky-500/40 dark:bg-sky-950/60 dark:text-sky-100'
-                          : 'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200',
-                      )}
-                      onClick={() => setActiveRecipientIndex(idx)}
+            <ul className="mt-3 space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+              {recipients
+                .filter((r) => r.toUser.trim())
+                .map((r) => (
+                  <li key={r.toUser} className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-800">{r.toUser}</span>
+                    <Badge
+                      tone={
+                        r.action === 'response_required'
+                          ? 'amber'
+                          : r.action === 'for_info'
+                            ? 'slate'
+                            : 'green'
+                      }
                     >
-                      <span className="truncate">{row.toUser}</span>
-                      <span
-                        className={cn(
-                          'inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                          row.action === 'response_required'
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-200'
-                            : row.action === 'for_info'
-                              ? 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
-                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-200',
-                        )}
-                      >
-                        {ACTION_LABELS[row.action] ?? markingActionLabel(row.action)}
+                      {ACTION_LABELS[r.action] ?? markingActionLabel(r.action)}
+                    </Badge>
+                    {r.action === 'response_required' && r.responseType ? (
+                      <span className="text-slate-500">
+                        {RESPONSE_TYPE_LABELS[r.responseType as ResponseType] ?? r.responseType}
+                        {r.dueAt ? ` · due ${r.dueAt}` : ''}
                       </span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-
-            <div className="mt-3 rounded-lg border border-slate-200 p-3">
-              <label className="block text-xs font-medium text-slate-600">User</label>
-              <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
-                {activeRecipient.toUser || '—'}
-              </p>
-              <label className="mt-2 block text-xs font-medium text-slate-600">Action</label>
-              {dialog === 'reply' ? (
-                <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800">
-                  Reply
-                </p>
-              ) : (
-                <AppSelect
-                  value={activeRecipient.action}
-                  onValueChange={(v) => updateActiveRecipient({ action: v as MarkingAction })}
-                  options={MARKING_ACTIONS.map((a) => ({ value: a, label: ACTION_LABELS[a] }))}
-                  className="mt-1 w-full text-sm"
-                />
-              )}
-              {dialog === 'forward' && activeRecipient.action === 'response_required' && (
-                <>
-                  <label className="mt-2 block text-xs font-medium text-slate-600">Response type</label>
-                  <AppSelect
-                    value={activeRecipient.responseType || 'draft_letter'}
-                    onValueChange={(v) => updateActiveRecipient({ responseType: v as ResponseType })}
-                    options={RESPONSE_TYPES.map((t) => ({ value: t, label: RESPONSE_TYPE_LABELS[t] }))}
-                    className="mt-1 w-full text-sm"
-                  />
-                  <label className="mt-2 block text-xs font-medium text-slate-600">Due date</label>
-                  <input
-                    type="date"
-                    className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-                    value={activeRecipient.dueAt || ''}
-                    onChange={(e) => updateActiveRecipient({ dueAt: e.target.value })}
-                  />
-                </>
-              )}
-            </div>
+                    ) : null}
+                  </li>
+                ))}
+            </ul>
 
             {drafts && (
-              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                <p className="font-semibold text-slate-700">Drafts to publish</p>
+              <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                <p className="font-semibold text-slate-700">Content to publish</p>
                 {(drafts.commonNoteCount > 0 || drafts.commonAttachmentCount > 0) && (
                   <p className="mt-1">
                     Common: {drafts.commonNoteCount} comment
@@ -2136,6 +1868,7 @@ export function MarkingWorkflowPanel({
                     .map((r) => {
                       const n = drafts.notes.filter((d) => d.targetUser === r.toUser).length
                       const a = drafts.attachments.filter((d) => d.targetUser === r.toUser).length
+                      if (!n && !a) return null
                       return (
                         <li key={r.toUser}>
                           {r.toUser}: {n} comment{n === 1 ? '' : 's'}, {a} attachment
@@ -2156,33 +1889,23 @@ export function MarkingWorkflowPanel({
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
-                    const direction: MarkingDirection = dialog === 'reply' ? 'reply' : 'forward'
-                    const cleaned =
-                      direction === 'reply'
-                        ? recipients.filter((r) => r.toUser.trim()).slice(0, 1)
-                        : recipients.filter((r) => r.toUser.trim())
+                    const cleaned = recipients.filter((r) => r.toUser.trim())
                     if (!cleaned.length) {
-                      throw new Error(
-                        'No recipients with drafts. Use Add Comment / Add Attachment first.',
-                      )
+                      throw new Error('Add at least one To or Info recipient before Mark.')
                     }
-                    if (direction === 'forward' && !isAdminActor) {
+                    if (!isAdminActor) {
                       const blocked = cleaned.find((r) =>
                         myOutboundLeafByUser.has(r.toUser.trim()),
                       )
                       if (blocked) {
                         throw new Error(
                           `Active marking already exists from you to '${blocked.toUser}'. ` +
-                            'Revoke it before forwarding again or changing action / response type.',
+                            'Revoke it before marking again or changing action / response type.',
                         )
                       }
                     }
                     if (activeHolds.length > 1 && parentMarkingId == null) {
-                      throw new Error(
-                        direction === 'reply'
-                          ? 'Select which hold you are replying under'
-                          : 'Select which hold you are forwarding under',
-                      )
+                      throw new Error('Select which hold you are marking under')
                     }
                     const resolvedParent =
                       activeHolds.length === 1
@@ -2192,99 +1915,37 @@ export function MarkingWorkflowPanel({
                           : undefined
 
                     await markLetter(letter.id, {
-                      recipients: cleaned.map((r) => {
-                        const action: MarkingAction =
-                          direction === 'reply' ? 'forward' : r.action
-                        return {
-                          ...r,
-                          action,
-                          instructions: '',
-                          track: true,
-                          responseType:
-                            action === 'response_required' ? r.responseType || 'draft_letter' : undefined,
-                          remindersEnabled: action === 'response_required',
-                        }
-                      }),
+                      recipients: cleaned.map((r) => ({
+                        ...r,
+                        instructions: '',
+                        track: true,
+                        responseType:
+                          r.action === 'response_required'
+                            ? r.responseType || 'draft_letter'
+                            : undefined,
+                        remindersEnabled: r.action === 'response_required',
+                      })),
                       remarks: '',
                       pathwayNotify: false,
                       parentMarkingId: resolvedParent ?? undefined,
-                      direction,
+                      direction: 'forward',
                       consumeDrafts: true,
                     })
                   })
                 }
               >
-                {dialog === 'reply' ? 'Reply' : 'Forward'}
+                Confirm Mark
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      {(dialog === 'note' || dialog === 'respond') && (
+      {dialog === 'respond' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold">
-              {dialog === 'note'
-                ? draftIntent === 'reply'
-                  ? 'Add Reply Comment'
-                  : 'Add Forwarding Comment'
-                : 'Submit response'}
-            </h2>
-            {dialog === 'note' && (
-              <div className="mt-2 space-y-2">
-                {draftIntent === 'reply' ? (
-                  <>
-                    {activeHolds.length > 1 && (
-                      <div>
-                        <label className="block text-xs font-medium text-slate-600">
-                          Replying under which hold?
-                        </label>
-                        <AppSelect
-                          value={contextMarkingId != null ? String(contextMarkingId) : ''}
-                          onValueChange={(v) => {
-                            const id = v ? Number(v) : null
-                            setContextMarkingId(id)
-                            const hold = activeHolds.find((h) => h.id === id)
-                            if (hold) setDraftTargetUser(replyTargetForHold(hold, me.name))
-                          }}
-                          options={[
-                            { value: '', label: 'Select hold…' },
-                            ...activeHolds.map((h) => ({
-                              value: String(h.id),
-                              label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
-                            })),
-                          ]}
-                          className="mt-1 w-full text-sm"
-                        />
-                      </div>
-                    )}
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600">Recipient</label>
-                      <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
-                        {draftTargetUser || '—'}
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600">Recipient</label>
-                    <AppSelect
-                      value={draftTargetUser || '__common__'}
-                      onValueChange={(v) => setDraftTargetUser(v === '__common__' ? '' : v)}
-                      options={[
-                        { value: '__common__', label: 'Common to all recipients' },
-                        ...users
-                          .filter((u) => u.name !== me.name)
-                          .map((u) => ({ value: u.name, label: u.name })),
-                      ]}
-                      className="mt-1 w-full text-sm"
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-            {dialog === 'respond' && rrHoldsForMe.length > 1 && (
+            <h2 className="text-sm font-bold">Submit response</h2>
+            {rrHoldsForMe.length > 1 && (
               <div className="mt-2">
                 <label className="block text-xs font-medium text-slate-600">Respond to</label>
                 <AppSelect
@@ -2301,20 +1962,15 @@ export function MarkingWorkflowPanel({
                 />
               </div>
             )}
-            <textarea
-              className="mt-2 w-full rounded border border-slate-200 px-2 py-1.5 text-sm"
-              rows={4}
+            <RichTextEditor
+              className="mt-2"
               value={noteBody}
-              onChange={(e) => setNoteBody(e.target.value)}
-              placeholder={dialog === 'note' ? 'Your input…' : 'Your response…'}
+              onChange={setNoteBody}
+              disabled={busy}
+              placeholder="Your response…"
+              aria-label="Response message"
+              minHeightClass="min-h-[6rem]"
             />
-            <p className="mt-2 text-[11px] text-slate-400">
-              Use{' '}
-              <span className="font-medium">
-                {draftIntent === 'reply' ? 'Add Reply Attachment' : 'Add Forwarding Attachment'}
-              </span>{' '}
-              to attach files separately.
-            </p>
             <div className="mt-3 flex justify-end gap-2">
               <Button
                 variant="outline"
@@ -2325,203 +1981,17 @@ export function MarkingWorkflowPanel({
               >
                 Cancel
               </Button>
-              {dialog === 'note' ? (
-                <Button
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      if (!noteBody.trim()) throw new Error('Note text is required')
-                      if (draftIntent === 'reply' && !draftTargetUser.trim()) {
-                        throw new Error('Select which hold you are drafting a reply under')
-                      }
-                      const result = await addDraftNote(letter.id, {
-                        bodyText: noteBody,
-                        targetUser: draftTargetUser,
-                        intent: draftIntent,
-                      })
-                      setDrafts(result.drafts)
-                    })
-                  }
-                >
-                  Save draft
-                </Button>
-              ) : (
-                <Button
-                  disabled={busy || !respondMarkingId}
-                  onClick={() =>
-                    void run(async () => {
-                      if (!respondMarkingId) throw new Error('No open Response Required marking')
-                      if (!noteBody.trim()) throw new Error('Response text is required')
-                      await respondToMarking(respondMarkingId, { bodyText: noteBody })
-                    })
-                  }
-                >
-                  <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Submit
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {dialog === 'attach' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl bg-white p-4 shadow-xl">
-            <h2 className="text-sm font-bold">
-              {draftIntent === 'reply' ? 'Add Reply Attachment' : 'Add Forwarding Attachment'}
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Draft for a recipient, then confirm with{' '}
-              {draftIntent === 'reply' ? 'Reply' : 'Forward'}.
-            </p>
-            <div className="mt-2 space-y-2">
-              {draftIntent === 'reply' ? (
-                <>
-                  {activeHolds.length > 1 && (
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600">
-                        Replying under which hold?
-                      </label>
-                      <AppSelect
-                        value={contextMarkingId != null ? String(contextMarkingId) : ''}
-                        onValueChange={(v) => {
-                          const id = v ? Number(v) : null
-                          setContextMarkingId(id)
-                          const hold = activeHolds.find((h) => h.id === id)
-                          if (hold) setDraftTargetUser(replyTargetForHold(hold, me.name))
-                        }}
-                        options={[
-                          { value: '', label: 'Select hold…' },
-                          ...activeHolds.map((h) => ({
-                            value: String(h.id),
-                            label: `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
-                          })),
-                        ]}
-                        className="mt-1 w-full text-sm"
-                      />
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600">Recipient</label>
-                    <p className="mt-1 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 text-sm font-medium text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
-                      {draftTargetUser || '—'}
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <div>
-                  <label className="block text-xs font-medium text-slate-600">Recipient</label>
-                  <AppSelect
-                    value={draftTargetUser || '__common__'}
-                    onValueChange={(v) => setDraftTargetUser(v === '__common__' ? '' : v)}
-                    options={[
-                      { value: '__common__', label: 'Common to all recipients' },
-                      ...users
-                        .filter((u) => u.name !== me.name)
-                        .map((u) => ({ value: u.name, label: u.name })),
-                    ]}
-                    className="mt-1 w-full text-sm"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="mt-3 rounded-lg border border-slate-200 p-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-[8rem] flex-1">
-                  <label className="block text-[11px] font-medium text-slate-500">Type</label>
-                  <AppSelect
-                    value={defaultKind}
-                    onValueChange={(v) => setDefaultKind(v as AttachmentKind)}
-                    options={ATTACHMENT_KINDS.map((kind) => kind)}
-                    className="mt-1 w-full text-sm"
-                  />
-                </div>
-                <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                  <Paperclip className="h-3.5 w-3.5" />
-                  Choose files
-                  <input
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || [])
-                      if (!files.length) return
-                      setPendingFiles((prev) => [
-                        ...prev,
-                        ...files.map((file) => ({
-                          id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`,
-                          file,
-                          kind: defaultKind,
-                        })),
-                      ])
-                      e.target.value = ''
-                    }}
-                  />
-                </label>
-              </div>
-              {pendingFiles.length > 0 && (
-                <ul className="mt-2 space-y-1.5">
-                  {pendingFiles.map((item) => (
-                    <li key={item.id} className="flex items-center gap-2 text-xs text-slate-700">
-                      <AppSelect
-                        value={item.kind}
-                        onValueChange={(v) => {
-                          const kind = v as AttachmentKind
-                          setPendingFiles((prev) =>
-                            prev.map((row) => (row.id === item.id ? { ...row, kind } : row)),
-                          )
-                        }}
-                        options={ATTACHMENT_KINDS.map((kind) => kind)}
-                        size="sm"
-                        className="min-w-24"
-                      />
-                      <span className="min-w-0 flex-1 truncate">{item.file.name}</span>
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        onClick={() =>
-                          setPendingFiles((prev) => prev.filter((row) => row.id !== item.id))
-                        }
-                        aria-label="Remove file"
-                      >
-                        <X />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div className="mt-3 flex justify-end gap-2">
               <Button
-                variant="outline"
-                onClick={() => {
-                  setDialog(null)
-                  setPendingFiles([])
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={busy || !canAddAttachment || pendingFiles.length === 0}
+                disabled={busy || !respondMarkingId || isRichTextEmpty(noteBody)}
                 onClick={() =>
                   void run(async () => {
-                    if (!pendingFiles.length) throw new Error('Choose at least one file')
-                    if (draftIntent === 'reply' && !draftTargetUser.trim()) {
-                      throw new Error('Select which hold you are drafting a reply under')
-                    }
-                    const uploaded = await uploadPendingAttachments()
-                    const result = await addDraftAttachments(
-                      letter.id,
-                      uploaded,
-                      draftTargetUser,
-                      draftIntent,
-                    )
-                    setDrafts(result.drafts)
+                    if (!respondMarkingId) throw new Error('No open Response Required marking')
+                    if (isRichTextEmpty(noteBody)) throw new Error('Response text is required')
+                    await respondToMarking(respondMarkingId, { bodyText: noteBody })
                   })
                 }
               >
-                Save draft
+                <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Submit
               </Button>
             </div>
           </div>
@@ -2682,11 +2152,10 @@ export function MarkingWorkflowPanel({
                             key={n.id}
                             className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-700"
                           >
-                            <p className="whitespace-pre-wrap">{n.bodyText}</p>
-                            <p className="mt-1 text-[10px] text-slate-400">
-                              {n.createdAt ? formatDateTime(n.createdAt) : ''}
-                              {n.isResponse ? ' · Response' : ''}
-                            </p>
+                            <RichTextHtml html={n.bodyText} />
+                            {n.isResponse ? (
+                              <p className="mt-1 text-[10px] text-slate-400">Response</p>
+                            ) : null}
                           </li>
                         ))}
                       </ul>

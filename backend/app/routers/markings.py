@@ -33,11 +33,14 @@ from app.marking_workflow_service import (
     marking_actions_payload,
     marking_tree,
     markings_for_path,
+    replace_draft_roster,
     revoke_marking,
+    set_draft_target_privacy,
     serialize_attachment,
     serialize_batch,
     serialize_draft_attachment,
     serialize_draft_note,
+    serialize_draft_recipient,
     serialize_marking,
     sync_attachment_after_replace,
     update_attachment_meta,
@@ -124,12 +127,37 @@ class DraftNoteIn(BaseModel):
     targetUser: str = ""
     # forward | reply
     intent: str = "forward"
+    # To drafts only; default false = visible to all mark recipients.
+    sendPrivately: bool | None = None
 
 
 class DraftAttachmentsIn(BaseModel):
     targetUser: str = ""
     intent: str = "forward"
+    sendPrivately: bool | None = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DraftTargetPrivacyIn(BaseModel):
+    targetUser: str
+    sendPrivately: bool = False
+
+
+class DraftRosterRecipientIn(BaseModel):
+    toUser: str
+    role: str = "to"
+    action: str = "forward"
+    responseType: str = ""
+    responseTypeOther: str = ""
+    instructions: str = ""
+    dueAt: str | None = None
+    priority: str = ""
+    track: bool = True
+    remindersEnabled: bool = True
+
+
+class DraftRosterIn(BaseModel):
+    recipients: list[DraftRosterRecipientIn] = Field(default_factory=list)
 
 
 class RespondIn(BaseModel):
@@ -264,6 +292,33 @@ def get_drafts(letter_id: int, db: Session = Depends(get_db)) -> dict:
     return list_drafts(db, letter_id, actor)
 
 
+@router.put("/letters/{letter_id}/drafts/roster")
+def put_draft_roster(
+    letter_id: int,
+    payload: DraftRosterIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    rows = replace_draft_roster(
+        db,
+        letter=letter,
+        actor_name=actor,
+        recipients=[r.model_dump() for r in payload.recipients],
+        client_ip=client_ip_from_request(request),
+    )
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return {
+        "roster": [serialize_draft_recipient(r) for r in rows],
+        "drafts": list_drafts(db, letter_id, actor),
+    }
+
+
 @router.post("/letters/{letter_id}/drafts/notes")
 def post_draft_note(
     letter_id: int,
@@ -282,11 +337,33 @@ def post_draft_note(
         body_text=payload.bodyText,
         target_user=payload.targetUser,
         intent=payload.intent,
+        send_privately=payload.sendPrivately,
         client_ip=client_ip_from_request(request),
     )
     db.commit()
     db.refresh(row)
     return {"note": serialize_draft_note(row), "drafts": list_drafts(db, letter_id, actor)}
+
+
+@router.put("/letters/{letter_id}/drafts/privacy")
+def put_draft_target_privacy(
+    letter_id: int,
+    payload: DraftTargetPrivacyIn,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_enabled()
+    letter = _get_letter(db, letter_id)
+    actor = current_user_name(db)
+    assert_letter_access(db, letter, actor)
+    set_draft_target_privacy(
+        db,
+        letter=letter,
+        actor_name=actor,
+        target_user=payload.targetUser,
+        send_privately=payload.sendPrivately,
+    )
+    db.commit()
+    return {"ok": True, "drafts": list_drafts(db, letter_id, actor)}
 
 
 @router.post("/letters/{letter_id}/drafts/attachments")
@@ -306,6 +383,7 @@ def post_draft_attachments(
         actor_name=actor,
         target_user=payload.targetUser,
         intent=payload.intent,
+        send_privately=payload.sendPrivately,
         attachments=payload.attachments,
         client_ip=client_ip_from_request(request),
     )
