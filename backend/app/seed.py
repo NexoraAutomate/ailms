@@ -26,8 +26,8 @@ from app.models import (
 
 
 MASTER_DATA = {
-    "Letter Types": ["Incoming", "Outgoing", "Internal Memo"],
-    "Priorities": ["Routine", "Important", "Urgent"],
+    "Letter Types": ["Incoming", "Outgoing"],
+    "Priorities": ["Routine", "Important", "Urgent", "Immediate", "Most Immediate"],
     "Statuses": [
         "Draft",
         "Registered",
@@ -61,7 +61,7 @@ MASTER_DATA = {
         "Archived",
         "Overdue",
     ],
-    "Confidentiality Levels": ["Normal", "Confidential", "Restricted"],
+    "Confidentiality Levels": ["Normal", "Confidential", "Restricted", "Secret"],
     "Action Types": ["Review", "Prepare response", "Forward", "Approve", "Archive"],
     "Document Types": [
         "Original Letter",
@@ -734,6 +734,27 @@ def ensure_master_document_types(db: Session) -> None:
     for value in desired:
         if value not in existing:
             db.add(MasterValue(category="Document Types", value=value))
+
+
+def ensure_master_priorities_and_confidentiality(db: Session) -> None:
+    """Add Immediate / Most Immediate / Secret; drop obsolete Test priority."""
+    for category, values in (
+        ("Priorities", MASTER_DATA.get("Priorities", [])),
+        ("Confidentiality Levels", MASTER_DATA.get("Confidentiality Levels", [])),
+        ("Letter Types", MASTER_DATA.get("Letter Types", [])),
+    ):
+        existing = {
+            row.value
+            for row in db.query(MasterValue).filter(MasterValue.category == category).all()
+        }
+        for value in values:
+            if value not in existing:
+                db.add(MasterValue(category=category, value=value))
+    # Remove obsolete Test priority if present.
+    db.query(MasterValue).filter(
+        MasterValue.category == "Priorities",
+        MasterValue.value == "Test",
+    ).delete(synchronize_session=False)
 
 
 def ensure_master_statuses(db: Session) -> None:

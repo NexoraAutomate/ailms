@@ -137,12 +137,14 @@ def build_letter_create_from_proposal(
         "priority": _as_str(proposal.get("priority")) or "Routine",
         "status": _as_str(proposal.get("status")) or "Registered",
         "dueDate": _as_date_str(proposal.get("dueDate")),
-        "assignedTo": _as_str(proposal.get("assignedTo"))[:120],
+        # Always auto-assigned to the approving user in create_letter_record.
+        "assignedTo": "",
         "lastAction": _as_str(proposal.get("lastAction")) or "Registered",
         "confidentiality": _as_str(proposal.get("confidentiality")) or "Normal",
         "actionRequired": _as_str(proposal.get("actionRequired"))[:200],
         "remarks": _merge_remarks(proposal),
         "bodyText": body_text,
+        "correspondenceCategory": _as_str(proposal.get("correspondenceCategory"))[:40],
     }
     try:
         return LetterCreate.model_validate(payload)

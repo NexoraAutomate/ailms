@@ -686,85 +686,98 @@ function MarkingHistoryFlowInner({
           <Controls showInteractive={false} className="!shadow-md" />
           <FitViewOnChange orientation={orientation} treeKey={treeKey} />
 
-          {/* Top-left: selection vs draw (+ erase / color) */}
-          <Panel position="top-left" className="ailms-flow-draw-ui m-2 flex max-w-[min(100%,320px)] flex-col gap-1.5">
-            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-slate-300 dark:bg-slate-100/95">
+          {/* Top-left: draw tools — collapsed to active icon, expand on hover */}
+          <Panel position="top-left" className="ailms-flow-draw-ui ailms-flow-draw-tools-wrap m-2 flex max-w-[min(100%,320px)] flex-col">
+            <div
+              className={cn(
+                'ailms-flow-draw-tools rounded-lg border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-slate-300 dark:bg-slate-100/95',
+                (mode === 'draw' || mode === 'erase') && 'is-expanded',
+              )}
+              title="Hover to expand drawing tools"
+            >
               <Button
                 type="button"
                 size="xs"
                 variant={mode === 'select' ? 'default' : 'ghost'}
-                className="h-7 gap-1 px-2 text-[11px]"
+                className={cn('ailms-flow-tool-btn h-7 gap-0 px-2 text-[11px]', mode === 'select' && 'is-active')}
                 onClick={() => setMode('select')}
                 title="Selection mode"
+                aria-label="Select"
               >
-                <MousePointer2 className="size-3.5" />
-                <span className="hidden sm:inline">Select</span>
+                <MousePointer2 className="size-3.5 shrink-0" />
+                <span className="ailms-flow-tool-label">Select</span>
               </Button>
               <Button
                 type="button"
                 size="xs"
                 variant={mode === 'draw' ? 'default' : 'ghost'}
-                className="h-7 gap-1 px-2 text-[11px]"
+                className={cn('ailms-flow-tool-btn h-7 gap-0 px-2 text-[11px]', mode === 'draw' && 'is-active')}
                 onClick={() => setMode('draw')}
                 title="Draw mode"
+                aria-label="Draw"
               >
-                <Pencil className="size-3.5" />
-                <span className="hidden sm:inline">Draw</span>
+                <Pencil className="size-3.5 shrink-0" />
+                <span className="ailms-flow-tool-label">Draw</span>
               </Button>
               <Button
                 type="button"
                 size="xs"
                 variant={mode === 'erase' ? 'default' : 'ghost'}
-                className="h-7 gap-1 px-2 text-[11px]"
+                className={cn('ailms-flow-tool-btn h-7 gap-0 px-2 text-[11px]', mode === 'erase' && 'is-active')}
                 onClick={() => setMode('erase')}
                 title="Erase drawings (nodes untouched)"
+                aria-label="Erase"
               >
-                <Eraser className="size-3.5" />
-                <span className="hidden sm:inline">Erase</span>
+                <Eraser className="size-3.5 shrink-0" />
+                <span className="ailms-flow-tool-label">Erase</span>
               </Button>
               <Button
                 type="button"
                 size="xs"
                 variant="ghost"
-                className="h-7 gap-1 px-2 text-[11px] text-rose-600"
+                className="ailms-flow-tool-btn h-7 gap-0 px-2 text-[11px] text-rose-600"
                 onClick={clearAllDrawings}
                 title="Clear all drawings"
+                aria-label="Clear"
               >
-                <Trash2 className="size-3.5" />
-                <span className="hidden sm:inline">Clear</span>
+                <Trash2 className="size-3.5 shrink-0" />
+                <span className="ailms-flow-tool-label">Clear</span>
               </Button>
             </div>
-            {(mode === 'draw' || mode === 'erase') && (
-              <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white/95 px-2 py-1.5 shadow-sm dark:border-slate-300 dark:bg-slate-100/95">
-                <span className="text-[10px] font-medium text-slate-500">Ink</span>
-                {DRAW_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    aria-label={`Color ${c}`}
-                    className={cn(
-                      'size-5 rounded-full border-2 transition',
-                      drawColor === c ? 'border-slate-800 scale-110' : 'border-transparent',
-                    )}
-                    style={{ background: c }}
-                    onClick={() => {
-                      setDrawColor(c)
-                      setMode('draw')
-                    }}
-                  />
-                ))}
-                <input
-                  type="color"
-                  value={drawColor.startsWith('#') && drawColor.length === 7 ? drawColor : '#38bdf8'}
-                  aria-label="Custom draw color"
-                  className="h-6 w-7 cursor-pointer rounded border border-slate-200 bg-transparent p-0"
-                  onChange={(e) => {
-                    setDrawColor(e.target.value)
+            <div
+              className={cn(
+                'ailms-flow-ink-tray flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white/95 px-2 py-1.5 shadow-sm dark:border-slate-300 dark:bg-slate-100/95',
+                (mode === 'draw' || mode === 'erase') && 'is-open',
+              )}
+            >
+              <span className="text-[10px] font-medium text-slate-500">Ink</span>
+              {DRAW_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Color ${c}`}
+                  className={cn(
+                    'size-5 rounded-full border-2 transition',
+                    drawColor === c ? 'border-slate-800 scale-110' : 'border-transparent',
+                  )}
+                  style={{ background: c }}
+                  onClick={() => {
+                    setDrawColor(c)
                     setMode('draw')
                   }}
                 />
-              </div>
-            )}
+              ))}
+              <input
+                type="color"
+                value={drawColor.startsWith('#') && drawColor.length === 7 ? drawColor : '#38bdf8'}
+                aria-label="Custom draw color"
+                className="h-6 w-7 cursor-pointer rounded border border-slate-200 bg-transparent p-0"
+                onChange={(e) => {
+                  setDrawColor(e.target.value)
+                  setMode('draw')
+                }}
+              />
+            </div>
           </Panel>
 
           {/* Top-right: fields + fullscreen */}

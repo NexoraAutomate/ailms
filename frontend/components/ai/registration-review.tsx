@@ -31,7 +31,7 @@ const EDITABLE_FIELDS = [
   'department',
   'priority',
   'dueDate',
-  'assignedTo',
+  'correspondenceCategory',
   'confidentiality',
   'actionRequired',
   'remarks',
@@ -55,7 +55,7 @@ const FIELD_LABELS: Record<EditableField, string> = {
   department: 'Department',
   priority: 'Priority',
   dueDate: 'Due date',
-  assignedTo: 'Assigned to',
+  correspondenceCategory: 'Purpose *',
   confidentiality: 'Confidentiality',
   actionRequired: 'Action required',
   remarks: 'Remarks',
@@ -78,7 +78,7 @@ const EMPTY_FORM: FormState = {
   department: '',
   priority: '',
   dueDate: '',
-  assignedTo: '',
+  correspondenceCategory: 'Actionable',
   confidentiality: '',
   actionRequired: '',
   remarks: '',
@@ -101,11 +101,12 @@ function proposalToForm(proposal: Record<string, unknown> | null | undefined): F
       continue
     }
     if (raw == null) {
-      next[key] = ''
+      next[key] = key === 'correspondenceCategory' ? 'Actionable' : ''
       continue
     }
     next[key] = String(raw)
   }
+  if (!next.correspondenceCategory) next.correspondenceCategory = 'Actionable'
   return next
 }
 
@@ -167,7 +168,7 @@ export function RegistrationReview({
   jobId: string
   go: (target: string) => void
 }) {
-  const { departments, users, masterData } = useAppData()
+  const { departments, letters, masterData, me } = useAppData()
   const [job, setJob] = useState<AiRegistrationJob | null>(null)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [baseline, setBaseline] = useState<FormState>(EMPTY_FORM)
@@ -181,6 +182,28 @@ export function RegistrationReview({
   const [expandedEvidence, setExpandedEvidence] = useState<Record<string, boolean>>({})
   const [previewObjectUrl, setPreviewObjectUrl] = useState('')
   const [previewLoadError, setPreviewLoadError] = useState('')
+  const [duplicateLetterId, setDuplicateLetterId] = useState<string | null>(null)
+
+  const existingNumbers = useMemo(() => {
+    const seen = new Set<string>()
+    const values: string[] = []
+    for (const letter of letters) {
+      const number = (letter.number || '').trim()
+      if (!number || seen.has(number)) continue
+      seen.add(number)
+      values.push(number)
+    }
+    return values.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+  }, [letters])
+
+  const findDuplicate = useCallback(
+    (number: string) => {
+      const needle = number.trim().toLowerCase()
+      if (!needle) return null
+      return letters.find((letter) => letter.number.trim().toLowerCase() === needle) ?? null
+    },
+    [letters],
+  )
 
   const applyJob = useCallback((next: AiRegistrationJob) => {
     setJob(next)
@@ -214,7 +237,12 @@ export function RegistrationReview({
     [baseline, form],
   )
 
-  const requiredOk = Boolean(form.number.trim() && form.letterDate.trim() && form.subject.trim())
+  const requiredOk = Boolean(
+    form.number.trim() &&
+      form.letterDate.trim() &&
+      form.subject.trim() &&
+      form.correspondenceCategory.trim(),
+  )
   const editable = job?.status === 'NEEDS_REVIEW'
   const previewUrl = resolveStagedPreviewUrl(job?.stagedDocument)
   const isImage = isStagedImage(job?.stagedDocument)
@@ -266,6 +294,15 @@ export function RegistrationReview({
   const setField = (key: EditableField, value: string) => {
     setForm((current) => ({ ...current, [key]: value }))
     setSavedMsg('')
+    if (key === 'number') {
+      const match = findDuplicate(value)
+      setDuplicateLetterId(match?.id ?? null)
+      if (match) {
+        setError(`Letter number ${match.number} is already registered.`)
+      } else if (error.toLowerCase().includes('already')) {
+        setError('')
+      }
+    }
   }
 
   const saveEdits = async () => {
@@ -335,7 +372,13 @@ export function RegistrationReview({
       return
     }
     if (!requiredOk) {
-      setError('Letter number, letter date, and subject are required.')
+      setError('Letter number, letter date, subject, and purpose are required.')
+      return
+    }
+    const duplicate = findDuplicate(form.number)
+    if (duplicate) {
+      setDuplicateLetterId(duplicate.id)
+      setError(`Letter number ${duplicate.number} is already registered. Open the existing letter or change the number.`)
       return
     }
     if (!confirmed) {
@@ -345,10 +388,19 @@ export function RegistrationReview({
     setBusy(true)
     try {
       const result = await approveRegistrationJob(jobId, true)
-      setSavedMsg(`Letter registered (${result.number}).`)
+      setSavedMsg(`Letter registered (${result.number}). Assigned to ${me.name || 'you'}.`)
       setTimeout(() => go(result.letterId), 400)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to approve registration')
+      const message = err instanceof Error ? err.message : 'Failed to approve registration'
+      const match = findDuplicate(form.number)
+      if (match || /already exists/i.test(message)) {
+        if (match) setDuplicateLetterId(match.id)
+        setError(match
+          ? `Letter number ${match.number} is already registered. Open the existing letter or change the number.`
+          : message)
+      } else {
+        setError(message)
+      }
       setBusy(false)
     }
   }
@@ -405,15 +457,50 @@ export function RegistrationReview({
         />
       )
     }
-    if (key === 'assignedTo') {
+    if (key === 'correspondenceCategory') {
       return (
         <AppSelect
-          value={value}
+          value={value || 'Actionable'}
           disabled={!editable || busy}
           onValueChange={(v) => setField(key, v)}
-          options={[{ value: '', label: 'Select…' }, ...users.map((u) => ({ value: u.name, label: u.name }))]}
+          options={[
+            { value: 'Actionable', label: 'Action required' },
+            { value: 'Information', label: 'Information only' },
+          ]}
           className={common}
         />
+      )
+    }
+    if (key === 'number') {
+      return (
+        <div className="flex flex-col gap-1.5">
+          <input
+            list="ai-existing-letter-numbers"
+            value={value}
+            disabled={!editable || busy}
+            onChange={(e) => setField(key, e.target.value)}
+            placeholder="Type or pick an existing number to edit"
+            className="h-10 rounded-md border border-slate-200 bg-white px-3 text-xs disabled:bg-slate-50"
+          />
+          <datalist id="ai-existing-letter-numbers">
+            {existingNumbers.map((number) => (
+              <option key={number} value={number} />
+            ))}
+          </datalist>
+          <AppSelect
+            value=""
+            disabled={!editable || busy}
+            onValueChange={(v) => {
+              if (!v) return
+              setField('number', v)
+            }}
+            options={[
+              { value: '', label: 'Start from existing number…' },
+              ...existingNumbers.map((number) => ({ value: number, label: number })),
+            ]}
+            className={common}
+          />
+        </div>
       )
     }
     if (key === 'documentCategory') {
@@ -562,7 +649,7 @@ export function RegistrationReview({
                 return (
                   <label
                     key={key}
-                    className={`flex flex-col gap-1.5 ${key === 'subject' || TEXTAREA_FIELDS.has(key) || key === 'relatedLetterNumbers' || key === 'summary' ? 'sm:col-span-2' : ''}`}
+                    className={`flex flex-col gap-1.5 ${key === 'subject' || key === 'number' || TEXTAREA_FIELDS.has(key) || key === 'relatedLetterNumbers' || key === 'summary' ? 'sm:col-span-2' : ''}`}
                   >
                     <span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-600">
                       {FIELD_LABELS[key]}
@@ -603,6 +690,21 @@ export function RegistrationReview({
                 )
               })}
             </div>
+
+            {duplicateLetterId && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <p className="font-semibold">This letter number already exists.</p>
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setDuplicateLetterId(null); setError('') }}>
+                    Change number
+                  </Button>
+                  <Button type="button" size="sm" onClick={() => go(duplicateLetterId)}>
+                    Open existing letter
+                  </Button>
+                </div>
+              </div>
+            )}
+            <p className="mt-3 text-[11px] text-slate-400">New letters are assigned to you ({me.name || 'current user'}).</p>
           </div>
 
           <div className="space-y-3 border-t border-slate-100 bg-slate-50 px-4 py-4">
@@ -658,15 +760,17 @@ export function RegistrationReview({
               </Button>
               <Button
                 type="button"
-                disabled={busy || !editable || dirty || !requiredOk || !confirmed}
+                disabled={busy || !editable || dirty || !requiredOk || !confirmed || Boolean(duplicateLetterId)}
                 title={
-                  dirty
-                    ? 'Save edits before approving'
-                    : !confirmed
-                      ? 'Confirm review before approving'
-                      : !requiredOk
-                        ? 'Fill required fields first'
-                        : 'Create the official letter from this proposal'
+                  duplicateLetterId
+                    ? 'Letter number already exists'
+                    : dirty
+                      ? 'Save edits before approving'
+                      : !confirmed
+                        ? 'Confirm review before approving'
+                        : !requiredOk
+                          ? 'Fill required fields first'
+                          : 'Create the official letter from this proposal'
                 }
                 onClick={approve}
               >

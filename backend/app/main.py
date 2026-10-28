@@ -57,6 +57,7 @@ from app.routers.management import (
 from app.seed import (
     ensure_department_org_layout,
     ensure_master_document_types,
+    ensure_master_priorities_and_confidentiality,
     ensure_master_statuses,
     ensure_phase4b_samples,
     ensure_phase4d_samples,
@@ -160,6 +161,7 @@ def on_startup() -> None:
         ensure_seed_avatars(db)
         ensure_master_statuses(db)
         ensure_master_document_types(db)
+        ensure_master_priorities_and_confidentiality(db)
         ensure_phase4b_samples(db)
         ensure_phase4d_samples(db)
         ensure_procurement_thread_samples(db)

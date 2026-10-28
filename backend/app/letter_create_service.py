@@ -26,8 +26,14 @@ def create_letter_record(
 
     data = payload.model_dump(by_alias=False)
     actor = actor or current_user_name(db)
-    # Default holder is the registrant unless another assignee is chosen at registration.
-    assigned_to = (data["assignedTo"] or "").strip() or actor
+    # New letters are always held by the registrant; reassignment happens via marking.
+    assigned_to = actor
+    category = (data.get("correspondenceCategory") or "").strip()
+    if category and category not in {"Information", "Actionable"}:
+        raise HTTPException(
+            status_code=400,
+            detail="correspondenceCategory must be Information or Actionable",
+        )
     letter = Letter(
         number=data["number"],
         letter_date=data["letterDate"],
@@ -48,6 +54,7 @@ def create_letter_record(
         action_required=data["actionRequired"],
         remarks=data["remarks"],
         body_text=data.get("bodyText") or "",
+        correspondence_category=category,
     )
     db.add(letter)
     db.flush()

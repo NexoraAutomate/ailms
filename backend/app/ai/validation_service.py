@@ -457,6 +457,7 @@ def validate_extraction(
         "remarks": v("remarks") or "",
         "summary": v("summary") or "",
         "documentCategory": v("documentCategory") or "",
+        "correspondenceCategory": v("correspondenceCategory") or "",
         "relatedLetterNumbers": list(v("relatedLetterNumbers") or []),
         "_meta": {
             "fieldConfidence": {

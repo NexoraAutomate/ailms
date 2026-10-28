@@ -177,6 +177,93 @@
   stroke-width: 2.75px !important;
 }
 
+/* Draw tools: collapsed icon strip → expand labels on hover / focus */
+.ailms-flow-draw-tools {
+  display: inline-flex;
+  max-width: 2.75rem;
+  overflow: hidden;
+  transition: max-width 0.22s ease;
+}
+
+.ailms-flow-draw-tools:hover,
+.ailms-flow-draw-tools:focus-within,
+.ailms-flow-draw-tools.is-expanded {
+  max-width: 22rem;
+}
+
+.ailms-flow-draw-tools .ailms-flow-tool-label {
+  max-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  transition:
+    max-width 0.2s ease,
+    opacity 0.15s ease,
+    margin-left 0.2s ease;
+}
+
+.ailms-flow-draw-tools:hover .ailms-flow-tool-label,
+.ailms-flow-draw-tools:focus-within .ailms-flow-tool-label,
+.ailms-flow-draw-tools.is-expanded .ailms-flow-tool-label {
+  max-width: 4rem;
+  margin-left: 0.25rem;
+  opacity: 1;
+}
+
+.ailms-flow-draw-tools .ailms-flow-tool-btn:not(.is-active) {
+  width: 0;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  margin: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-width: 0;
+  pointer-events: none;
+  transition:
+    width 0.2s ease,
+    min-width 0.2s ease,
+    padding 0.2s ease,
+    opacity 0.15s ease,
+    margin 0.2s ease;
+}
+
+.ailms-flow-draw-tools:hover .ailms-flow-tool-btn,
+.ailms-flow-draw-tools:focus-within .ailms-flow-tool-btn,
+.ailms-flow-draw-tools.is-expanded .ailms-flow-tool-btn {
+  width: auto;
+  min-width: 1.75rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  opacity: 1;
+  overflow: visible;
+  border-width: 0;
+  pointer-events: auto;
+}
+
+.ailms-flow-ink-tray {
+  max-height: 0;
+  margin-top: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    max-height 0.2s ease,
+    opacity 0.15s ease,
+    margin-top 0.2s ease;
+}
+
+.ailms-flow-draw-tools-wrap:hover .ailms-flow-ink-tray,
+.ailms-flow-draw-tools-wrap:focus-within .ailms-flow-ink-tray,
+.ailms-flow-ink-tray.is-open {
+  max-height: 3.5rem;
+  margin-top: 0.375rem;
+  opacity: 1;
+  overflow: visible;
+  pointer-events: auto;
+}
+
 .ailms-marking-flow.draw-mode .react-flow__pane {
   cursor: crosshair;
 }

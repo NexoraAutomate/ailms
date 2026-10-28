@@ -1702,7 +1702,7 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.assertIn(self.letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
         self.assertNotIn(self.letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
 
-    def test_registration_assign_other_user_creates_inbox_hold(self) -> None:
+    def test_registration_always_assigns_to_registrant(self) -> None:
         from app.letter_create_service import create_letter_record
         from app.schemas import LetterCreate
 
@@ -1710,19 +1710,23 @@ class MarkingWorkflowTest(unittest.TestCase):
             number=_num(),
             letterDate=date.today(),
             type="Incoming",
-            subject="Registered to other",
+            subject="Registered to self",
             from_="External",
             to="Office",
             department="Secretariat",
             priority="Routine",
             status="Registered",
+            # Payload assignee is ignored; holder is always the registrant.
             assignedTo=self.user_a.name,
+            correspondenceCategory="Actionable",
         )
         letter = create_letter_record(self.db, payload, actor=self.initiator.name)
         self.db.flush()
-        self.assertIn(letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
-        self.assertNotIn(letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
-        self.assertFalse(can_edit_letter_details(self.db, letter, self.initiator.name))
+        self.assertEqual(letter.assigned_to, self.initiator.name)
+        self.assertEqual(letter.correspondence_category, "Actionable")
+        self.assertIn(letter.id, letter_ids_held_by_user(self.db, self.initiator.name))
+        self.assertNotIn(letter.id, letter_ids_held_by_user(self.db, self.user_a.name))
+        self.assertTrue(can_edit_letter_details(self.db, letter, self.initiator.name))
         # Cleanup extra letter created by this test.
         self.db.query(Marking).filter(Marking.letter_id == letter.id).delete()
         self.db.query(Letter).filter(Letter.id == letter.id).delete()

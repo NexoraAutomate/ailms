@@ -79,11 +79,30 @@ class LetterCreate(BaseModel):
     actionRequired: str = ""
     remarks: str = ""
     bodyText: str = ""
+    # Information | Actionable — set at registration when known.
+    correspondenceCategory: str = ""
 
     @field_validator("receivedDate", "dueDate", mode="before")
     @classmethod
     def blank_dates(cls, value: object) -> object:
         return empty_to_none(value)
+
+    @field_validator("correspondenceCategory", mode="before")
+    @classmethod
+    def normalize_category(cls, value: object) -> object:
+        if value is None or value == "":
+            return ""
+        text = str(value).strip()
+        aliases = {
+            "information": "Information",
+            "information only": "Information",
+            "info": "Information",
+            "fyi": "Information",
+            "actionable": "Actionable",
+            "action required": "Actionable",
+            "action": "Actionable",
+        }
+        return aliases.get(text.lower(), text)
 
 
 class LetterUpdate(BaseModel):

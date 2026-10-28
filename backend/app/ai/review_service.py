@@ -38,13 +38,13 @@ _EDITABLE_PROPOSAL_KEYS: frozenset[str] = frozenset(
         "department",
         "priority",
         "dueDate",
-        "assignedTo",
         "confidentiality",
         "actionRequired",
         "remarks",
         "summary",
         "documentCategory",
         "relatedLetterNumbers",
+        "correspondenceCategory",
     }
 )
 

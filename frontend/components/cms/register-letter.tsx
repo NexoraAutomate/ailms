@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAppData } from '@/components/app-provider'
 import { Button } from '@/components/ui/button'
 import { AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
@@ -10,6 +10,7 @@ import { AppSelect } from '@/components/ui/app-select'
 import { createRelation, listRelationTypes } from '@/services/correspondence'
 import { uploadLetterDocument } from '@/services/documents'
 import type { Letter, LetterStatus } from '@/services/letters'
+import { cn } from '@/lib/utils'
 
 export type PendingReferenceLink = {
   key: string
@@ -20,13 +21,22 @@ export type PendingReferenceLink = {
 }
 
 type RegisterMode = 'manual' | 'upload'
+type LetterPurpose = 'Actionable' | 'Information'
+
+const LETTER_TYPES = ['Incoming', 'Outgoing'] as const
+const DEFAULT_PRIORITIES = ['Routine', 'Important', 'Urgent', 'Immediate', 'Most Immediate']
+const DEFAULT_CONFIDENTIALITY = ['Normal', 'Confidential', 'Restricted', 'Secret']
 
 export function Register({ go }: { go: (p: string) => void }) {
-  const { registerLetter, departments, organizations, users, masterData, letters, me } = useAppData()
+  const { registerLetter, departments, organizations, masterData, letters, me } = useAppData()
   const [mode, setMode] = useState<RegisterMode>('manual')
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [numberError, setNumberError] = useState('')
+  const [copyError, setCopyError] = useState('')
+  const [duplicateLetter, setDuplicateLetter] = useState<Letter | null>(null)
+  const [receivedDateTouched, setReceivedDateTouched] = useState(false)
   const documentTypes = masterData['Document Types'] ?? ['Original Letter', 'Scanned Letter', 'Supporting Document', 'Reference Document']
   const [letterCopyType, setLetterCopyType] = useState(documentTypes.includes('Original Letter') ? 'Original Letter' : documentTypes[0])
   const [letterCopyFile, setLetterCopyFile] = useState<File | null>(null)
@@ -47,18 +57,97 @@ export function Register({ go }: { go: (p: string) => void }) {
     from: '',
     to: '',
     department: '',
-    assignedTo: '',
     dueDate: '',
     actionRequired: '',
     remarks: '',
     status: 'Registered',
+    correspondenceCategory: 'Actionable' as LetterPurpose,
   })
   const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
 
-  useEffect(() => {
-    if (!me.name) return
-    setForm((current) => (current.assignedTo ? current : { ...current, assignedTo: me.name }))
-  }, [me.name])
+  const priorities = useMemo(() => {
+    const fromMaster = (masterData.Priorities ?? []).filter((value) => value !== 'Test')
+    const merged = [...fromMaster]
+    for (const value of DEFAULT_PRIORITIES) {
+      if (!merged.includes(value)) merged.push(value)
+    }
+    return merged
+  }, [masterData.Priorities])
+
+  const confidentialityLevels = useMemo(() => {
+    const fromMaster = masterData['Confidentiality Levels'] ?? []
+    const merged = [...fromMaster]
+    for (const value of DEFAULT_CONFIDENTIALITY) {
+      if (!merged.includes(value)) merged.push(value)
+    }
+    return merged
+  }, [masterData])
+
+  const existingNumbers = useMemo(() => {
+    const seen = new Set<string>()
+    const values: string[] = []
+    for (const letter of letters) {
+      const number = (letter.number || '').trim()
+      if (!number || seen.has(number)) continue
+      seen.add(number)
+      values.push(number)
+    }
+    return values.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+  }, [letters])
+
+  const organizationSuggestions = useMemo(() => {
+    const seen = new Set<string>()
+    const values: string[] = []
+    const push = (raw: string) => {
+      const value = raw.trim()
+      if (!value || seen.has(value.toLowerCase())) return
+      seen.add(value.toLowerCase())
+      values.push(value)
+    }
+    for (const org of organizations) {
+      if (!org.status || org.status === 'Active') push(org.name)
+    }
+    for (const letter of letters) {
+      push(letter.from || '')
+      push(letter.to || '')
+    }
+    return values.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [organizations, letters])
+
+  const departmentSuggestions = useMemo(() => {
+    const seen = new Set<string>()
+    const values: string[] = []
+    const push = (raw: string) => {
+      const value = raw.trim()
+      if (!value || seen.has(value.toLowerCase())) return
+      seen.add(value.toLowerCase())
+      values.push(value)
+    }
+    for (const dept of departments) push(dept.name)
+    for (const letter of letters) push(letter.department || '')
+    return values.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [departments, letters])
+
+  const findDuplicate = (number: string) => {
+    const needle = number.trim().toLowerCase()
+    if (!needle) return null
+    return letters.find((letter) => letter.number.trim().toLowerCase() === needle) ?? null
+  }
+
+  const onNumberChange = (value: string) => {
+    set('number', value)
+    const match = findDuplicate(value)
+    setDuplicateLetter(match)
+    setNumberError(match ? `Letter number ${match.number} is already registered.` : '')
+  }
+
+  const onLetterDateChange = (value: string) => {
+    setForm((current) => ({
+      ...current,
+      letterDate: value,
+      receivedDate: receivedDateTouched && current.receivedDate ? current.receivedDate : value,
+    }))
+  }
 
   useEffect(() => {
     listRelationTypes()
@@ -98,8 +187,27 @@ export function Register({ go }: { go: (p: string) => void }) {
 
   const submit = async (status: LetterStatus) => {
     setError('')
+    setCopyError('')
     if (!form.number || !form.letterDate || !form.subject) {
       setError('Letter number, letter date and subject are required.')
+      return
+    }
+    if (!form.receivedDate) {
+      setError('Received date is required.')
+      return
+    }
+    if (!form.correspondenceCategory) {
+      setError('Select whether this letter is Actionable or Information.')
+      return
+    }
+    const existing = findDuplicate(form.number)
+    if (existing) {
+      setDuplicateLetter(existing)
+      setNumberError(`Letter number ${existing.number} is already registered.`)
+      return
+    }
+    if (!letterCopyFile) {
+      setCopyError('Letter copy is required. Attach a scanned or digital copy to continue.')
       return
     }
     setBusy(true)
@@ -108,12 +216,12 @@ export function Register({ go }: { go: (p: string) => void }) {
         ...form,
         type: form.type as Letter['type'],
         priority: form.priority as Letter['priority'],
+        assignedTo: me.name,
+        correspondenceCategory: form.correspondenceCategory,
         status,
         lastAction: status === 'Registered' ? 'Registered' : 'Saved as draft',
       })
-      if (letterCopyFile) {
-        await uploadLetterDocument(created.id, letterCopyFile, letterCopyType, 'Letter copy uploaded at registration')
-      }
+      await uploadLetterDocument(created.id, letterCopyFile, letterCopyType, 'Letter copy uploaded at registration')
       for (const link of pendingReferences) {
         await createRelation({
           fromLetterId: Number(created.id),
@@ -134,15 +242,28 @@ export function Register({ go }: { go: (p: string) => void }) {
       setSaved(true)
       setTimeout(() => go(created.id), 400)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to register letter')
+      const message = err instanceof Error ? err.message : 'Unable to register letter'
+      const match = findDuplicate(form.number)
+      if (match || /already exists/i.test(message)) {
+        if (match) {
+          setDuplicateLetter(match)
+          setNumberError(`Letter number ${match.number} is already registered.`)
+        } else {
+          setNumberError(message)
+        }
+      } else {
+        setError(message)
+      }
     } finally {
       setBusy(false)
     }
   }
 
+  const purposeIsActionable = form.correspondenceCategory === 'Actionable'
+
   return (
     <>
-      <PageTitle title="Register letter" description="Capture correspondence details and assign the next action." action={<Button variant="outline" onClick={() => go('All Letters')}>Cancel</Button>} />
+      <PageTitle title="Register letter" description="Capture correspondence details. New letters are assigned to you." action={<Button variant="outline" onClick={() => go('All Letters')}>Cancel</Button>} />
       <Card className="mx-auto w-full max-w-4xl">
         <div className="mb-0 flex gap-2 px-5 pt-4 pb-3">
           <button
@@ -172,27 +293,228 @@ export function Register({ go }: { go: (p: string) => void }) {
           <>
             <div className="border-b border-slate-200 px-5 py-4">
               <h2 className="text-sm font-bold text-slate-700">Basic information</h2>
-              <p className="text-xs text-slate-400">Fields marked with * are required.</p>
+              <p className="text-xs text-slate-400">Fields marked with * are required. Assigned to you ({me.name || 'current user'}).</p>
             </div>
             <div className="grid gap-5 p-5 sm:grid-cols-2">
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Letter number *</span><input value={form.number} onChange={(e) => set('number', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Letter date *</span><input type="date" value={form.letterDate} onChange={(e) => set('letterDate', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Received date *</span><input type="date" value={form.receivedDate} onChange={(e) => set('receivedDate', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Letter type *</span><AppSelect value={form.type} onValueChange={(v) => set('type', v)} options={(masterData['Letter Types'] ?? ['Incoming', 'Outgoing'])} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Subject *</span><input value={form.subject} onChange={(e) => set('subject', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Priority</span><AppSelect value={form.priority} onValueChange={(v) => set('priority', v)} options={(masterData.Priorities ?? ['Routine', 'Important', 'Urgent'])} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Confidentiality</span><AppSelect value={form.confidentiality} onValueChange={(v) => set('confidentiality', v)} options={(masterData['Confidentiality Levels'] ?? ['Normal'])} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">From organization</span><AppSelect value={form.from} onValueChange={(v) => set('from', v)} options={[{ value: '', label: 'Select…' }, ...organizations.filter((org) => !org.status || org.status === 'Active').map((org) => org.name)]} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">To organization</span><AppSelect value={form.to} onValueChange={(v) => set('to', v)} options={[{ value: '', label: 'Select…' }, ...organizations.filter((org) => !org.status || org.status === 'Active').map((org) => org.name)]} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Department</span><AppSelect value={form.department} onValueChange={(v) => set('department', v)} options={[{ value: '', label: 'Select...' }, ...departments.map((d) => ({ value: d.name, label: d.name }))]} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Assigned to</span><AppSelect value={form.assignedTo} onValueChange={(v) => set('assignedTo', v)} options={[{ value: '', label: 'Select...' }, ...users.map((u) => ({ value: u.name, label: u.name }))]} className="h-10 text-xs" /></label>
-              <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-slate-600">Due date</span><input type="date" value={form.dueDate} onChange={(e) => set('dueDate', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Action required</span><input value={form.actionRequired} onChange={(e) => set('actionRequired', e.target.value)} className="h-10 rounded-md border border-slate-200 px-3 text-xs" /></label>
-              <label className="flex flex-col gap-1.5 sm:col-span-2"><span className="text-xs font-semibold text-slate-600">Initial remarks</span><textarea rows={3} value={form.remarks} onChange={(e) => set('remarks', e.target.value)} className="rounded-md border border-slate-200 px-3 py-2 text-xs" /></label>
+              <label className="flex flex-col gap-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold text-slate-600">Letter number *</span>
+                <input
+                  list="existing-letter-numbers"
+                  value={form.number}
+                  onChange={(e) => onNumberChange(e.target.value)}
+                  placeholder="Type a number — suggestions from existing letters"
+                  className={cn(
+                    'h-10 rounded-md border px-3 text-xs',
+                    numberError ? 'border-red-300 focus:outline-red-400' : 'border-slate-200',
+                  )}
+                />
+                <datalist id="existing-letter-numbers">
+                  {existingNumbers.map((number) => (
+                    <option key={number} value={number} />
+                  ))}
+                </datalist>
+                {numberError ? (
+                  <span className="text-[11px] text-red-600">
+                    {numberError}
+                    {duplicateLetter ? (
+                      <>
+                        {' '}
+                        <button
+                          type="button"
+                          className="font-semibold underline underline-offset-2"
+                          onClick={() => go(duplicateLetter.id)}
+                        >
+                          Open existing letter
+                        </button>
+                      </>
+                    ) : null}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-400">Suggestions appear as you type. Exact duplicates are not allowed.</span>
+                )}
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Letter date *</span>
+                <input
+                  type="date"
+                  value={form.letterDate}
+                  onChange={(e) => onLetterDateChange(e.target.value)}
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Received date *</span>
+                <input
+                  type="date"
+                  value={form.receivedDate}
+                  onChange={(e) => {
+                    setReceivedDateTouched(true)
+                    set('receivedDate', e.target.value)
+                  }}
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                />
+                <span className="text-[11px] text-slate-400">Defaults to letter date; change if received later.</span>
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Letter type *</span>
+                <AppSelect
+                  value={form.type}
+                  onValueChange={(v) => set('type', v)}
+                  options={[...LETTER_TYPES]}
+                  className="h-10 text-xs"
+                />
+              </label>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Purpose *</span>
+                <div
+                  role="group"
+                  aria-label="Letter purpose"
+                  className="relative flex h-10 rounded-md border border-slate-200 bg-slate-100 p-0.5"
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'absolute inset-y-0.5 w-[calc(50%-2px)] rounded-[5px] bg-white shadow-sm transition-transform duration-300 ease-out',
+                      purposeIsActionable ? 'translate-x-0' : 'translate-x-full',
+                    )}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => set('correspondenceCategory', 'Actionable')}
+                    className={cn(
+                      'relative z-10 flex-1 rounded-[5px] text-xs font-semibold transition-colors duration-300',
+                      purposeIsActionable ? 'text-slate-900' : 'text-slate-500',
+                    )}
+                  >
+                    Actionable
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => set('correspondenceCategory', 'Information')}
+                    className={cn(
+                      'relative z-10 flex-1 rounded-[5px] text-xs font-semibold transition-colors duration-300',
+                      !purposeIsActionable ? 'text-slate-900' : 'text-slate-500',
+                    )}
+                  >
+                    Information
+                  </button>
+                </div>
+              </div>
+
+              <label className="flex flex-col gap-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold text-slate-600">Subject *</span>
+                <input
+                  value={form.subject}
+                  onChange={(e) => set('subject', e.target.value)}
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Priority</span>
+                <AppSelect
+                  value={form.priority}
+                  onValueChange={(v) => set('priority', v)}
+                  options={priorities}
+                  className="h-10 text-xs"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Confidentiality</span>
+                <AppSelect
+                  value={form.confidentiality}
+                  onValueChange={(v) => set('confidentiality', v)}
+                  options={confidentialityLevels}
+                  className="h-10 text-xs"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">From organization</span>
+                <input
+                  list="register-org-suggestions"
+                  value={form.from}
+                  onChange={(e) => set('from', e.target.value)}
+                  placeholder="Type or choose from existing"
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">To organization</span>
+                <input
+                  list="register-org-suggestions"
+                  value={form.to}
+                  onChange={(e) => set('to', e.target.value)}
+                  placeholder="Type or choose from existing"
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                />
+              </label>
+              <datalist id="register-org-suggestions">
+                {organizationSuggestions.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Department</span>
+                <input
+                  list="register-department-suggestions"
+                  value={form.department}
+                  onChange={(e) => set('department', e.target.value)}
+                  placeholder="Type or choose from existing"
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                />
+                <datalist id="register-department-suggestions">
+                  {departmentSuggestions.map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-slate-600">Due date</span>
+                <input
+                  type="date"
+                  value={form.dueDate}
+                  onChange={(e) => set('dueDate', e.target.value)}
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                />
+              </label>
+
+              <div
+                className={cn(
+                  'sm:col-span-2 overflow-hidden transition-all duration-300 ease-out',
+                  purposeIsActionable ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0',
+                )}
+              >
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-semibold text-slate-600">Action required</span>
+                  <input
+                    value={form.actionRequired}
+                    onChange={(e) => set('actionRequired', e.target.value)}
+                    placeholder="Describe the action needed"
+                    disabled={!purposeIsActionable}
+                    className="h-10 rounded-md border border-slate-200 px-3 text-xs disabled:bg-slate-50"
+                  />
+                </label>
+              </div>
+
+              <label className="flex flex-col gap-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold text-slate-600">Initial remarks</span>
+                <textarea
+                  rows={3}
+                  value={form.remarks}
+                  onChange={(e) => set('remarks', e.target.value)}
+                  className="rounded-md border border-slate-200 px-3 py-2 text-xs"
+                />
+              </label>
             </div>
+
             <div className="border-t border-slate-200 px-5 py-4">
-              <h2 className="text-sm font-bold text-slate-700">Letter copy</h2>
-              <p className="mt-1 text-xs text-slate-400">Optional scanned or digital copy of this letter.</p>
+              <h2 className="text-sm font-bold text-slate-700">Letter copy *</h2>
+              <p className="mt-1 text-xs text-slate-400">A scanned or digital copy is required to register.</p>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <label className="flex flex-col gap-1.5">
                   <span className="text-xs font-semibold text-slate-600">Document type</span>
@@ -204,11 +526,23 @@ export function Register({ go }: { go: (p: string) => void }) {
                   />
                 </label>
                 <label className="flex flex-col gap-1.5 sm:col-span-2">
-                  <span className="text-xs font-semibold text-slate-600">Upload letter copy</span>
-                  <input type="file" onChange={(e) => setLetterCopyFile(e.target.files?.[0] ?? null)} className="text-xs" />
+                  <span className="text-xs font-semibold text-slate-600">Upload letter copy *</span>
+                  <input
+                    type="file"
+                    onChange={(e) => {
+                      setLetterCopyFile(e.target.files?.[0] ?? null)
+                      setCopyError('')
+                    }}
+                    className="text-xs"
+                  />
+                  {letterCopyFile ? (
+                    <span className="text-[11px] text-emerald-700">Selected: {letterCopyFile.name}</span>
+                  ) : null}
+                  {copyError ? <span className="text-[11px] text-red-600">{copyError}</span> : null}
                 </label>
               </div>
             </div>
+
             <div className="border-t border-slate-200 px-5 py-4">
               <h2 className="text-sm font-bold text-slate-700">Reference letters</h2>
               <p className="mt-1 text-xs text-slate-400">Link existing correspondence as references. After registration you can open each linked letter from the letter detail page.</p>
@@ -265,8 +599,8 @@ export function Register({ go }: { go: (p: string) => void }) {
             </div>
             {error && <p className="px-5 pb-2 text-xs text-red-600">{error}</p>}
             <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
-              <Button variant="outline" disabled={busy} onClick={() => submit('Registered')}>Save as draft</Button>
-              <Button disabled={busy} onClick={() => submit('Registered')}>Register letter</Button>
+              <Button variant="outline" disabled={busy || Boolean(duplicateLetter)} onClick={() => submit('Registered')}>Save as draft</Button>
+              <Button disabled={busy || Boolean(duplicateLetter)} onClick={() => submit('Registered')}>Register letter</Button>
             </div>
           </>
         )}

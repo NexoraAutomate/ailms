@@ -57,7 +57,13 @@ def _validate_row(db: Session, row_number: int, row: dict[str, str]) -> tuple[di
     assigned_to = (row.get("assignedto") or row.get("assigned_to") or "").strip()
 
     valid_types = _master_values(db, "Letter Types") or {"Incoming", "Outgoing", "Internal Memo"}
-    valid_priorities = _master_values(db, "Priorities") or {"Routine", "Important", "Urgent"}
+    valid_priorities = _master_values(db, "Priorities") or {
+        "Routine",
+        "Important",
+        "Urgent",
+        "Immediate",
+        "Most Immediate",
+    }
     valid_statuses = _master_values(db, "Statuses") or {"Registered"}
     dept_names = {d.name for d in db.query(Department).all()}
     user_names = {u.name for u in db.query(User).all()}

@@ -34,7 +34,7 @@ export type LetterStatus =
   | 'Archived'
   | 'Overdue'
   | 'Open'
-export type Priority = 'Routine' | 'Important' | 'Urgent'
+export type Priority = 'Routine' | 'Important' | 'Urgent' | 'Immediate' | 'Most Immediate'
 
 export type Letter = {
   id: string
@@ -128,7 +128,16 @@ export const statusTone = (status: LetterStatus) =>
     Open: 'blue',
   }[status] ?? 'slate')
 
-export const priorityTone = (priority: Priority) => ({ Routine: 'slate', Important: 'amber', Urgent: 'red' }[priority])
+export const priorityTone = (priority: Priority) =>
+  (
+    {
+      Routine: 'slate',
+      Important: 'amber',
+      Urgent: 'red',
+      Immediate: 'red',
+      'Most Immediate': 'red',
+    } as Record<string, string>
+  )[priority] ?? 'slate'
 
 export async function listLetters(params?: {
   q?: string
