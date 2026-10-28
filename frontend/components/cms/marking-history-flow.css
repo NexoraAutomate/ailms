@@ -11,13 +11,13 @@
   --ailms-ribbon-initiator: #9a3412;
   --ailms-ribbon-text: #fff;
   --ailms-handle: #1769aa;
-  --ailms-handle-reply: #db2777;
+  --ailms-handle-reply: #ea580c;
   --ailms-turbo-a: #ff0072;
   --ailms-turbo-b: #00d4ff;
   --ailms-edge-forward: #64748b;
-  --ailms-edge-reply: #db2777;
+  --ailms-edge-reply: #ea580c;
   --ailms-edge-forward-hover: #0284c7;
-  --ailms-edge-reply-hover: #ea580c;
+  --ailms-edge-reply-hover: #c2410c;
 }
 
 .dark .ailms-marking-flow {
@@ -31,13 +31,13 @@
   --ailms-ribbon-initiator: #9a3412;
   --ailms-ribbon-text: #fff;
   --ailms-handle: #00d4ff;
-  --ailms-handle-reply: #ff0072;
+  --ailms-handle-reply: #fb923c;
   --ailms-turbo-a: #ff0072;
   --ailms-turbo-b: #00d4ff;
   --ailms-edge-forward: #67e8f9;
-  --ailms-edge-reply: #ff4db8;
+  --ailms-edge-reply: #fb923c;
   --ailms-edge-forward-hover: #22d3ee;
-  --ailms-edge-reply-hover: #fb923c;
+  --ailms-edge-reply-hover: #fdba74;
 }
 
 /* Outer RF wrapper: soft pink / cyan bloom (subtle, high transparency) */
@@ -106,6 +106,41 @@
   background: linear-gradient(135deg, #14b8a6 0%, var(--ailms-turbo-a) 40%, var(--ailms-turbo-b) 100%);
 }
 
+/* Blinking red “currently working” light — top-right corner of the node */
+.ailms-working-blink {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  z-index: 5;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #ef4444;
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  animation: ailms-working-pulse 1.25s ease-out infinite;
+  pointer-events: none;
+}
+
+.dark .ailms-working-blink {
+  border-color: #0a0a0a;
+}
+
+@keyframes ailms-working-pulse {
+  0% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.65);
+  }
+  70% {
+    opacity: 0.85;
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
 .ailms-flow-ribbon {
   display: block;
   width: 100%;
@@ -148,10 +183,21 @@
 
 .ailms-flow-handle.is-reply {
   background: var(--ailms-handle-reply) !important;
+  opacity: 0.55;
+}
+
+.ailms-flow-handle.is-reply.is-reply-out {
+  opacity: 0.7;
 }
 
 .dark .ailms-flow-handle.is-reply {
   box-shadow: 0 0 6px rgba(255, 0, 114, 0.7);
+}
+
+/* Connected reply docks pop slightly via RF connection highlight */
+.ailms-marking-flow .react-flow__handle-connecting.is-reply,
+.ailms-marking-flow .react-flow__handle-valid.is-reply {
+  opacity: 1;
 }
 
 /* Edge hover contrast — forward vs reply */
@@ -162,6 +208,8 @@
 
 .ailms-marking-flow .react-flow__edge.ailms-edge-reply path {
   stroke: var(--ailms-edge-reply) !important;
+  stroke-width: 2.6px !important;
+  stroke-dasharray: 7 5;
   transition: stroke 0.15s ease, stroke-width 0.15s ease;
 }
 
@@ -174,7 +222,13 @@
 .ailms-marking-flow .react-flow__edge.ailms-edge-reply:hover path,
 .ailms-marking-flow .react-flow__edge.ailms-edge-reply.selected path {
   stroke: var(--ailms-edge-reply-hover) !important;
-  stroke-width: 2.75px !important;
+  stroke-width: 3.25px !important;
+}
+
+/* Open arrowheads only — no filled triangular markers */
+.ailms-marking-flow .react-flow__arrowhead polyline,
+.ailms-marking-flow .react-flow__edge marker path {
+  fill: none !important;
 }
 
 /* Draw tools: collapsed icon strip → expand labels on hover / focus */

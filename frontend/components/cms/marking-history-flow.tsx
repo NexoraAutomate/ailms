@@ -1,6 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import {
   Background,
   BaseEdge,
@@ -12,6 +20,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getSmoothStepPath,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -39,6 +48,9 @@ import {
   buildMarkingFlowGraph,
   DEFAULT_VISIBLE_FIELDS,
   MARKING_FLOW_FIELD_OPTIONS,
+  REPLY_SOURCE_HANDLES,
+  REPLY_TARGET_HANDLES,
+  rebindReplyEdgeHandles,
   type MarkingFlowFieldKey,
   type MarkingFlowNode,
   type MarkingFlowNodeData,
@@ -104,41 +116,33 @@ function effectiveFields(
   return { ...globalFields, ...(overrides[nodeId] || {}) }
 }
 
+const REPLY_SIDE_POS: Record<keyof typeof REPLY_SOURCE_HANDLES, Position> = {
+  top: Position.Top,
+  right: Position.Right,
+  bottom: Position.Bottom,
+  left: Position.Left,
+}
+
+/** Offset reply-in vs reply-out when both sit on the same edge of a node. */
+function replyHandleStyle(
+  side: keyof typeof REPLY_SOURCE_HANDLES,
+  kind: 'in' | 'out',
+): CSSProperties {
+  const slot = kind === 'in' ? '32%' : '68%'
+  if (side === 'top' || side === 'bottom') return { left: slot }
+  return { top: slot }
+}
+
 function MarkingPersonNode({ data, selected }: NodeProps<MarkingFlowNode>) {
   const horizontal = data.orientation === 'horizontal'
   const fields = data.visibleFields || DEFAULT_VISIBLE_FIELDS
-  const dual = !!data.hasReplyHandles
-  const isReplyNode = !!data.isReplyNode
+  const hasOutboundReply = !!data.hasReplyHandles
+  const hasInboundReply = !!data.hasInboundReplies
+  const isRoot = data.kind === 'root' || !!data.isInitiator
 
   // Forward spine: left→right (horizontal) or top→bottom (vertical).
   const forwardIn = horizontal ? Position.Left : Position.Top
   const forwardOut = horizontal ? Position.Right : Position.Bottom
-
-  // Reply recipient faces the replier: inbound on the edge toward the parent.
-  // Parent reply source sits on the same facing axis (req: handles face each other).
-  let replyInPos = forwardIn
-  let replyOutPos = forwardIn
-  if (horizontal) {
-    // Reply nodes sit above/below and slightly left — face parent on the right edge.
-    replyInPos = Position.Right
-    // Replier keeps dual handles on the left (receive + reply out toward recipient).
-    replyOutPos = Position.Left
-  } else {
-    replyInPos = Position.Bottom
-    replyOutPos = Position.Top
-  }
-
-  // Offset dual handles on the shared inbound edge of the replier.
-  const dualInStyle = dual
-    ? horizontal
-      ? { top: '32%' }
-      : { left: '32%' }
-    : undefined
-  const dualReplyStyle = dual
-    ? horizontal
-      ? { top: '68%' }
-      : { left: '68%' }
-    : undefined
 
   return (
     <div
@@ -147,35 +151,51 @@ function MarkingPersonNode({ data, selected }: NodeProps<MarkingFlowNode>) {
         selected && 'is-selected',
         data.isInitiator && 'is-initiator',
         data.isYou && 'is-you',
+        data.inboundFanIn && 'is-fan-in',
+        data.isWorking && 'is-working',
       )}
     >
-      {/* Handles stay outside overflow:hidden so they remain visible */}
-      {!isReplyNode ? (
-        <Handle
-          id="in"
-          type="target"
-          position={forwardIn}
-          className="ailms-flow-handle"
-          style={dualInStyle}
+      {data.isWorking ? (
+        <span
+          className="ailms-working-blink"
+          title="Currently working on this letter"
+          aria-label="Currently working"
         />
       ) : null}
-      {isReplyNode ? (
-        <Handle
-          id="reply-in"
-          type="target"
-          position={replyInPos}
-          className="ailms-flow-handle is-reply"
-        />
+      {/* Forward inbound — every non-root person can receive fan-in */}
+      {!isRoot ? (
+        <Handle id="in" type="target" position={forwardIn} className="ailms-flow-handle" />
       ) : null}
-      {dual ? (
-        <Handle
-          id="reply"
-          type="source"
-          position={replyOutPos}
-          className="ailms-flow-handle is-reply"
-          style={dualReplyStyle}
-        />
-      ) : null}
+      {/* Immediate-sender docks: top / bottom / left / right — edge picks per case */}
+      {hasInboundReply
+        ? (Object.keys(REPLY_TARGET_HANDLES) as Array<keyof typeof REPLY_TARGET_HANDLES>).map(
+            (side) => (
+              <Handle
+                key={REPLY_TARGET_HANDLES[side]}
+                id={REPLY_TARGET_HANDLES[side]}
+                type="target"
+                position={REPLY_SIDE_POS[side]}
+                className="ailms-flow-handle is-reply is-reply-in"
+                style={replyHandleStyle(side, 'in')}
+              />
+            ),
+          )
+        : null}
+      {/* Replier docks: top / bottom / left / right — edge picks per case */}
+      {hasOutboundReply
+        ? (Object.keys(REPLY_SOURCE_HANDLES) as Array<keyof typeof REPLY_SOURCE_HANDLES>).map(
+            (side) => (
+              <Handle
+                key={REPLY_SOURCE_HANDLES[side]}
+                id={REPLY_SOURCE_HANDLES[side]}
+                type="source"
+                position={REPLY_SIDE_POS[side]}
+                className="ailms-flow-handle is-reply is-reply-out"
+                style={replyHandleStyle(side, 'out')}
+              />
+            ),
+          )
+        : null}
       <Handle id="out" type="source" position={forwardOut} className="ailms-flow-handle" />
 
       <div className="ailms-flow-node-inner">
@@ -200,12 +220,14 @@ function MarkingPersonNode({ data, selected }: NodeProps<MarkingFlowNode>) {
             {fields.action && data.actionLabel ? (
               <Badge tone={data.direction === 'reply' ? 'violet' : 'blue'}>{data.actionLabel}</Badge>
             ) : null}
+            {(data.markingIds?.length ?? 0) > 1 ? (
+              <Badge tone="slate">{data.markingIds!.length} marks</Badge>
+            ) : null}
             {fields.status && data.status === 'active' && data.createdAt ? (
               <Badge tone="green">{formatDate(data.createdAt)}</Badge>
             ) : fields.status && data.status && data.status !== 'root' && data.status !== 'active' ? (
               <Badge tone={statusTone(data.status)}>{data.status}</Badge>
             ) : null}
-            {fields.pathId && data.pathLabel ? <Badge tone="slate">{data.pathLabel}</Badge> : null}
           </div>
           {fields.dueAt && data.dueAt ? (
             <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">Due {data.dueAt}</p>
@@ -245,7 +267,9 @@ const nodeTypes = {
 }
 
 /**
- * U-turn edge for reply markings placed beside their source at the same depth.
+ * Orthogonal reply path that respects the live handle sides (top/bottom/left/right).
+ * Geometry is case-by-case: RF supplies sourcePosition/targetPosition from the
+ * handles chosen for this sender → immediate-sender pair.
  */
 function ReplyUTurnEdge({
   id,
@@ -253,30 +277,23 @@ function ReplyUTurnEdge({
   sourceY,
   targetX,
   targetY,
+  sourcePosition,
+  targetPosition,
   markerEnd,
   style,
   label,
   labelStyle,
 }: EdgeProps) {
-  const dx = Math.abs(sourceX - targetX)
-  const dy = Math.abs(sourceY - targetY)
-  const bulge = 52
-  let path: string
-  let labelX: number
-  let labelY: number
-
-  if (dx >= dy) {
-    const bottom = Math.max(sourceY, targetY) + bulge
-    path = `M ${sourceX},${sourceY} C ${sourceX},${bottom} ${targetX},${bottom} ${targetX},${targetY}`
-    labelX = (sourceX + targetX) / 2
-    labelY = bottom
-  } else {
-    const side = Math.max(sourceX, targetX) + bulge
-    path = `M ${sourceX},${sourceY} C ${side},${sourceY} ${side},${targetY} ${targetX},${targetY}`
-    labelX = side
-    labelY = (sourceY + targetY) / 2
-  }
-
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition: sourcePosition ?? Position.Top,
+    targetPosition: targetPosition ?? Position.Bottom,
+    borderRadius: 18,
+    offset: 28,
+  })
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
@@ -286,7 +303,7 @@ function ReplyUTurnEdge({
             className="nodrag nopan pointer-events-none absolute text-[9px] font-semibold"
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              color: (labelStyle as { fill?: string } | undefined)?.fill ?? '#a855f7',
+              color: (labelStyle as { fill?: string } | undefined)?.fill ?? '#ea580c',
             }}
           >
             {label}
@@ -354,11 +371,13 @@ function MarkingHistoryFlowInner({
   tree,
   initiatorName,
   viewerName,
+  activeHolderNames,
   onMarkingClick,
 }: {
   tree: MarkingNode[]
   initiatorName: string
   viewerName?: string
+  activeHolderNames?: string[]
   onMarkingClick?: (data: MarkingFlowNodeData) => void
 }) {
   const [orientation, setOrientation] = useState<MarkingFlowOrientation>('horizontal')
@@ -383,8 +402,8 @@ function MarkingHistoryFlowInner({
   }, [])
 
   const graph = useMemo(
-    () => buildMarkingFlowGraph(tree, initiatorName, orientation, viewerName),
-    [tree, initiatorName, orientation, viewerName],
+    () => buildMarkingFlowGraph(tree, initiatorName, orientation, viewerName, activeHolderNames),
+    [tree, initiatorName, orientation, viewerName, activeHolderNames],
   )
   const treeKey = useMemo(
     () => tree.map((n) => `${n.id}:${n.status}:${(n.children || []).length}`).join('|'),
@@ -437,8 +456,14 @@ function MarkingHistoryFlowInner({
       })
       return [...nextMarking, ...drawings] as FlowNode[]
     })
+    // Handles re-bound after paint from live positions (see effect below).
     setEdges(graph.edges)
   }, [graph, annotateMarkingNodes, rf, setNodes, setEdges])
+
+  // Keep reply connections on the side facing the other node (layout + drag).
+  useEffect(() => {
+    setEdges((eds) => rebindReplyEdgeHandles(nodes, eds))
+  }, [nodes, setEdges])
 
   useEffect(() => {
     setNodes((prev) =>
@@ -482,6 +507,12 @@ function MarkingHistoryFlowInner({
       void rf.fitView({ padding: 0.2, duration: 280 })
     }, 40)
   }, [annotateMarkingNodes, graph.edges, graph.nodes, rf, setEdges, setNodes])
+
+  /** While dragging, re-attach reply edges to the nearest facing side. */
+  const syncReplyHandlesFromNodes = useCallback(() => {
+    const live = rf.getNodes()
+    setEdges((eds) => rebindReplyEdgeHandles(live, eds))
+  }, [rf, setEdges])
 
   const toggleFullscreen = async () => {
     const el = containerRef.current
@@ -667,6 +698,8 @@ function MarkingHistoryFlowInner({
           maxZoom={2.5}
           proOptions={{ hideAttribution: true }}
           deleteKeyCode={null}
+          onNodeDrag={syncReplyHandlesFromNodes}
+          onNodeDragStop={syncReplyHandlesFromNodes}
           onPaneClick={() => {
             if (mode === 'select') setSelectedNodeId(null)
           }}
@@ -897,11 +930,14 @@ export function MarkingHistoryFlow({
   tree,
   initiatorName,
   viewerName,
+  activeHolderNames,
   onMarkingClick,
 }: {
   tree: MarkingNode[]
   initiatorName: string
   viewerName?: string
+  /** People currently holding / working the letter (unique names). */
+  activeHolderNames?: string[]
   onMarkingClick?: (data: MarkingFlowNodeData) => void
 }) {
   return (
@@ -910,6 +946,7 @@ export function MarkingHistoryFlow({
         tree={tree}
         initiatorName={initiatorName}
         viewerName={viewerName}
+        activeHolderNames={activeHolderNames}
         onMarkingClick={onMarkingClick}
       />
     </ReactFlowProvider>

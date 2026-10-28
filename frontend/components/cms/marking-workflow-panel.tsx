@@ -85,7 +85,6 @@ import {
   rejectInboxLetter,
   markingActionLabel,
   revokeMarking,
-  shortPathId,
   updateMarkingAttachment,
   updateMarkingNote,
   type AttachmentEvent,
@@ -313,15 +312,24 @@ function relatedMarkingIdsForNode(
   allMarkings: MarkingNode[],
 ): Set<number | null> {
   const ids = new Set<number | null>()
-  const mid = data.markingId == null ? null : Number(data.markingId)
-  ids.add(Number.isFinite(mid as number) ? (mid as number) : null)
-  if (mid == null || data.kind === 'root') {
+  const collapsed =
+    data.markingIds?.length
+      ? data.markingIds.map(Number).filter((n) => Number.isFinite(n))
+      : data.markingId == null
+        ? []
+        : [Number(data.markingId)].filter((n) => Number.isFinite(n))
+
+  if (data.kind === 'root') {
+    ids.add(null)
     for (const m of allMarkings) {
       if (m.parentMarkingId == null && sameWorkflowUser(m.fromUser, meName)) {
         ids.add(m.id)
       }
     }
-  } else {
+  }
+
+  for (const mid of collapsed) {
+    ids.add(mid)
     for (const m of allMarkings) {
       if (m.parentMarkingId === mid && sameWorkflowUser(m.fromUser, meName)) {
         ids.add(m.id)
@@ -1092,6 +1100,18 @@ export function MarkingWorkflowPanel({
             tree={tree}
             initiatorName={letter.createdBy || ''}
             viewerName={me.name || ''}
+            activeHolderNames={
+              initiatorHold
+                ? [(letter.createdBy || '').trim()].filter(Boolean)
+                : [
+                    ...new Map(
+                      activeLeaves
+                        .map((m) => (m.toUser || '').trim())
+                        .filter(Boolean)
+                        .map((name) => [name.toLowerCase(), name] as const),
+                    ).values(),
+                  ]
+            }
             onMarkingClick={(data) => {
               const meName = (me.name || '').trim()
               // Only the person represented by the node may open their own comments/files.
@@ -1460,9 +1480,6 @@ export function MarkingWorkflowPanel({
                             {markingActionLabel(marking.action)}
                           </Badge>
                         )}
-                        {shortPathId(marking.pathId) ? (
-                          <Badge tone="slate">Path {shortPathId(marking.pathId)}</Badge>
-                        ) : null}
                       </div>
                     </div>
                   </li>
@@ -1515,11 +1532,6 @@ export function MarkingWorkflowPanel({
                                 {markingActionLabel(marking.action)}
                               </Badge>
                             )}
-                            {shortPathId(marking.pathId) ? (
-                              <span className="font-mono text-[10px] text-slate-400">
-                                {shortPathId(marking.pathId)}
-                              </span>
-                            ) : null}
                           </span>
                         )
                       })}
@@ -2006,12 +2018,8 @@ export function MarkingWorkflowPanel({
                       value: String(h.id),
                       label:
                         h.status === 'responded'
-                          ? `Response from ${h.toUser} · ${markingActionLabel(h.action)}${
-                              shortPathId(h.pathId) ? ` · Path ${shortPathId(h.pathId)}` : ''
-                            }`
-                          : `From ${h.fromUser} · ${markingActionLabel(h.action)}${
-                              shortPathId(h.pathId) ? ` · Path ${shortPathId(h.pathId)}` : ''
-                            }`,
+                          ? `Response from ${h.toUser} · ${markingActionLabel(h.action)}`
+                          : `From ${h.fromUser} · ${markingActionLabel(h.action)}`,
                     })),
                   ]}
                   className="mt-1 w-full text-sm"
@@ -2204,7 +2212,6 @@ export function MarkingWorkflowPanel({
                       <p className="truncate text-sm font-medium text-slate-800">{m.toUser}</p>
                       <p className="text-[11px] text-slate-500">
                         {markingActionLabel(m.action)}
-                        {shortPathId(m.pathId) ? ` · Path ${shortPathId(m.pathId)}` : ''}
                         {m.createdAt ? ` · ${formatDateTime(m.createdAt)}` : ''}
                       </p>
                     </div>
@@ -2263,7 +2270,6 @@ export function MarkingWorkflowPanel({
                 <p className="mt-0.5 text-xs text-slate-500">
                   {nodeDialog.toUser}
                   {nodeDialog.actionLabel ? ` · ${nodeDialog.actionLabel}` : ''}
-                  {nodeDialog.pathLabel ? ` · Path ${nodeDialog.pathLabel}` : ''}
                 </p>
               </div>
               <Button

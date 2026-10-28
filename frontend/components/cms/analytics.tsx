@@ -15,7 +15,7 @@ import {
   PageTitle,
   type AnalyticsFilterValues,
 } from '@/components/cms/ui'
-import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
+import { AppTab, AppTabList, AppTabPanel } from '@/components/ui/app-tabs'
 import {
   statusTone,
   type Letter,
@@ -249,13 +249,13 @@ export function Analytics() {
         description="Explore correspondence with filters, or clear items that still need action."
       />
 
-      <AppTabList>
-        <button type="button" onClick={() => setView('overview')} className={appTabClass(view === 'overview')}>
+      <AppTabList groupId="analytics-tabs">
+        <AppTab active={view === 'overview'} onClick={() => setView('overview')}>
           Overview
-        </button>
-        <button type="button" onClick={() => setView('needs-action')} className={appTabClass(view === 'needs-action')}>
+        </AppTab>
+        <AppTab active={view === 'needs-action'} onClick={() => setView('needs-action')}>
           Needs action
-        </button>
+        </AppTab>
       </AppTabList>
 
       <AppTabPanel tabKey={view}>

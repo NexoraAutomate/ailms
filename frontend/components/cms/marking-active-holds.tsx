@@ -1,12 +1,7 @@
 'use client'
 
 import { Badge } from '@/components/cms/ui'
-import {
-  markingActionLabel,
-  groupMarkingsByBatch,
-  shortPathId,
-  type MarkingNode,
-} from '@/services/markings'
+import { markingActionLabel, type MarkingNode } from '@/services/markings'
 
 type HoldUser = { name: string; avatarUrl?: string; department?: string }
 
@@ -19,23 +14,25 @@ function initialsOf(name: string) {
     .join('')
 }
 
+function sameHolder(a?: string | null, b?: string | null) {
+  return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase() && !!(a || '').trim()
+}
+
 function HoldChip({
   title,
   subtitle,
   actionLabel,
-  pathLabel,
   avatarUrl,
   initials,
 }: {
   title: string
   subtitle?: string
   actionLabel?: string
-  pathLabel?: string
   avatarUrl?: string
   initials: string
 }) {
   return (
-    <div className="flex min-w-[140px] max-w-[200px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
+    <div className="flex min-w-[140px] max-w-[220px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 shadow-sm">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-100 text-xs font-bold text-slate-600">
         {avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -49,11 +46,60 @@ function HoldChip({
         {subtitle ? <p className="truncate text-[10px] text-slate-500">{subtitle}</p> : null}
         <div className="mt-0.5 flex flex-wrap gap-1">
           {actionLabel ? <Badge tone="blue">{actionLabel}</Badge> : null}
-          {pathLabel ? <Badge tone="slate">Path {pathLabel}</Badge> : null}
         </div>
       </div>
     </div>
   )
+}
+
+/** One chip per distinct holder (toUser) — multiple inbound marks collapse. */
+function uniqueHolders(leaves: MarkingNode[]): {
+  toUser: string
+  fromUsers: string[]
+  action: string
+  department?: string
+}[] {
+  const order: string[] = []
+  const map = new Map<
+    string,
+    { toUser: string; fromUsers: string[]; action: string; latestId: number }
+  >()
+
+  const sorted = [...leaves].sort((a, b) => a.id - b.id)
+  for (const m of sorted) {
+    const name = (m.toUser || '').trim() || 'Unknown'
+    const key = name.toLowerCase()
+    const from = (m.fromUser || '').trim()
+    const existing = map.get(key)
+    if (!existing) {
+      order.push(key)
+      map.set(key, {
+        toUser: name,
+        fromUsers: from ? [from] : [],
+        action: m.action,
+        latestId: m.id,
+      })
+      continue
+    }
+    if (from && !existing.fromUsers.some((f) => sameHolder(f, from))) {
+      existing.fromUsers.push(from)
+    }
+    // Prefer the newest marking's action label when collapsing.
+    if (m.id >= existing.latestId) {
+      existing.action = m.action
+      existing.latestId = m.id
+      existing.toUser = name
+    }
+  }
+
+  return order.map((key) => {
+    const row = map.get(key)!
+    return {
+      toUser: row.toUser,
+      fromUsers: row.fromUsers,
+      action: row.action,
+    }
+  })
 }
 
 export function MarkingActiveHolds({
@@ -88,34 +134,34 @@ export function MarkingActiveHolds({
     )
   }
 
-  const groups = groupMarkingsByBatch(activeLeaves)
+  const holders = uniqueHolders(activeLeaves)
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Active holders</p>
-      {groups.map(({ batchId, markings }) => (
-        <div key={batchId} className="space-y-1.5">
-          {groups.length > 1 || markings.length > 1 ? (
-            <p className="text-[10px] font-medium text-slate-400">Batch #{batchId}</p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            {markings.map((m) => {
-              const profile = byName.get(m.toUser)
-              return (
-                <HoldChip
-                  key={m.id}
-                  title={m.toUser}
-                  subtitle={profile?.department || `from ${m.fromUser}`}
-                  actionLabel={markingActionLabel(m.action)}
-                  pathLabel={shortPathId(m.pathId) || undefined}
-                  avatarUrl={profile?.avatarUrl}
-                  initials={initialsOf(m.toUser)}
-                />
-              )
-            })}
-          </div>
-        </div>
-      ))}
+      <div className="flex flex-wrap gap-2">
+        {holders.map((h) => {
+          const profile =
+            byName.get(h.toUser) ||
+            [...byName.entries()].find(([n]) => sameHolder(n, h.toUser))?.[1]
+          const fromLabel =
+            h.fromUsers.length === 0
+              ? undefined
+              : h.fromUsers.length === 1
+                ? `from ${h.fromUsers[0]}`
+                : `from ${h.fromUsers.join(', ')}`
+          return (
+            <HoldChip
+              key={h.toUser.toLowerCase()}
+              title={h.toUser}
+              subtitle={profile?.department || fromLabel}
+              actionLabel={markingActionLabel(h.action)}
+              avatarUrl={profile?.avatarUrl}
+              initials={initialsOf(h.toUser)}
+            />
+          )
+        })}
+      </div>
     </div>
   )
 }

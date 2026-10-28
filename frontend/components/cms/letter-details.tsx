@@ -26,7 +26,7 @@ import { useAppData } from '@/components/app-provider'
 import { AIAnalyzeDocument, AIIntelligencePanel } from '@/components/ai/letter-tools'
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/app-select'
-import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
+import { AppTab, AppTabList, AppTabPanel } from '@/components/ui/app-tabs'
 import { AssignedToDisplay } from '@/components/cms/assigned-to-display'
 import { Badge, Card, PageTitle } from '@/components/cms/ui'
 import { CollapsibleCardMotionProvider } from '@/components/ui/collapsible-card'
@@ -170,17 +170,12 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
         }
       />
 
-      <AppTabList>
+      <AppTabList groupId="letter-detail-tabs">
         {LETTER_TABS.map(({ id: tabId, label, icon: Icon }) => (
-          <button
-            key={tabId}
-            type="button"
-            onClick={() => setTab(tabId)}
-            className={appTabClass(tab === tabId)}
-          >
+          <AppTab key={tabId} active={tab === tabId} onClick={() => setTab(tabId)}>
             <Icon className="size-3.5" />
             {label}
-          </button>
+          </AppTab>
         ))}
       </AppTabList>
 
@@ -203,19 +198,18 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
 
           {tab === 'attachments' && (
             <div>
-              <div className="mb-4 flex flex-wrap gap-2">
+              <AppTabList groupId="letter-attachment-tabs" className="mb-4">
                 {ATTACHMENTS_SUB_TABS.map(({ id: subId, label, icon: Icon }) => (
-                  <button
+                  <AppTab
                     key={subId}
-                    type="button"
+                    active={attachmentsSubTab === subId}
                     onClick={() => setAttachmentsSubTab(subId)}
-                    className={appTabClass(attachmentsSubTab === subId)}
                   >
                     <Icon className="size-3.5" />
                     {label}
-                  </button>
+                  </AppTab>
                 ))}
-              </div>
+              </AppTabList>
               <AppTabPanel tabKey={attachmentsSubTab}>
                 {attachmentsSubTab === 'correspondence' ? (
                   <DocumentsPanel letter={letter} />

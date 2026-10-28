@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
 import { Button } from '@/components/ui/button'
-import { AppTabList, AppTabPanel, appTabClass } from '@/components/ui/app-tabs'
+import { AppTab, AppTabList, AppTabPanel } from '@/components/ui/app-tabs'
 import { IconActionButton } from '@/components/ui/icon-action-button'
 import { UserAvatar } from '@/components/ui/user-avatar'
 import { DataTable, TableActions, type DataTableColumn } from '@/components/cms/data-table'
@@ -525,17 +525,12 @@ export function SettingsHub({
         </Button>
       </div>
 
-      <AppTabList className="mb-6 flex-wrap">
+      <AppTabList groupId="settings-hub-tabs" className="mb-6 flex-wrap">
         {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => selectTab(id)}
-            className={appTabClass(tab === id)}
-          >
+          <AppTab key={id} active={tab === id} onClick={() => selectTab(id)}>
             <Icon className="size-3.5" />
             {label}
-          </button>
+          </AppTab>
         ))}
       </AppTabList>
 
