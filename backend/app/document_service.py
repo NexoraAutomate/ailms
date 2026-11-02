@@ -72,6 +72,45 @@ def assert_can_mutate_registration_document(
     assert_can_edit_letter_details(db, letter, actor or current_user_name(db))
 
 
+def assert_can_mutate_workflow_document(
+    db: Session,
+    document_id: int,
+    *,
+    actor: str | None = None,
+) -> None:
+    """Workflow files may be replaced/deleted only by an editable attachment owner."""
+    from app.marking_workflow_service import attachment_is_editable
+
+    actor_name = actor or current_user_name(db)
+    rows = (
+        db.query(CorrespondenceAttachment)
+        .filter(
+            CorrespondenceAttachment.document_id == document_id,
+            CorrespondenceAttachment.deleted_at.is_(None),
+        )
+        .all()
+    )
+    if any(attachment_is_editable(db, row, actor_name) for row in rows):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Only the person who attached this file on their current hold can replace or delete it",
+    )
+
+
+def assert_can_mutate_document(
+    db: Session,
+    letter: Letter,
+    document_id: int,
+    *,
+    actor: str | None = None,
+) -> None:
+    if document_is_workflow_linked(db, document_id):
+        assert_can_mutate_workflow_document(db, document_id, actor=actor)
+    else:
+        assert_can_mutate_registration_document(db, letter, actor=actor)
+
+
 def next_version_number(existing: list[str]) -> str:
     if not existing:
         return "1.0"
@@ -323,8 +362,7 @@ async def add_document_version(
     assert_letter_mutable(letter)
 
     actor = actor or current_user_name(db)
-    if not document_is_workflow_linked(db, document.id):
-        assert_can_mutate_registration_document(db, letter, actor=actor)
+    assert_can_mutate_document(db, letter, document.id, actor=actor)
     prior = (
         db.query(DocumentVersion)
         .filter(DocumentVersion.document_id == document.id)
@@ -418,8 +456,7 @@ def update_document_meta(
     letter = _get_letter(db, document.letter_id)
     assert_letter_mutable(letter)
     actor = actor or current_user_name(db)
-    if not document_is_workflow_linked(db, document.id):
-        assert_can_mutate_registration_document(db, letter, actor=actor)
+    assert_can_mutate_document(db, letter, document.id, actor=actor)
     if document_type is not None:
         if document_type not in DOCUMENT_TYPES:
             raise HTTPException(status_code=422, detail="Validation failed: invalid document type")
@@ -448,8 +485,7 @@ def delete_document(
     letter = _get_letter(db, document.letter_id)
     assert_letter_mutable(letter)
     actor = actor or current_user_name(db)
-    if not document_is_workflow_linked(db, document.id):
-        assert_can_mutate_registration_document(db, letter, actor=actor)
+    assert_can_mutate_document(db, letter, document.id, actor=actor)
     versions = (
         db.query(DocumentVersion)
         .filter(DocumentVersion.document_id == document.id)

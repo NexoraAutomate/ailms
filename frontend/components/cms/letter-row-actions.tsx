@@ -76,6 +76,7 @@ export function LetterRowActions({
   departments,
   onChanged,
   onDelete,
+  navFrom,
 }: {
   letter: Letter
   role: string
@@ -83,6 +84,7 @@ export function LetterRowActions({
   departments: Dept[]
   onChanged: () => Promise<void>
   onDelete: () => void
+  navFrom?: 'inbox' | 'sent'
 }) {
   const router = useRouter()
   const actions = letterRowActions(letter, role)
@@ -96,7 +98,9 @@ export function LetterRowActions({
 
   /** Assign / Forward / Reassign open Workflow Mark; Reply opens the reply dialog. */
   const openWorkflow = (action: 'forward' | 'reply' = 'forward') => {
-    router.push(`/letters/${letter.id}?tab=workflow&action=${action}`)
+    const params = new URLSearchParams({ tab: 'workflow', action })
+    if (navFrom) params.set('from', navFrom)
+    router.push(`/letters/${letter.id}?${params.toString()}`)
   }
 
   const runWorkflow = async (action: LetterRowActionId, input?: { remarks: string; assignedTo: string; level: string }) => {

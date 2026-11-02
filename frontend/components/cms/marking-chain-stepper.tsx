@@ -32,7 +32,8 @@ type MarkingChainStepperProps = {
   className?: string
 }
 
-const MS_DAY = 1000 * 60 * 60 * 24
+const MS_HOUR = 1000 * 60 * 60
+const MS_DAY = MS_HOUR * 24
 
 function sameName(a?: string | null, b?: string | null) {
   return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase() && !!(a || '').trim()
@@ -46,17 +47,31 @@ function parseTs(value?: string | null): number | null {
 
 /** Whole days between two ISO timestamps (0 on the same calendar span). */
 export function markingDelayDays(from?: string | null, to?: string | null): number | null {
+  const parts = markingDelayParts(from, to)
+  return parts ? parts.days : null
+}
+
+/** Days + remaining hours between two ISO timestamps. */
+export function markingDelayParts(
+  from?: string | null,
+  to?: string | null,
+): { days: number; hours: number } | null {
   const a = parseTs(from)
   const b = parseTs(to)
   if (a == null || b == null || b < a) return null
-  return Math.floor((b - a) / MS_DAY)
+  const ms = b - a
+  const days = Math.floor(ms / MS_DAY)
+  const hours = Math.floor((ms % MS_DAY) / MS_HOUR)
+  return { days, hours }
 }
 
-function formatDelayDays(days: number | null): string | undefined {
-  if (days == null) return undefined
-  if (days === 0) return '0d'
-  if (days === 1) return '1d'
-  return `${days}d`
+function formatDelayParts(parts: { days: number; hours: number } | null): string | undefined {
+  if (!parts) return undefined
+  const { days, hours } = parts
+  if (days <= 0 && hours <= 0) return '0h'
+  if (days <= 0) return `${hours}h`
+  if (hours <= 0) return `${days}d`
+  return `${days}d ${hours}h`
 }
 
 function PriorUsersLead({ priorCount }: { priorCount: number }) {
@@ -86,7 +101,7 @@ function PriorUsersLead({ priorCount }: { priorCount: number }) {
 
 /**
  * Compact linear chain: up to two previous holders + current holder.
- * Connector: datetime above the line, delay-in-days below.
+ * Connector: datetime above the line, delay in days + hours below.
  */
 export function MarkingChainStepper({
   steps,
@@ -117,7 +132,7 @@ export function MarkingChainStepper({
             const next = steps[index + 1]
             const hopMarkedAt = next?.markedAt
             const delayLabel = next
-              ? formatDelayDays(markingDelayDays(step.markedAt, next.markedAt))
+              ? formatDelayParts(markingDelayParts(step.markedAt, next.markedAt))
               : undefined
 
             return (

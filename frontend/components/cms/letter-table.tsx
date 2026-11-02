@@ -36,6 +36,7 @@ export function LetterTable({
   onChanged,
   onDelete,
   showSender,
+  navFrom,
   className,
   style,
 }: {
@@ -55,6 +56,8 @@ export function LetterTable({
   onDelete: (letter: Letter) => void
   /** Dedicated “Marked by” column (Inbox: who marked the letter to you). */
   showSender?: boolean
+  /** Preserved when row actions deep-link into letter detail. */
+  navFrom?: 'inbox' | 'sent'
   className?: string
   style?: CSSProperties
 }) {
@@ -228,6 +231,7 @@ export function LetterTable({
                   departments={departments}
                   onChanged={onChanged}
                   onDelete={() => onDelete(l)}
+                  navFrom={navFrom}
                 />
               )}
             </span>
@@ -249,6 +253,7 @@ export function LetterTable({
     departments,
     onChanged,
     onDelete,
+    navFrom,
   ])
 
   return (

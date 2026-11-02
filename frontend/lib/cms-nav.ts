@@ -95,17 +95,33 @@ export function isLettersSection(pathname: string): boolean {
 
 export type LettersPrimary = 'Inbox' | 'Sent' | 'Create' | 'Track' | 'Catalog'
 
-export function lettersPrimaryFromPathname(pathname: string): LettersPrimary | null {
+type SearchLike = { get(name: string): string | null } | null | undefined
+
+/** Inbox / Sent origin when opening `/letters/:id` so Track filters stay hidden. */
+export function letterDetailOrigin(search?: SearchLike): 'inbox' | 'sent' | null {
+  const from = search?.get('from')?.toLowerCase()
+  if (from === 'inbox') return 'inbox'
+  if (from === 'sent') return 'sent'
+  return null
+}
+
+export function lettersPrimaryFromPathname(pathname: string, search?: SearchLike): LettersPrimary | null {
   if (!isLettersSection(pathname)) return null
   if (pathname === '/letters/inbox') return 'Inbox'
   if (pathname === '/letters/sent') return 'Sent'
   if (pathname.startsWith('/letters/register')) return 'Create'
   if (pathname === '/letters/catalog' || pathname === '/letters/archive') return 'Catalog'
+  if (/^\/letters\/\d+$/.test(pathname)) {
+    const origin = letterDetailOrigin(search)
+    if (origin === 'inbox') return 'Inbox'
+    if (origin === 'sent') return 'Sent'
+    return 'Track'
+  }
   return 'Track'
 }
 
-export function lettersTrackViewFromPathname(pathname: string): LettersTrackView | null {
-  if (lettersPrimaryFromPathname(pathname) !== 'Track') return null
+export function lettersTrackViewFromPathname(pathname: string, search?: SearchLike): LettersTrackView | null {
+  if (lettersPrimaryFromPathname(pathname, search) !== 'Track') return null
   if (pathname === '/letters' || /^\/letters\/\d+$/.test(pathname)) return 'All Letters'
   const label = PATH_TO_LABEL[pathname]
   if (label && (LETTERS_TRACK_VIEWS as readonly string[]).includes(label)) {
@@ -114,7 +130,7 @@ export function lettersTrackViewFromPathname(pathname: string): LettersTrackView
   return 'All Letters'
 }
 
-export function labelFromPathname(pathname: string): string {
+export function labelFromPathname(pathname: string, search?: SearchLike): string {
   if (pathname === '/' || pathname === '') return 'Dashboard'
   if (pathname === '/letters/my-actions') return 'My Actions'
   if (pathname === '/onboarding') return 'Onboarding'
@@ -122,6 +138,12 @@ export function labelFromPathname(pathname: string): string {
   if (pathname === '/letters/sent') return 'Sent'
   if (pathname.startsWith('/letters/register')) return 'Create'
   if (pathname === '/letters/catalog' || pathname === '/letters/archive') return 'Catalog'
+  if (/^\/letters\/\d+$/.test(pathname)) {
+    const origin = letterDetailOrigin(search)
+    if (origin === 'inbox') return 'Inbox'
+    if (origin === 'sent') return 'Sent'
+    return 'Track'
+  }
   if (isLettersSection(pathname)) return 'Track'
   if (pathname.startsWith('/meetings/') && pathname !== '/meetings') return 'Meetings'
   if (pathname.startsWith('/ai/analysis')) return 'Letter Analysis'

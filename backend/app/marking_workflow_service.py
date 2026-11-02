@@ -2275,10 +2275,11 @@ def note_is_editable(db: Session, note: CorrespondenceNote, actor_name: str) -> 
 def attachment_is_editable(
     db: Session, attachment: CorrespondenceAttachment, actor_name: str
 ) -> bool:
-    """Current hold owner (or admin) may edit/delete attachments on that hold.
+    """Author may edit/delete only attachments they added on their *current* hold.
 
-    Seniors can replace/remove a junior's file on the marking they currently hold;
-    soft-delete + attachment events keep the junior's submission in the archive.
+    Files a marker attaches when marking to you are preview/open only for the
+    recipient. Soft-delete + attachment events still archive any later replace
+    by the author (or admin).
     """
     if _is_viewer(db, actor_name):
         return False
@@ -2289,6 +2290,8 @@ def attachment_is_editable(
         return False
     if _is_admin(db, actor_name):
         return True
+    if (attachment.created_by or "").strip() != (actor_name or "").strip():
+        return False
     return _belongs_to_current_hold(
         db, letter=letter, actor_name=actor_name, marking_id=attachment.marking_id
     )
@@ -2646,7 +2649,7 @@ def sync_attachment_after_replace(
     """Call after uploading a new document version for the same document_id.
 
     Same-user replace updates the live row and archives the prior version.
-    Cross-user replace (senior over junior) soft-deletes the junior row so their
+    Cross-user replace (admin) soft-deletes the prior owner's row so their
     submission stays queryable, then creates a new live attachment for the actor.
     """
     letter = assert_attachment_editable(db, attachment, actor_name)

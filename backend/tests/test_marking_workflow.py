@@ -1766,6 +1766,59 @@ class MarkingWorkflowTest(unittest.TestCase):
         remaining = list_drafts(self.db, self.letter.id, self.initiator.name)
         self.assertEqual(remaining["attachments"], [])
 
+    def test_recipient_cannot_mutate_marker_attachments(self) -> None:
+        """Files attached when marking to you are preview/open only for the recipient."""
+        add_draft_attachments(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            target_user=self.user_a.name,
+            intent="forward",
+            attachments=[
+                {
+                    "attachmentKind": "Supporting Doc",
+                    "documentId": None,
+                    "storageKey": "drafts/marker.pdf",
+                    "originalFilename": "marker.pdf",
+                }
+            ],
+        )
+        self.db.flush()
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[{"toUser": self.user_a.name, "action": "forward"}],
+            consume_drafts=True,
+        )
+        self.db.flush()
+
+        rows = (
+            self.db.query(CorrespondenceAttachment)
+            .filter(CorrespondenceAttachment.letter_id == self.letter.id)
+            .all()
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].created_by, self.initiator.name)
+        self.assertFalse(attachment_is_editable(self.db, rows[0], self.user_a.name))
+        self.assertFalse(attachment_is_editable(self.db, rows[0], self.initiator.name))
+
+        atts = list_attachments(self.db, self.letter.id, actor_name=self.user_a.name)
+        self.assertEqual(len(atts), 1)
+        self.assertFalse(atts[0]["editable"])
+
+        # Recipient-added files on their own hold remain editable.
+        own = add_attachments_to_marking(
+            self.db,
+            letter=self.letter,
+            actor_name=self.user_a.name,
+            marking_id=rows[0].marking_id,
+            attachments=[{"attachmentKind": "Other", "originalFilename": "mine.pdf"}],
+        )
+        self.db.flush()
+        self.assertTrue(attachment_is_editable(self.db, own[0], self.user_a.name))
+        self.assertFalse(attachment_is_editable(self.db, own[0], self.initiator.name))
+
     def test_inbox_accept_and_reject_with_reason(self) -> None:
         """New inbound letters require Accept (will work on it) or Reject with a reason."""
         create_mark_batch(

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import {
   BriefcaseBusiness,
   CheckCircle2,
@@ -31,7 +31,8 @@ const TRACK_ICONS: Record<string, React.ComponentType<{ className?: string }>> =
 /** Secondary letter filters under the header when Track is active. */
 export function LettersSubnav() {
   const pathname = usePathname()
-  const trackView = lettersTrackViewFromPathname(pathname)
+  const searchParams = useSearchParams()
+  const trackView = lettersTrackViewFromPathname(pathname, searchParams)
   if (!trackView) return null
 
   return (

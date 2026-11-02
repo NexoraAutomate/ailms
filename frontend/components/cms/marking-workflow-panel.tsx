@@ -366,6 +366,8 @@ const WORKFLOW_VISIBILITY_KEY = 'ailms.markingWorkflow.visibility'
 type WorkflowVisibility = {
   /** Emerald highlight + YOU badge on the logged-in user's comment cards. */
   highlightOwnComments: boolean
+  /** Show “Marked to you via” inbound chain stepper. */
+  showMarkedToYouChain: boolean
   /** Show active holders strip (parallel leaves). */
   showActiveHolds: boolean
   /** Show React Flow marking pathway graph. */
@@ -376,6 +378,7 @@ type WorkflowVisibility = {
 
 const DEFAULT_WORKFLOW_VISIBILITY: WorkflowVisibility = {
   highlightOwnComments: true,
+  showMarkedToYouChain: true,
   showActiveHolds: true,
   showFlowGraph: true,
   showMarkingCards: true,
@@ -1076,6 +1079,14 @@ export function MarkingWorkflowPanel({
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuCheckboxItem
+                checked={visibility.showMarkedToYouChain}
+                onCheckedChange={(checked) =>
+                  updateVisibility('showMarkedToYouChain', checked === true)
+                }
+              >
+                Marked to you via
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
                 checked={visibility.showActiveHolds}
                 onCheckedChange={(checked) => updateVisibility('showActiveHolds', checked === true)}
               >
@@ -1107,7 +1118,7 @@ export function MarkingWorkflowPanel({
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
 
-      {!loading && markedToMeChain && (
+      {!loading && visibility.showMarkedToYouChain && markedToMeChain && (
         <div className="mb-5">
           <MarkingChainStepper
             steps={markedToMeChain.steps}

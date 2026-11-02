@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   ArrowDownLeft,
@@ -28,8 +28,10 @@ import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/app-select'
 import { AppTab, AppTabList, AppTabPanel } from '@/components/ui/app-tabs'
 import { AssignedToDisplay } from '@/components/cms/assigned-to-display'
-import { Badge, Card, PageTitle } from '@/components/cms/ui'
+import { Badge, Card } from '@/components/cms/ui'
 import { CollapsibleCardMotionProvider } from '@/components/ui/collapsible-card'
+import { letterDetailOrigin } from '@/lib/cms-nav'
+import { cn } from '@/lib/utils'
 import { getLetter, priorityTone, statusTone, updateLetter, type Letter, type Priority } from '@/services/letters'
 import {
   CorrespondenceThreadPanel,
@@ -75,12 +77,31 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   const [letter, setLetter] = useState<Letter | null>(cached)
   const [loading, setLoading] = useState(!cached)
   const [denied, setDenied] = useState(false)
+  const stickySentinelRef = useRef<HTMLDivElement>(null)
+  const [compactHeader, setCompactHeader] = useState(false)
 
   useEffect(() => {
     const fromQuery = searchParams.get('tab') as LetterTabId | null
     setTab(fromQuery && LETTER_TABS.some((t) => t.id === fromQuery) ? fromQuery : 'details')
     setAttachmentsSubTab('correspondence')
   }, [id, searchParams])
+
+  useEffect(() => {
+    const sentinel = stickySentinelRef.current
+    if (!sentinel) return
+    let root: Element | null = sentinel.parentElement
+    while (root) {
+      const { overflowY } = getComputedStyle(root)
+      if (/(auto|scroll|overlay)/.test(overflowY)) break
+      root = root.parentElement
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setCompactHeader(!entry.isIntersecting),
+      { root, threshold: 0 },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [letter?.id])
 
   useEffect(() => {
     const fromCache = letters.find((item) => item.id === id) ?? null
@@ -144,15 +165,41 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
         ? CheckCircle2
         : ClipboardList
 
+  const origin = letterDetailOrigin(searchParams)
+  const backTarget = origin === 'inbox' ? 'Inbox' : origin === 'sent' ? 'Sent' : 'All Letters'
+  const backLabel =
+    origin === 'inbox' ? '← Back to Inbox' : origin === 'sent' ? '← Back to Sent' : '← Back to letter database'
+
   return (
     <>
-      <Button variant="outline" size="xs" className="mb-4" onClick={() => go('All Letters')}>← Back to letter database</Button>
-      <PageTitle
-        title={letter.subject}
-        description={
-          <>
-            <p className="font-medium text-slate-600">{letter.number}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
+      <div ref={stickySentinelRef} aria-hidden className="h-px w-full" />
+      <div
+        className={cn(
+          'sticky top-0 z-20 -mx-4 border-b border-slate-200/80 bg-[#f5f8fb]/95 px-4 backdrop-blur-md transition-[padding,box-shadow] duration-200 sm:-mx-7 sm:px-7 dark:border-slate-700/80 dark:bg-[color-mix(in_srgb,var(--background)_95%,transparent)]',
+          compactHeader ? 'py-2 shadow-sm shadow-slate-900/5 dark:shadow-black/40' : 'pb-3 pt-0',
+        )}
+      >
+        <Button
+          variant="outline"
+          size="xs"
+          className={cn(compactHeader ? 'mb-1.5 h-6 px-2 text-[10px]' : 'mb-3')}
+          onClick={() => go(backTarget)}
+        >
+          {backLabel}
+        </Button>
+        <div className={cn('min-w-0', compactHeader ? 'mb-1.5' : 'mb-3')}>
+          <h1
+            className={cn(
+              'truncate font-bold tracking-tight text-[#102a43] transition-[font-size] duration-200',
+              compactHeader ? 'text-base' : 'text-2xl',
+            )}
+            title={letter.subject}
+          >
+            {letter.subject}
+          </h1>
+          <div className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1', compactHeader ? 'mt-0.5' : 'mt-1')}>
+            <p className={cn('font-medium text-slate-600 dark:text-slate-300', compactHeader ? 'text-xs' : 'text-sm')}>{letter.number}</p>
+            <div className={cn('flex flex-wrap gap-1.5', compactHeader && 'scale-90 origin-left')}>
               <Badge tone={letter.type === 'Incoming' ? 'blue' : 'violet'}>
                 <TypeIcon className="size-3" />
                 {letter.type}
@@ -166,85 +213,92 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
                 {letter.status}
               </Badge>
             </div>
-          </>
-        }
-      />
+          </div>
+        </div>
 
-      <AppTabList groupId="letter-detail-tabs">
-        {LETTER_TABS.map(({ id: tabId, label, icon: Icon }) => (
-          <AppTab key={tabId} active={tab === tabId} onClick={() => setTab(tabId)}>
-            <Icon className="size-3.5" />
-            {label}
-          </AppTab>
-        ))}
-      </AppTabList>
+        <AppTabList groupId="letter-detail-tabs" className={cn('mb-0', compactHeader && 'scale-[0.92] origin-left')}>
+          {LETTER_TABS.map(({ id: tabId, label, icon: Icon }) => (
+            <AppTab
+              key={tabId}
+              active={tab === tabId}
+              onClick={() => setTab(tabId)}
+              className={compactHeader ? 'gap-1.5 px-2.5 py-1.5 text-[11px]' : undefined}
+            >
+              <Icon className={compactHeader ? 'size-3' : 'size-3.5'} />
+              {label}
+            </AppTab>
+          ))}
+        </AppTabList>
+      </div>
 
-      <CollapsibleCardMotionProvider animated={false}>
-        <AppTabPanel tabKey={tab}>
-          {tab === 'details' && (
-            <CorrespondenceDetailsPanel
-              letter={letter}
-              users={users}
-              departments={departments}
-              organizations={organizations}
-              letterTypes={masterData['Letter Types'] ?? ['Incoming', 'Outgoing']}
-              onSaved={async () => {
-                await refresh()
-                const next = await getLetter(letter.id)
-                setLetter(next)
-              }}
-            />
-          )}
+      <div className="pt-4">
+        <CollapsibleCardMotionProvider animated={false}>
+          <AppTabPanel tabKey={tab}>
+            {tab === 'details' && (
+              <CorrespondenceDetailsPanel
+                letter={letter}
+                users={users}
+                departments={departments}
+                organizations={organizations}
+                letterTypes={masterData['Letter Types'] ?? ['Incoming', 'Outgoing']}
+                onSaved={async () => {
+                  await refresh()
+                  const next = await getLetter(letter.id)
+                  setLetter(next)
+                }}
+              />
+            )}
 
-          {tab === 'attachments' && (
-            <div>
-              <AppTabList groupId="letter-attachment-tabs" className="mb-4">
-                {ATTACHMENTS_SUB_TABS.map(({ id: subId, label, icon: Icon }) => (
-                  <AppTab
-                    key={subId}
-                    active={attachmentsSubTab === subId}
-                    onClick={() => setAttachmentsSubTab(subId)}
-                  >
-                    <Icon className="size-3.5" />
-                    {label}
-                  </AppTab>
-                ))}
-              </AppTabList>
-              <AppTabPanel tabKey={attachmentsSubTab}>
-                {attachmentsSubTab === 'correspondence' ? (
-                  <DocumentsPanel letter={letter} />
-                ) : (
-                  <AIAnalyzeDocument letter={letter} />
-                )}
-              </AppTabPanel>
-            </div>
-          )}
+            {tab === 'attachments' && (
+              <div>
+                <AppTabList groupId="letter-attachment-tabs" className="mb-4">
+                  {ATTACHMENTS_SUB_TABS.map(({ id: subId, label, icon: Icon }) => (
+                    <AppTab
+                      key={subId}
+                      active={attachmentsSubTab === subId}
+                      onClick={() => setAttachmentsSubTab(subId)}
+                    >
+                      <Icon className="size-3.5" />
+                      {label}
+                    </AppTab>
+                  ))}
+                </AppTabList>
+                <AppTabPanel tabKey={attachmentsSubTab}>
+                  {attachmentsSubTab === 'correspondence' ? (
+                    <DocumentsPanel letter={letter} />
+                  ) : (
+                    <AIAnalyzeDocument letter={letter} />
+                  )}
+                </AppTabPanel>
+              </div>
+            )}
 
-          {tab === 'workflow' && (
-            <MarkingWorkflowPanel
-              letter={letter}
-              users={users}
-              onDone={refresh}
-              initialAction={searchParams.get('action')}
-            />
-          )}
+            {tab === 'workflow' && (
+              <MarkingWorkflowPanel
+                letter={letter}
+                users={users}
+                onDone={refresh}
+                initialAction={searchParams.get('action')}
+              />
+            )}
 
-          {tab === 'meetings' && <RelatedMeetingsPanel letter={letter} go={go} />}
+            {tab === 'meetings' && <RelatedMeetingsPanel letter={letter} go={go} />}
 
-          {tab === 'references' && (
-            <CorrespondenceThreadPanel letter={letter} go={go} />
-          )}
+            {tab === 'references' && (
+              <CorrespondenceThreadPanel letter={letter} go={go} />
+            )}
 
-          {tab === 'ai' && (
-            <AIIntelligencePanel
-              letter={letter}
-              letters={letters}
-              onApplyField={(field, value, decision) => applyLetterField(letter.id, field, value, decision)}
-              onAcceptAction={(next, decision) => acceptAiAction(letter.id, next, decision)}
-            />
-          )}
-        </AppTabPanel>
-      </CollapsibleCardMotionProvider>
+            {tab === 'ai' && (
+              <AIIntelligencePanel
+                letter={letter}
+                letters={letters}
+                onApplyField={(field, value, decision) => applyLetterField(letter.id, field, value, decision)}
+                onAcceptAction={(next, decision) => acceptAiAction(letter.id, next, decision)}
+              />
+            )}
+          </AppTabPanel>
+        </CollapsibleCardMotionProvider>
+      </div>
     </>
   )
 }

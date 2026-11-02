@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import {
   Archive,
   Library,
@@ -113,7 +113,8 @@ function Sidebar({
 }) {
   const { unreadCount, me } = useAppData()
   const pathname = usePathname()
-  const page = labelFromPathname(pathname)
+  const searchParams = useSearchParams()
+  const page = labelFromPathname(pathname, searchParams)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const isAdmin = ['administrator', 'admin'].includes(me.role.trim().toLowerCase())
   const folded = !mobile && !expanded

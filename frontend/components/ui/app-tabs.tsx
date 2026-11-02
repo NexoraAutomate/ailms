@@ -22,8 +22,8 @@ export function appTabClass(active: boolean, className?: string) {
   return cn(
     'flex shrink-0 items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-semibold transition-all duration-200',
     active
-      ? 'border-[#0d3763] bg-gradient-to-b from-[#134a7c] to-[#0d3763] text-white shadow-md shadow-[#0d3763]/25'
-      : 'border-slate-300 bg-white text-slate-600 hover:border-[#0d3763]/45 hover:bg-slate-50 hover:text-[#0d3763]',
+      ? 'border-[#0d3763] bg-gradient-to-b from-[#134a7c] to-[#0d3763] text-white shadow-md shadow-[#0d3763]/25 dark:border-sky-500 dark:from-sky-600 dark:to-sky-800 dark:shadow-sky-950/40'
+      : 'border-slate-300 bg-white text-slate-600 hover:border-[#0d3763]/45 hover:bg-slate-50 hover:text-[#0d3763] dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-sky-500/50 dark:hover:bg-neutral-800 dark:hover:text-sky-200',
     className,
   )
 }
@@ -45,7 +45,7 @@ export function AppTabList({
       <div
         role="tablist"
         className={cn(
-          'mb-5 inline-flex max-w-full items-center overflow-x-auto rounded-xl border border-[#0d3763]/18 bg-gradient-to-b from-[#e8eef5] to-[#d5dee9] p-1 shadow-[inset_0_1px_2px_rgba(13,55,99,0.08)]',
+          'mb-5 inline-flex max-w-full items-center overflow-x-auto rounded-xl border border-[#0d3763]/18 bg-gradient-to-b from-[#e8eef5] to-[#d5dee9] p-1 shadow-[inset_0_1px_2px_rgba(13,55,99,0.08)] dark:border-neutral-600 dark:from-neutral-800 dark:to-neutral-950 dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]',
           className,
         )}
       >
@@ -72,7 +72,9 @@ export function AppTab({ active, className, children, type = 'button', ...props 
       aria-selected={active}
       className={cn(
         'relative z-10 flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors duration-200',
-        active ? 'text-white' : 'text-slate-600 hover:bg-white/50 hover:text-[#0d3763]',
+        active
+          ? 'text-white'
+          : 'text-slate-600 hover:bg-white/50 hover:text-[#0d3763] dark:text-neutral-400 dark:hover:bg-neutral-700/60 dark:hover:text-sky-200',
         className,
       )}
       {...props}
@@ -80,7 +82,7 @@ export function AppTab({ active, className, children, type = 'button', ...props 
       {active ? (
         <motion.span
           layoutId={pillId}
-          className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-b from-[#134a7c] to-[#0d3763] shadow-md shadow-[#0d3763]/30"
+          className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-b from-[#134a7c] to-[#0d3763] shadow-md shadow-[#0d3763]/30 dark:from-sky-600 dark:to-sky-800 dark:shadow-sky-950/40"
           transition={
             reduceMotion
               ? { duration: 0 }

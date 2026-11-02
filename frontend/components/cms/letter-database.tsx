@@ -261,7 +261,11 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
       {bulkMsg && <p className="mb-3 text-xs text-slate-600">{bulkMsg}</p>}
       <LetterTable
         data={data}
-        onOpen={(id) => go(id)}
+        onOpen={(id) => {
+          if (isInboxPage) go(`/letters/${id}?from=inbox`)
+          else if (isSentPage) go(`/letters/${id}?from=sent`)
+          else go(id)
+        }}
         selectable={selectable}
         lockInaccessible={isCatalog}
         selectedIds={selected}
@@ -281,6 +285,7 @@ export function Database({ page, query, go, aiSearch, onClearAi, refresh }: { pa
         onChanged={reload}
         onDelete={(letter) => setPendingDelete([letter])}
         showSender={isInboxPage}
+        navFrom={isInboxPage ? 'inbox' : isSentPage ? 'sent' : undefined}
       />
       {pendingDelete && pendingDelete.length > 0 && (
         <LetterDeleteDialog
