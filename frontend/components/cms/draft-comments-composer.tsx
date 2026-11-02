@@ -98,6 +98,10 @@ const TO_ACTIONS: { value: MarkingAction; label: string }[] = [
   { value: 'response_required', label: 'Response Required' },
 ]
 
+function normalizeDraftHtml(html: string | null | undefined) {
+  return isRichTextEmpty(html) ? '' : html || ''
+}
+
 function noteForTarget(notes: DraftNote[], target: string) {
   return notes.find(
     (n) =>
@@ -176,26 +180,99 @@ export const DraftCommentsComposer = forwardRef<
 ) {
   const isReplyMode = mode === 'reply'
   const lockedTo = (lockedToUser || '').trim()
-  const [toEntries, setToEntries] = useState<ToEntry[]>([])
-  const [infoUsers, setInfoUsers] = useState<string[]>([])
-  const [activeToUser, setActiveToUser] = useState<string | null>(null)
-  const [commonBody, setCommonBody] = useState('')
-  const [perToBodies, setPerToBodies] = useState<Record<string, string>>({})
+  // Seed from drafts on first paint so TipTap never mounts empty then wipes a saved note.
+  const seeded = useMemo(() => {
+    if (!drafts) {
+      return {
+        to: [] as ToEntry[],
+        info: [] as string[],
+        commonHtml: '',
+        commonId: null as number | null,
+        bodies: {} as Record<string, string>,
+        privateFlags: {} as Record<string, boolean>,
+        ids: {} as Record<string, number | null>,
+        savedPerTo: {} as Record<string, string>,
+      }
+    }
+    const { to, info } = rosterToEntries(drafts)
+    const commonNote = noteForTarget(drafts.notes, '')
+    const bodies: Record<string, string> = {}
+    const privateFlags: Record<string, boolean> = {}
+    const ids: Record<string, number | null> = {}
+    const savedPerTo: Record<string, string> = {}
+    for (const entry of to) {
+      const n = noteForTarget(drafts.notes, entry.toUser)
+      const att = attsForTarget(drafts.attachments, entry.toUser)[0]
+      const body = n?.bodyText ?? ''
+      bodies[entry.toUser] = body
+      savedPerTo[entry.toUser] = normalizeDraftHtml(body)
+      ids[entry.toUser] = n?.id ?? null
+      privateFlags[entry.toUser] = Boolean(n?.sendPrivately ?? att?.sendPrivately)
+    }
+    return {
+      to,
+      info,
+      commonHtml: commonNote?.bodyText ?? '',
+      commonId: commonNote?.id ?? null,
+      bodies,
+      privateFlags,
+      ids,
+      savedPerTo,
+    }
+  }, [drafts])
+
+  const [toEntries, setToEntries] = useState<ToEntry[]>(() => seeded.to)
+  const [infoUsers, setInfoUsers] = useState<string[]>(() => seeded.info)
+  const [activeToUser, setActiveToUser] = useState<string | null>(() => seeded.to[0]?.toUser ?? null)
+  const [commonBody, setCommonBody] = useState(() => seeded.commonHtml)
+  const [perToBodies, setPerToBodies] = useState<Record<string, string>>(() => seeded.bodies)
   /** Send Privately per To recipient — default off (visible to all mark recipients). */
-  const [perToPrivate, setPerToPrivate] = useState<Record<string, boolean>>({})
+  const [perToPrivate, setPerToPrivate] = useState<Record<string, boolean>>(() => seeded.privateFlags)
   const [defaultKind, setDefaultKind] = useState<AttachmentKind>('Supporting Doc')
   const [busyAttach, setBusyAttach] = useState(false)
   const [saveError, setSaveError] = useState('')
-  const [hydrated, setHydrated] = useState(false)
+  const [hydrated, setHydrated] = useState(() => Boolean(drafts))
 
   const rosterTimer = useRef<number | null>(null)
   const commonTimer = useRef<number | null>(null)
   const perToTimers = useRef<Record<string, number>>({})
-  const commonNoteIdRef = useRef<number | null>(null)
-  const perToNoteIdsRef = useRef<Record<string, number | null>>({})
+  const commonNoteIdRef = useRef<number | null>(seeded.commonId)
+  const perToNoteIdsRef = useRef<Record<string, number | null>>(seeded.ids)
   const skipRosterSave = useRef(true)
-  const hydratedLetterRef = useRef<string | null>(null)
+  const hydratedLetterRef = useRef<string | null>(drafts ? letterId : null)
   const savingContentRef = useRef(false)
+  const onDraftsChangeRef = useRef(onDraftsChange)
+  const disabledRef = useRef(disabled)
+  const commonBodyRef = useRef(seeded.commonHtml)
+  const perToBodiesRef = useRef(seeded.bodies)
+  const perToPrivateRef = useRef(seeded.privateFlags)
+  const toEntriesRef = useRef(seeded.to)
+  const infoUsersRef = useRef(seeded.info)
+  /** Last successfully persisted common HTML ('' = empty). null until hydrated. */
+  const lastSavedCommonRef = useRef<string | null>(
+    drafts ? normalizeDraftHtml(seeded.commonHtml) : null,
+  )
+  const lastSavedPerToRef = useRef<Record<string, string>>(seeded.savedPerTo)
+  /** True only after the user edits the field — blocks hydrate/unmount empty-deletes. */
+  const userEditedCommonRef = useRef(false)
+  const userEditedPerToRef = useRef<Record<string, boolean>>({})
+  /** Ignore TipTap empty flashes right after hydrate/mount. */
+  const ignoreEmptyUntilRef = useRef(Date.now() + 1000)
+  const persistCommonBodyRef = useRef<
+    (html: string, opts?: { allowDelete?: boolean }) => Promise<void>
+  >(async () => {})
+  const persistPerToBodyRef = useRef<
+    (user: string, html: string, opts?: { allowDelete?: boolean }) => Promise<void>
+  >(async () => {})
+  const persistRosterRef = useRef<() => Promise<void>>(async () => {})
+
+  onDraftsChangeRef.current = onDraftsChange
+  disabledRef.current = disabled
+  commonBodyRef.current = commonBody
+  perToBodiesRef.current = perToBodies
+  perToPrivateRef.current = perToPrivate
+  toEntriesRef.current = toEntries
+  infoUsersRef.current = infoUsers
 
   const applyHydration = useCallback((source: MarkingDrafts) => {
     const { to, info } = rosterToEntries(source)
@@ -203,22 +280,36 @@ export const DraftCommentsComposer = forwardRef<
     const bodies: Record<string, string> = {}
     const privateFlags: Record<string, boolean> = {}
     const ids: Record<string, number | null> = {}
+    const savedPerTo: Record<string, string> = {}
     for (const entry of to) {
       const n = noteForTarget(source.notes, entry.toUser)
       const att = attsForTarget(source.attachments, entry.toUser)[0]
-      bodies[entry.toUser] = n?.bodyText ?? ''
+      const body = n?.bodyText ?? ''
+      bodies[entry.toUser] = body
+      savedPerTo[entry.toUser] = normalizeDraftHtml(body)
       ids[entry.toUser] = n?.id ?? null
       privateFlags[entry.toUser] = Boolean(n?.sendPrivately ?? att?.sendPrivately)
     }
+    const commonHtml = commonNote?.bodyText ?? ''
     skipRosterSave.current = true
+    userEditedCommonRef.current = false
+    userEditedPerToRef.current = {}
+    ignoreEmptyUntilRef.current = Date.now() + 1000
+    // Keep refs in sync immediately — state updates are async and unmount can race them.
+    commonBodyRef.current = commonHtml
+    perToBodiesRef.current = bodies
+    toEntriesRef.current = to
+    infoUsersRef.current = info
     setToEntries(to)
     setInfoUsers(info)
     setActiveToUser(to[0]?.toUser ?? null)
-    setCommonBody(commonNote?.bodyText ?? '')
+    setCommonBody(commonHtml)
     setPerToBodies(bodies)
     setPerToPrivate(privateFlags)
     commonNoteIdRef.current = commonNote?.id ?? null
     perToNoteIdsRef.current = ids
+    lastSavedCommonRef.current = normalizeDraftHtml(commonHtml)
+    lastSavedPerToRef.current = savedPerTo
     setHydrated(true)
     window.setTimeout(() => {
       skipRosterSave.current = false
@@ -228,7 +319,13 @@ export const DraftCommentsComposer = forwardRef<
   // Hydrate once per letter from server drafts (avoid re-seeding after our own autosaves).
   useEffect(() => {
     if (!drafts) return
-    if (hydratedLetterRef.current === letterId) return
+    if (hydratedLetterRef.current === letterId) {
+      // State was seeded synchronously from drafts — only lift the roster-save gate.
+      const t = window.setTimeout(() => {
+        skipRosterSave.current = false
+      }, 50)
+      return () => window.clearTimeout(t)
+    }
     hydratedLetterRef.current = letterId
     applyHydration(drafts)
   }, [applyHydration, drafts, letterId])
@@ -271,11 +368,15 @@ export const DraftCommentsComposer = forwardRef<
     if (serverEmpty && !localHasRecipients) {
       commonNoteIdRef.current = null
       perToNoteIdsRef.current = {}
+      lastSavedCommonRef.current = ''
+      lastSavedPerToRef.current = {}
     }
   }, [drafts, infoUsers.length, letterId, toEntries.length])
 
   const buildRosterPayload = useCallback((): DraftRosterRecipientInput[] => {
-    const rows: DraftRosterRecipientInput[] = toEntries.map((e) => ({
+    const entries = toEntriesRef.current
+    const infos = infoUsersRef.current
+    const rows: DraftRosterRecipientInput[] = entries.map((e) => ({
       toUser: e.toUser,
       role: 'to',
       action: e.action,
@@ -288,22 +389,144 @@ export const DraftCommentsComposer = forwardRef<
       track: true,
       remindersEnabled: true,
     }))
-    for (const name of infoUsers) {
+    for (const name of infos) {
       rows.push({ toUser: name, role: 'info', action: 'for_info', track: true, remindersEnabled: true })
     }
     return rows
-  }, [infoUsers, toEntries])
+  }, [])
 
   const persistRoster = useCallback(async () => {
-    if (skipRosterSave.current || disabled) return
+    if (skipRosterSave.current || disabledRef.current) return
     try {
       const result = await putDraftRoster(letterId, buildRosterPayload())
-      onDraftsChange(result.drafts)
+      onDraftsChangeRef.current(result.drafts)
       setSaveError('')
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save recipients')
     }
-  }, [buildRosterPayload, disabled, letterId, onDraftsChange])
+  }, [buildRosterPayload, letterId])
+
+  const persistCommonBody = useCallback(
+    async (html: string, opts?: { allowDelete?: boolean }) => {
+      if (disabledRef.current) return
+      const normalized = normalizeDraftHtml(html)
+      if (lastSavedCommonRef.current !== null && lastSavedCommonRef.current === normalized) {
+        return
+      }
+      const existingId = commonNoteIdRef.current
+      savingContentRef.current = true
+      try {
+        if (!normalized) {
+          // Never delete during TipTap mount/hydrate flashes — only after a real user clear.
+          if (
+            !opts?.allowDelete ||
+            existingId == null ||
+            Date.now() < ignoreEmptyUntilRef.current
+          ) {
+            return
+          }
+          const result = await deleteDraftNote(existingId)
+          commonNoteIdRef.current = null
+          lastSavedCommonRef.current = ''
+          onDraftsChangeRef.current(result.drafts)
+          return
+        }
+        if (existingId != null) {
+          const result = await updateDraftNote(existingId, normalized)
+          onDraftsChangeRef.current(result.drafts)
+        } else {
+          const result = await addDraftNote(letterId, {
+            bodyText: normalized,
+            targetUser: '',
+            intent: 'forward',
+          })
+          commonNoteIdRef.current = result.note.id
+          onDraftsChangeRef.current(result.drafts)
+        }
+        lastSavedCommonRef.current = normalized
+        setSaveError('')
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : 'Failed to save common comment')
+      } finally {
+        savingContentRef.current = false
+      }
+    },
+    [letterId],
+  )
+
+  const persistPerToBody = useCallback(
+    async (user: string, html: string, opts?: { allowDelete?: boolean }) => {
+      if (disabledRef.current) return
+      const normalized = normalizeDraftHtml(html)
+      if ((lastSavedPerToRef.current[user] ?? '') === normalized) {
+        return
+      }
+      const existingId = perToNoteIdsRef.current[user] ?? null
+      savingContentRef.current = true
+      try {
+        if (!normalized) {
+          if (
+            !opts?.allowDelete ||
+            existingId == null ||
+            Date.now() < ignoreEmptyUntilRef.current
+          ) {
+            return
+          }
+          const result = await deleteDraftNote(existingId)
+          perToNoteIdsRef.current[user] = null
+          lastSavedPerToRef.current[user] = ''
+          onDraftsChangeRef.current(result.drafts)
+          return
+        }
+        if (existingId != null) {
+          const result = await updateDraftNote(existingId, normalized)
+          onDraftsChangeRef.current(result.drafts)
+        } else {
+          const result = await addDraftNote(letterId, {
+            bodyText: normalized,
+            targetUser: user,
+            intent: 'forward',
+            sendPrivately: perToPrivateRef.current[user] ?? false,
+          })
+          perToNoteIdsRef.current[user] = result.note.id
+          onDraftsChangeRef.current(result.drafts)
+        }
+        lastSavedPerToRef.current[user] = normalized
+        setSaveError('')
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : 'Failed to save comment')
+      } finally {
+        savingContentRef.current = false
+      }
+    },
+    [letterId],
+  )
+
+  const handleCommonChange = useCallback((html: string) => {
+    const empty = isRichTextEmpty(html)
+    // TipTap often emits an empty update while applying hydrated content — ignore it.
+    if (empty && Date.now() < ignoreEmptyUntilRef.current) return
+    if (empty && !isRichTextEmpty(commonBodyRef.current) && !userEditedCommonRef.current) {
+      return
+    }
+    userEditedCommonRef.current = true
+    commonBodyRef.current = html
+    setCommonBody(html)
+  }, [])
+
+  const handlePerToChange = useCallback((user: string, html: string) => {
+    const empty = isRichTextEmpty(html)
+    const prev = perToBodiesRef.current[user] ?? ''
+    if (empty && Date.now() < ignoreEmptyUntilRef.current) return
+    if (empty && !isRichTextEmpty(prev) && !userEditedPerToRef.current[user]) return
+    userEditedPerToRef.current[user] = true
+    perToBodiesRef.current = { ...perToBodiesRef.current, [user]: html }
+    setPerToBodies((p) => ({ ...p, [user]: html }))
+  }, [])
+
+  persistCommonBodyRef.current = persistCommonBody
+  persistPerToBodyRef.current = persistPerToBody
+  persistRosterRef.current = persistRoster
 
   useEffect(() => {
     if (!hydrated || skipRosterSave.current) return
@@ -316,86 +539,11 @@ export const DraftCommentsComposer = forwardRef<
     }
   }, [hydrated, persistRoster, toEntries, infoUsers])
 
-  const persistCommonBody = useCallback(
-    async (html: string) => {
-      if (disabled) return
-      const empty = isRichTextEmpty(html)
-      const existingId = commonNoteIdRef.current
-      savingContentRef.current = true
-      try {
-        if (empty) {
-          if (existingId != null) {
-            const result = await deleteDraftNote(existingId)
-            commonNoteIdRef.current = null
-            onDraftsChange(result.drafts)
-          }
-          return
-        }
-        if (existingId != null) {
-          const result = await updateDraftNote(existingId, html)
-          onDraftsChange(result.drafts)
-        } else {
-          const result = await addDraftNote(letterId, {
-            bodyText: html,
-            targetUser: '',
-            intent: 'forward',
-          })
-          commonNoteIdRef.current = result.note.id
-          onDraftsChange(result.drafts)
-        }
-        setSaveError('')
-      } catch (err) {
-        setSaveError(err instanceof Error ? err.message : 'Failed to save common comment')
-      } finally {
-        savingContentRef.current = false
-      }
-    },
-    [disabled, letterId, onDraftsChange],
-  )
-
-  const persistPerToBody = useCallback(
-    async (user: string, html: string) => {
-      if (disabled) return
-      const empty = isRichTextEmpty(html)
-      const existingId = perToNoteIdsRef.current[user] ?? null
-      savingContentRef.current = true
-      try {
-        if (empty) {
-          if (existingId != null) {
-            const result = await deleteDraftNote(existingId)
-            perToNoteIdsRef.current[user] = null
-            onDraftsChange(result.drafts)
-          }
-          return
-        }
-        if (existingId != null) {
-          const result = await updateDraftNote(existingId, html)
-          onDraftsChange(result.drafts)
-        } else {
-          const result = await addDraftNote(letterId, {
-            bodyText: html,
-            targetUser: user,
-            intent: 'forward',
-            sendPrivately: perToPrivate[user] ?? false,
-          })
-          perToNoteIdsRef.current[user] = result.note.id
-          onDraftsChange(result.drafts)
-        }
-        setSaveError('')
-      } catch (err) {
-        setSaveError(err instanceof Error ? err.message : 'Failed to save comment')
-      } finally {
-        savingContentRef.current = false
-      }
-    },
-    [disabled, letterId, onDraftsChange, perToPrivate],
-  )
-
   useEffect(() => {
     if (!hydrated) return
     if (commonTimer.current != null) window.clearTimeout(commonTimer.current)
     commonTimer.current = window.setTimeout(() => {
-      void persistCommonBody(commonBody)
+      void persistCommonBody(commonBody, { allowDelete: userEditedCommonRef.current })
     }, 400)
     return () => {
       if (commonTimer.current != null) window.clearTimeout(commonTimer.current)
@@ -409,13 +557,43 @@ export const DraftCommentsComposer = forwardRef<
       const text = perToBodies[user] ?? ''
       if (perToTimers.current[user] != null) window.clearTimeout(perToTimers.current[user])
       perToTimers.current[user] = window.setTimeout(() => {
-        void persistPerToBody(user, text)
+        void persistPerToBody(user, text, {
+          allowDelete: Boolean(userEditedPerToRef.current[user]),
+        })
       }, 400)
     }
     return () => {
       for (const t of Object.values(perToTimers.current)) window.clearTimeout(t)
     }
   }, [hydrated, perToBodies, persistPerToBody, toEntries])
+
+  // Flush pending draft writes when leaving Workflow (panel unmounts on tab switch).
+  // Never delete on flush — empty body here is often a hydrate/unmount race, not a user clear.
+  useEffect(() => {
+    return () => {
+      if (rosterTimer.current != null) {
+        window.clearTimeout(rosterTimer.current)
+        rosterTimer.current = null
+      }
+      if (commonTimer.current != null) {
+        window.clearTimeout(commonTimer.current)
+        commonTimer.current = null
+      }
+      for (const key of Object.keys(perToTimers.current)) {
+        const t = perToTimers.current[key]
+        if (t != null) window.clearTimeout(t)
+      }
+      perToTimers.current = {}
+
+      void persistRosterRef.current()
+      const commonHtml = normalizeDraftHtml(commonBodyRef.current)
+      if (commonHtml) void persistCommonBodyRef.current(commonHtml, { allowDelete: false })
+      for (const [user, html] of Object.entries(perToBodiesRef.current)) {
+        const text = normalizeDraftHtml(html)
+        if (text) void persistPerToBodyRef.current(user, text, { allowDelete: false })
+      }
+    }
+  }, [])
 
   const setToUsers = (names: string[]) => {
     if (isReplyMode) return
@@ -813,12 +991,7 @@ export const DraftCommentsComposer = forwardRef<
                 key={`to-${activeEntry.toUser}`}
                 className="mt-1"
                 value={perToBodies[activeEntry.toUser] ?? ''}
-                onChange={(html) =>
-                  setPerToBodies((prev) => ({
-                    ...prev,
-                    [activeEntry.toUser]: html,
-                  }))
-                }
+                onChange={(html) => handlePerToChange(activeEntry.toUser, html)}
                 disabled={disabled}
                 placeholder={`Message for ${activeEntry.toUser}…`}
                 aria-label={`Message for ${activeEntry.toUser}`}
@@ -875,7 +1048,7 @@ export const DraftCommentsComposer = forwardRef<
           </label>
           <RichTextEditor
             value={commonBody}
-            onChange={setCommonBody}
+            onChange={handleCommonChange}
             disabled={disabled}
             placeholder={
               isReplyMode

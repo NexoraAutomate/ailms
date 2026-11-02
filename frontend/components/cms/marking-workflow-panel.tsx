@@ -46,6 +46,11 @@ import {
 import { RichTextEditor } from '@/components/cms/rich-text-editor'
 import { RichTextHtml } from '@/components/cms/rich-text-html'
 import { MarkingActiveHolds } from '@/components/cms/marking-active-holds'
+import {
+  MarkingChainStepper,
+  buildMarkingChainToViewer,
+  pickViewerHold,
+} from '@/components/cms/marking-chain-stepper'
 import { MarkingHistoryFlow } from '@/components/cms/marking-history-flow'
 import type { MarkingFlowNodeData } from '@/lib/marking-flow-layout'
 import { useAppData } from '@/components/app-provider'
@@ -729,6 +734,10 @@ export function MarkingWorkflowPanel({
       })
     }
   }, [])
+
+  const handleDraftsChange = useCallback((next: MarkingDrafts) => {
+    setDrafts({ ...next, roster: next.roster ?? [] })
+  }, [])
   const [parentMarkingId, setParentMarkingId] = useState<number | null>(null)
   const [noteBody, setNoteBody] = useState('')
   const [forceClose, setForceClose] = useState(false)
@@ -787,6 +796,21 @@ export function MarkingWorkflowPanel({
   }
 
   const flatMarkings = useMemo(() => flattenMarkings(tree), [tree])
+
+  /** Compact chain to me — only when this letter is currently marked to the viewer. */
+  const markedToMeChain = useMemo(() => {
+    const meName = (me.name || '').trim()
+    if (!meName) return null
+    const hold = pickViewerHold(activeHolds, meName)
+    if (!hold) return null
+    return buildMarkingChainToViewer({
+      hold,
+      allMarkings: flatMarkings,
+      users,
+      viewerName: meName,
+      originMarkedAt: letter.receivedDate || letter.letterDate || undefined,
+    })
+  }, [activeHolds, flatMarkings, letter.letterDate, letter.receivedDate, me.name, users])
 
   const timelineItems = useMemo(
     () => buildCommentsTimeline(flatMarkings, notes, attachments),
@@ -1083,6 +1107,17 @@ export function MarkingWorkflowPanel({
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
 
+      {!loading && markedToMeChain && (
+        <div className="mb-5">
+          <MarkingChainStepper
+            steps={markedToMeChain.steps}
+            currentStep={markedToMeChain.currentStep}
+            priorCount={markedToMeChain.priorCount}
+            viewerName={me.name}
+          />
+        </div>
+      )}
+
       {!loading && visibility.showActiveHolds && (
         <div className="mb-5">
           <MarkingActiveHolds
@@ -1318,7 +1353,7 @@ export function MarkingWorkflowPanel({
             users={users}
             meName={me.name}
             drafts={drafts}
-            onDraftsChange={(next) => setDrafts({ ...next, roster: next.roster ?? [] })}
+            onDraftsChange={handleDraftsChange}
             disabled={busy}
             hideMarkButton
             mode={composerMode}

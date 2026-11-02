@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -516,6 +516,10 @@ export function RichTextEditor({
   minHeightClass = 'min-h-[6.5rem]',
   'aria-label': ariaLabel,
 }: RichTextEditorProps) {
+  const onChangeRef = useRef(onChange)
+  const suppressOnChangeRef = useRef(false)
+  onChangeRef.current = onChange
+
   const editor = useEditor({
     immediatelyRender: false,
     editable: !disabled,
@@ -563,8 +567,9 @@ export function RichTextEditor({
       },
     },
     onUpdate: ({ editor: ed }) => {
+      if (suppressOnChangeRef.current) return
       const html = ed.getHTML()
-      onChange(isRichTextEmpty(html) ? '' : html)
+      onChangeRef.current(isRichTextEmpty(html) ? '' : html)
     },
   })
 
@@ -582,7 +587,16 @@ export function RichTextEditor({
     const currentEmpty = isRichTextEmpty(current)
     if (incomingEmpty && currentEmpty) return
     if (incoming === current) return
+    suppressOnChangeRef.current = true
     editor.commands.setContent(incoming || '', { emitUpdate: false })
+    // TipTap can still emit a trailing transaction on some builds — keep suppressed briefly.
+    const t = window.setTimeout(() => {
+      suppressOnChangeRef.current = false
+    }, 0)
+    return () => {
+      window.clearTimeout(t)
+      suppressOnChangeRef.current = false
+    }
   }, [editor, value])
 
   if (!editor) {
