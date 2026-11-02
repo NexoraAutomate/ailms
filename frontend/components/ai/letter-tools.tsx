@@ -924,6 +924,10 @@ const LETTER_QA_PROMPTS = [
   'When is the deadline?',
   'Who sent this letter?',
   'What is the current status?',
+  'Summarize the marking workflow so far',
+  'Who currently holds this letter?',
+  'What comments have been written?',
+  'Are there any pending responses?',
 ]
 
 type LetterQaMessage = {
@@ -1014,7 +1018,7 @@ function AILetterQA({ letter }: { letter: Letter }) {
     <div className="flex min-h-[360px] flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] text-slate-400">
-          Ask anything about {letter.number}
+          Ask about the letter, marking pathway, comments, or workflow for {letter.number}
           {aiBackend?.enabled ? ` · Live · ${aiBackend.provider}` : ' · Local fallback when LLM is unavailable'}
         </p>
         {messages.length > 0 && (
@@ -1071,7 +1075,8 @@ function AILetterQA({ letter }: { letter: Letter }) {
       <div ref={scrollerRef} className="flex max-h-[320px] min-h-[200px] flex-1 flex-col gap-3 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/60 p-3">
         {messages.length === 0 && status === 'idle' && (
           <p className="text-xs text-slate-500">
-            Ask about the subject, body text, deadline, sender, required actions, or status for this letter.
+            Ask about the subject, body text, deadline, sender, required actions, status, marking
+            pathway, instructions, pending responses, or comments users wrote on this letter.
           </p>
         )}
         {messages.map((message) => (
@@ -1105,7 +1110,7 @@ function AILetterQA({ letter }: { letter: Letter }) {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question about this letter…"
+          placeholder="Ask about the letter, markings, comments, or workflow…"
           className="h-10 flex-1 rounded-md border border-slate-200 px-3 text-xs"
           disabled={status === 'generating'}
         />

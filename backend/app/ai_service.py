@@ -877,15 +877,18 @@ async def letter_qa(
     """Answer a user question about a single opened letter (metadata + body text).
 
     Standalone questions (no history) use exact-match cache + deterministic field
-    answers so repeated prompts skip the LLM.
+    answers so repeated prompts skip the LLM. Includes marking workflow, pathway,
+    and comments visible to the current user when the marking workflow is enabled.
     """
     from app.ai_qa_cache import (
+        build_letter_qa_workflow_context,
         get_cached_answer,
         record_cache_hit,
         try_deterministic_answer,
         upsert_qa_answer,
     )
     from app.config import get_settings
+    from app.services import current_user_name
 
     letter = db.get(Letter, letter_id)
     if not letter:
@@ -894,9 +897,11 @@ async def letter_qa(
     history_items = list(history or [])
     standalone = len(history_items) == 0
     q = (message or "").strip()
+    actor = current_user_name(db)
+    workflow: dict[str, Any] | None = None
 
     if standalone and not force:
-        cached = get_cached_answer(db, letter, q)
+        cached = get_cached_answer(db, letter, q, actor_name=actor)
         if cached is not None:
             record_cache_hit(db, cached)
             return {
@@ -906,15 +911,28 @@ async def letter_qa(
                 "source": cached.source or "cache",
             }
 
+        # Letter-field answers first (no workflow load); then pathway/comments.
         deterministic = try_deterministic_answer(letter, q)
+        if not deterministic:
+            workflow = build_letter_qa_workflow_context(db, letter_id, actor)
+            deterministic = try_deterministic_answer(
+                letter,
+                q,
+                db=db,
+                actor_name=actor,
+                workflow=workflow,
+            )
         if deterministic:
-            upsert_qa_answer(db, letter, q, deterministic, source="deterministic")
+            upsert_qa_answer(db, letter, q, deterministic, source="deterministic", actor=actor)
             return {
                 "text": deterministic,
                 "letterId": letter_id,
                 "cached": False,
                 "source": "deterministic",
             }
+
+    if workflow is None:
+        workflow = build_letter_qa_workflow_context(db, letter_id, actor)
 
     history_lines: list[str] = []
     for item in history_items[-8:]:
@@ -928,17 +946,24 @@ async def letter_qa(
     system = (
         "You are the AILMS letter Q&A assistant. The user has opened one correspondence file "
         "and is asking questions about it. Answer using only the provided letter record "
-        "(including bodyText / remarks when present). "
+        "(including bodyText / remarks when present) and the marking workflow context "
+        "(pathway markings, batch remarks, instructions, acceptance/rejection, pending "
+        "Response Required items, and user comments/notes visible to the current viewer). "
+        "You may answer questions about who marked whom, current holders, workflow progress, "
+        "instructions given on markings, and what users wrote in comments. "
         "Follow the user's formatting instructions precisely (length, sentence count, word limits). "
         "If no formatting constraint is given, answer in plain professional English in 2-4 sentences. "
-        "If the letter record does not contain enough information, say what is missing. "
-        "Do not invent facts, dates, organizations, or actions that are not present in the data. "
-        "Do not discuss other letters unless they are referenced in this letter's fields."
+        "If the letter record and workflow context do not contain enough information, say what is missing. "
+        "Do not invent facts, dates, organizations, markings, comments, or actions that are not present "
+        "in the data. Do not discuss other letters unless they are referenced in this letter's fields. "
+        "Comments and markings listed are already filtered to what the current viewer may see; "
+        "do not claim additional private comments exist."
     )
     user = (
         f"{history_block}"
         f"User question: {message}\n\n"
-        f"Opened letter:\n{payload}"
+        f"Opened letter:\n{payload}\n\n"
+        f"Marking workflow and comments (viewer-scoped):\n{workflow}"
     )
     text = await chat_completion(system=system, user=user, temperature=0.3)
     answer = text.strip()
@@ -951,5 +976,6 @@ async def letter_qa(
             answer,
             source="llm",
             model_id=settings.active_llm_model or "",
+            actor=actor,
         )
     return {"text": answer, "letterId": letter_id, "cached": False, "source": "llm"}

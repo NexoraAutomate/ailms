@@ -216,6 +216,10 @@ export async function fetchLetterQuestions(letterId: string | number): Promise<L
         'When is the deadline?',
         'Who sent this letter?',
         'What is the current status?',
+        'Summarize the marking workflow so far',
+        'Who currently holds this letter?',
+        'What comments have been written?',
+        'Are there any pending responses?',
       ],
     }
   }
@@ -738,6 +742,20 @@ function mockLetterQaReply(letter: Letter, message: string): string {
   if (/priority|urgenc/.test(q)) {
     return `${letter.number} is recorded as ${letter.priority} priority.`
   }
+  if (/who (currently )?holds|current holder|who (has|holds) this/.test(q)) {
+    return letter.assignedTo
+      ? `${letter.number} is currently held by ${letter.assignedTo}.`
+      : `No current holder is recorded for ${letter.number}.`
+  }
+  if (/marking workflow|workflow so far|pathway|pending response|comment|comments|notes?/.test(q)) {
+    return (
+      `Workflow and comment details for ${letter.number} need the live AI service. ` +
+      `Register fields show status ${letter.status}` +
+      (letter.assignedTo ? `, currently assigned to ${letter.assignedTo}` : '') +
+      (letter.lastAction ? `, last action “${letter.lastAction}”` : '') +
+      `.`
+    )
+  }
   if (/summar|about|subject|content|say|mention|explain|what/.test(q)) {
     if (body) {
       return body.length > 500 ? `${body.slice(0, 500).trim()}…` : body
@@ -752,7 +770,7 @@ function mockLetterQaReply(letter: Letter, message: string): string {
     `Based on the register entry for ${letter.number}: subject “${letter.subject}”, ` +
     `status ${letter.status}, priority ${letter.priority}` +
     (letter.dueDate ? `, due ${letter.dueDate}` : '') +
-    `. Ask a more specific question about the content, deadline, sender, or required action.`
+    `. Ask a more specific question about the content, deadline, sender, required action, markings, or comments.`
   )
 }
 

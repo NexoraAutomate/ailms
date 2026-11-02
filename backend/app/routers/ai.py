@@ -444,18 +444,35 @@ async def api_letter_qa(body: LetterQaIn, db: Session = Depends(get_db)) -> dict
     history = [{"role": item.role, "content": item.content} for item in body.history]
     message = body.message.strip()
     try:
-        from app.ai_qa_cache import assert_letter_for_qa, get_cached_answer, try_deterministic_answer
+        from app.ai_qa_cache import (
+            assert_letter_for_qa,
+            build_letter_qa_workflow_context,
+            get_cached_answer,
+            try_deterministic_answer,
+        )
+        from app.services import current_user_name
 
         letter = assert_letter_for_qa(db, body.letter_id)
+        actor = current_user_name(db)
         standalone = len(history) == 0
-        can_skip_llm = (
-            standalone
-            and not body.force
-            and (
-                get_cached_answer(db, letter, message) is not None
-                or try_deterministic_answer(letter, message) is not None
-            )
-        )
+        can_skip_llm = False
+        if standalone and not body.force:
+            if get_cached_answer(db, letter, message, actor_name=actor) is not None:
+                can_skip_llm = True
+            elif try_deterministic_answer(letter, message) is not None:
+                can_skip_llm = True
+            else:
+                workflow = build_letter_qa_workflow_context(db, body.letter_id, actor)
+                can_skip_llm = (
+                    try_deterministic_answer(
+                        letter,
+                        message,
+                        db=db,
+                        actor_name=actor,
+                        workflow=workflow,
+                    )
+                    is not None
+                )
         if not can_skip_llm:
             _guard_configured()
         result = await letter_qa(

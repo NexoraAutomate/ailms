@@ -43,11 +43,43 @@ class LetterQaTest(unittest.IsolatedAsyncioTestCase):
         )
         db = MagicMock()
         db.get.return_value = letter
+        workflow = {
+            "enabled": True,
+            "viewer": "S. Khan",
+            "currentHolders": ["S. Khan"],
+            "markings": [
+                {
+                    "id": 1,
+                    "fromUser": "Registrar",
+                    "toUser": "S. Khan",
+                    "action": "forward",
+                    "status": "active",
+                    "instructions": "Please review milestones",
+                }
+            ],
+            "batches": [{"id": 1, "remarks": "Initial mark", "fromUser": "Registrar"}],
+            "comments": [
+                {
+                    "id": 9,
+                    "authorUser": "Registrar",
+                    "bodyText": "Focus on delivery dates.",
+                    "isResponse": False,
+                }
+            ],
+            "pendingResponses": [],
+        }
 
-        with patch(
-            "app.ai_service.chat_completion",
-            new=AsyncMock(return_value="The letter asks for delivery milestone clarification."),
-        ) as mock_chat:
+        with (
+            patch(
+                "app.ai_service.chat_completion",
+                new=AsyncMock(return_value="The letter asks for delivery milestone clarification."),
+            ) as mock_chat,
+            patch("app.services.current_user_name", return_value="S. Khan"),
+            patch(
+                "app.ai_qa_cache.build_letter_qa_workflow_context",
+                return_value=workflow,
+            ),
+        ):
             result = await letter_qa(
                 db,
                 12,
@@ -63,6 +95,10 @@ class LetterQaTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SUP/IN/2026/001", user_prompt)
         self.assertIn("delivery milestones", user_prompt)
         self.assertIn("user: hello", user_prompt)
+        self.assertIn("Focus on delivery dates.", user_prompt)
+        self.assertIn("Please review milestones", user_prompt)
+        system_prompt = mock_chat.await_args.kwargs["system"]
+        self.assertIn("marking workflow", system_prompt.lower())
 
     async def test_letter_qa_missing_letter(self) -> None:
         db = MagicMock()

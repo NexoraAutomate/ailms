@@ -52,6 +52,88 @@ class QaCacheHelpersTest(unittest.TestCase):
         self.assertIn("OrbitTech", sender or "")
         self.assertIsNone(try_deterministic_answer(letter, "What is this letter about?"))
 
+    def test_deterministic_workflow_holders_and_comments(self) -> None:
+        letter = Letter(
+            id=12,
+            number="SUP/IN/2026/001",
+            letter_date=date(2026, 3, 1),
+            type="Incoming",
+            subject="Test",
+            sender="OrbitTech",
+            status="Under Review",
+            assigned_to="S. Khan",
+        )
+        workflow = {
+            "enabled": True,
+            "viewer": "Registrar",
+            "currentHolders": ["S. Khan", "A. Ali"],
+            "markings": [
+                {
+                    "id": 1,
+                    "fromUser": "Registrar",
+                    "toUser": "S. Khan",
+                    "action": "forward",
+                    "status": "active",
+                    "instructions": "Review",
+                    "respondedAt": "",
+                },
+                {
+                    "id": 2,
+                    "fromUser": "Registrar",
+                    "toUser": "A. Ali",
+                    "action": "response_required",
+                    "status": "active",
+                    "responseType": "comments",
+                    "dueAt": "2026-03-25",
+                    "instructions": "Please comment",
+                    "respondedAt": "",
+                },
+            ],
+            "batches": [],
+            "comments": [
+                {
+                    "id": 3,
+                    "authorUser": "Registrar",
+                    "bodyText": "Kindly expedite the technical review.",
+                    "isResponse": False,
+                }
+            ],
+            "pendingResponses": [
+                {
+                    "markingId": 2,
+                    "fromUser": "Registrar",
+                    "toUser": "A. Ali",
+                    "responseType": "comments",
+                    "dueAt": "2026-03-25",
+                    "instructions": "Please comment",
+                }
+            ],
+        }
+        holders = try_deterministic_answer(
+            letter, "Who currently holds this letter?", workflow=workflow
+        )
+        self.assertIsNotNone(holders)
+        self.assertIn("S. Khan", holders or "")
+        self.assertIn("A. Ali", holders or "")
+
+        pending = try_deterministic_answer(
+            letter, "Are there any pending responses?", workflow=workflow
+        )
+        self.assertIsNotNone(pending)
+        self.assertIn("A. Ali", pending or "")
+
+        comments = try_deterministic_answer(
+            letter, "What comments have been written?", workflow=workflow
+        )
+        self.assertIsNotNone(comments)
+        self.assertIn("expedite", comments or "")
+
+        summary = try_deterministic_answer(
+            letter, "Summarize the marking workflow so far", workflow=workflow
+        )
+        self.assertIsNotNone(summary)
+        self.assertIn("Registrar", summary or "")
+
 
 class QaCacheStoreTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -194,6 +276,7 @@ class LetterQaWithCacheTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch("app.ai_qa_cache.get_cached_answer", return_value=cached_row),
             patch("app.ai_qa_cache.record_cache_hit") as hit,
+            patch("app.services.current_user_name", return_value="S. Khan"),
             patch("app.ai_service.chat_completion", new=AsyncMock()) as mock_chat,
         ):
             result = await letter_qa(db, 12, "What is this letter about?", history=[])
@@ -226,6 +309,7 @@ class LetterQaWithCacheTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch("app.ai_qa_cache.get_cached_answer", return_value=None),
             patch("app.ai_qa_cache.upsert_qa_answer") as upsert,
+            patch("app.services.current_user_name", return_value="S. Khan"),
             patch("app.ai_service.chat_completion", new=AsyncMock()) as mock_chat,
         ):
             result = await letter_qa(db, 12, "When is the deadline?", history=[])
