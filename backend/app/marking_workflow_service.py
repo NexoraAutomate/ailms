@@ -3178,6 +3178,38 @@ def letter_ids_held_by_user(db: Session, user_name: str) -> set[int]:
     return held
 
 
+def batch_mark_recipients(db: Session, marking: Marking) -> dict[str, str]:
+    """To / Info peer lists for the mark batch that produced this marking."""
+    to_names: list[str] = []
+    info_names: list[str] = []
+    batch_id = getattr(marking, "batch_id", None)
+    if batch_id is not None:
+        siblings = (
+            db.query(Marking)
+            .filter(
+                Marking.batch_id == int(batch_id),
+                Marking.status != "revoked",
+            )
+            .order_by(Marking.id.asc())
+            .all()
+        )
+    else:
+        siblings = [marking]
+    for row in siblings:
+        person = (row.to_user or "").strip()
+        if not person:
+            continue
+        if (row.action or "").strip() == "for_info":
+            if person not in info_names:
+                info_names.append(person)
+        elif person not in to_names:
+            to_names.append(person)
+    return {
+        "markToUsers": ", ".join(to_names),
+        "markInfoUsers": ", ".join(info_names),
+    }
+
+
 def sent_markings_for_user(db: Session, user_name: str) -> list[Marking]:
     """
     Sent items: one row per outstanding Forward or Response Required the user sent.

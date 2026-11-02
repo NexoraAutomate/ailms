@@ -225,17 +225,26 @@ def attach_inbox_holder_actions(
     )
 
 
-def attach_sent_marking(letter_out: LetterOut, marking) -> LetterOut:
-    """Clone a letter DTO as a Sent row bound to one Response Required marking."""
+def attach_sent_marking(
+    letter_out: LetterOut,
+    marking,
+    *,
+    mark_to_users: str = "",
+    mark_info_users: str = "",
+) -> LetterOut:
+    """Clone a letter DTO as a Sent row bound to one Forward / Response Required marking."""
+    to_user = (marking.to_user or "").strip()
     updates: dict = {
         "sentMarkingId": marking.id,
-        "sentToUser": marking.to_user or "",
+        "sentToUser": to_user,
         "sentPathId": marking.path_id or "",
         "sentDueAt": marking.due_at.isoformat() if marking.due_at else "",
         "sentAction": marking.action or "",
-        # Surface recipient on Assigned To for the Sent list.
-        "assignedTo": marking.to_user or letter_out.assignedTo,
+        # Assigned To = actionable (To) recipient for this Sent row.
+        "assignedTo": to_user or letter_out.assignedTo,
         "assignedBy": marking.from_user or letter_out.assignedBy,
+        "markToUsers": (mark_to_users or to_user).strip(),
+        "markInfoUsers": (mark_info_users or "").strip(),
         "lastAction": (
             "Awaiting Response"
             if marking.action == "response_required"

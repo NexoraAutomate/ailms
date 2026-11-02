@@ -155,8 +155,8 @@ def list_letters(
             )
         items = inbox_items
     elif view == "sent":
-        # One row per outstanding Response Required the actor sent (not For Information).
-        from app.marking_workflow_service import sent_markings_for_user
+        # One row per outstanding Forward / Response Required the actor sent (not For Information).
+        from app.marking_workflow_service import batch_mark_recipients, sent_markings_for_user
         from app.services import attach_sent_marking
 
         by_id = {item.id: item for item in items}
@@ -165,7 +165,15 @@ def list_letters(
             base = by_id.get(str(marking.letter_id))
             if base is None:
                 continue
-            sent_items.append(attach_sent_marking(base, marking))
+            peers = batch_mark_recipients(db, marking)
+            sent_items.append(
+                attach_sent_marking(
+                    base,
+                    marking,
+                    mark_to_users=peers["markToUsers"],
+                    mark_info_users=peers["markInfoUsers"],
+                )
+            )
         items = sent_items
     elif view == "incoming":
         items = [item for item in items if item.type == "Incoming"]

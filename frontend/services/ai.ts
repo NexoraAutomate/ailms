@@ -55,6 +55,7 @@ export type DraftResponse = {
   tone: string
   pointsAddressed: string[]
   missingInformation: string[]
+  instructions?: string
 }
 
 export type InterpretedQuery = {
@@ -171,6 +172,7 @@ export const AI_ENDPOINTS = {
   recommendActions: '/api/ai/recommend-actions',
   urgency: '/api/ai/urgency',
   draftResponse: '/api/ai/draft-response',
+  draftResponseGuided: '/api/ai/draft-response-guided',
   search: '/api/ai/search',
   analyze: '/api/ai/analyze-correspondence',
   insights: '/api/ai/management-insights',
@@ -560,6 +562,48 @@ async function generateDraftResponseMock(letter: Letter, style: 'default' | 'sho
     tone: style === 'formal' ? 'Formal official' : style === 'concise' || style === 'shorten' ? 'Concise' : 'Standard official',
     pointsAddressed: ['Acknowledgement of receipt', 'Assignment of ownership', 'Commitment to a formal reply'],
     missingInformation: missing.length ? missing : ['No critical register fields are missing for a first draft.'],
+  }
+}
+
+export async function generateGuidedDraftResponse(
+  letter: Letter,
+  instructions: string,
+): Promise<DraftResponse> {
+  const guidance = instructions.trim()
+  return withLlm(
+    () =>
+      api.post<DraftResponse>(AI_ENDPOINTS.draftResponseGuided, {
+        letterId: Number(letter.id),
+        instructions: guidance,
+      }),
+    () => generateGuidedDraftResponseMock(letter, guidance),
+  )
+}
+
+async function generateGuidedDraftResponseMock(letter: Letter, instructions: string): Promise<DraftResponse> {
+  await wait(650)
+  const toneHint = /formal|official/i.test(instructions)
+    ? 'Formal official'
+    : /concise|brief|short/i.test(instructions)
+      ? 'Concise'
+      : /friendly|warm/i.test(instructions)
+        ? 'Courteous'
+        : 'Instruction-guided'
+  const text =
+    `With reference to letter ${letter.number} dated ${letter.letterDate} on “${letter.subject}”, ` +
+    `this office acknowledges the correspondence and notes your instructions for this draft. ` +
+    `${instructions.trim().replace(/\s+/g, ' ').slice(0, 280)}${instructions.trim().length > 280 ? '…' : ''} ` +
+    `The matter remains with ${letter.department || letter.assignedTo || 'the concerned office'} ` +
+    `and a substantive reply will follow after due consideration.`
+  return {
+    text,
+    tone: toneHint,
+    pointsAddressed: ['Acknowledgement', 'Instruction-guided content', 'Next-step commitment'],
+    missingInformation: [
+      !letter.from ? 'Sender organization is incomplete.' : '',
+      'Local fallback draft — connect the LLM for a full instruction-faithful reply.',
+    ].filter(Boolean),
+    instructions,
   }
 }
 

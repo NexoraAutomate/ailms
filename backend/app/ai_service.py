@@ -461,10 +461,51 @@ async def urgency(db: Session, letter_id: int) -> dict[str, Any]:
     return await chat_json(system=system, user=user)
 
 
-async def draft_response(db: Session, letter_id: int, style: str = "default") -> dict[str, Any]:
-    from app.models import ResponseVersion
+def _persist_ai_draft_body(db: Session, letter: Letter, body: str) -> None:
+    """Save generated reply text as the current Draft ResponseVersion when non-empty."""
     from datetime import datetime
 
+    from app.models import ResponseVersion
+
+    text = (body or "").strip()
+    if not text:
+        return
+    latest = (
+        db.query(ResponseVersion)
+        .filter(ResponseVersion.letter_id == letter.id)
+        .order_by(ResponseVersion.version.desc())
+        .first()
+    )
+    actor = letter.assigned_to or letter.created_by or "AI assist"
+    if latest and latest.status == "Draft":
+        latest.body_text = text
+        latest.updated_at = datetime.now()
+    else:
+        version = (latest.version + 1) if latest else 1
+        if latest and latest.status == "Approved":
+            latest.status = "Superseded"
+        db.add(
+            ResponseVersion(
+                letter_id=letter.id,
+                version=version,
+                body_text=text,
+                status="Draft",
+                prepared_by=actor,
+            )
+        )
+    if letter.status in {
+        "In Progress",
+        "Action Assigned",
+        "Action in Progress",
+        "Returned for Revision",
+        "Assigned",
+    }:
+        letter.status = "Response Drafted"
+        letter.last_action = "AI draft assist"
+    db.flush()
+
+
+async def draft_response(db: Session, letter_id: int, style: str = "default") -> dict[str, Any]:
     letter = db.get(Letter, letter_id)
     if not letter:
         raise ValueError("Letter not found")
@@ -474,41 +515,56 @@ async def draft_response(db: Session, letter_id: int, style: str = "default") ->
     )
     user = f"Letter:\n{_letter_payload(letter)}"
     data = await chat_json(system=system, user=user)
-    body = (data.get("text") or "").strip()
-    if body:
-        latest = (
-            db.query(ResponseVersion)
-            .filter(ResponseVersion.letter_id == letter.id)
-            .order_by(ResponseVersion.version.desc())
-            .first()
-        )
-        actor = letter.assigned_to or letter.created_by or "AI assist"
-        if latest and latest.status == "Draft":
-            latest.body_text = body
-            latest.updated_at = datetime.now()
-        else:
-            version = (latest.version + 1) if latest else 1
-            if latest and latest.status == "Approved":
-                latest.status = "Superseded"
-            db.add(
-                ResponseVersion(
-                    letter_id=letter.id,
-                    version=version,
-                    body_text=body,
-                    status="Draft",
-                    prepared_by=actor,
-                )
-            )
-        if letter.status in {
-            "In Progress",
-            "Action Assigned",
-            "Action in Progress",
-            "Returned for Revision",
-            "Assigned",
-        }:
-            letter.status = "Response Drafted"
-            letter.last_action = "AI draft assist"
-        db.flush()
+    _persist_ai_draft_body(db, letter, str(data.get("text") or ""))
+    return data
+
+
+async def draft_response_from_instructions(
+    db: Session,
+    letter_id: int,
+    instructions: str,
+) -> dict[str, Any]:
+    """Draft a reply guided by the user's free-form instructions (tone, format, content)."""
+    letter = db.get(Letter, letter_id)
+    if not letter:
+        raise ValueError("Letter not found")
+    guidance = (instructions or "").strip()
+    if not guidance:
+        raise ValueError("Instructions are required")
+
+    workflow: dict[str, Any] | None = None
+    try:
+        from app.ai_qa_cache import build_letter_qa_workflow_context
+        from app.services import current_user_name
+
+        workflow = build_letter_qa_workflow_context(db, letter_id, current_user_name(db))
+    except Exception:  # noqa: BLE001 — workflow context is helpful but optional
+        workflow = None
+
+    system = (
+        "You draft official correspondence replies for AILMS. "
+        "Follow the user's drafting instructions precisely for content, structure, length, tone, and format. "
+        "Use correct grammar, professional wording, and clear paragraphs. "
+        "Ground the reply only in the provided letter record and optional marking/workflow context; "
+        "do not invent facts, commitments, dates, or organizations that are not supported by that data. "
+        "If instructions conflict with available facts, prefer the facts and note gaps in missingInformation. "
+        "Return JSON with keys: text (full draft reply), tone (short label), "
+        "pointsAddressed (array of strings), missingInformation (array of strings)."
+    )
+    user_parts = [
+        f"User drafting instructions:\n{guidance}",
+        f"\nOpened letter:\n{_letter_payload(letter)}",
+    ]
+    if workflow and workflow.get("enabled"):
+        user_parts.append(f"\nMarking workflow and comments (viewer-scoped):\n{workflow}")
+    data = await chat_json(system=system, user="\n".join(user_parts))
+    if not isinstance(data, dict):
+        data = {"text": str(data or "").strip(), "tone": "", "pointsAddressed": [], "missingInformation": []}
+    data.setdefault("tone", "")
+    data.setdefault("pointsAddressed", [])
+    data.setdefault("missingInformation", [])
+    data["instructions"] = guidance
+    _persist_ai_draft_body(db, letter, str(data.get("text") or ""))
     return data
 
 

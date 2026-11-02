@@ -72,6 +72,7 @@ export function LetterTable({
 }) {
   const openRows = data.filter((l) => !lockInaccessible || l.accessible !== false)
   const allSelected = selectable && openRows.length > 0 && openRows.every((l) => selectedIds?.has(l.id))
+  const showInfoColumn = Boolean(showSender || navFrom === 'sent')
 
   const columns = useMemo<DataTableColumn<Letter>[]>(() => {
     const cols: DataTableColumn<Letter>[] = []
@@ -217,12 +218,14 @@ export function LetterTable({
         header: showSender ? 'To' : 'Assigned to',
         sortValue: (l) => (showSender ? l.markToUsers || l.assignedTo : l.assignedTo),
         className: 'text-slate-600',
-        headerClassName: showSender ? 'text-blue-800 dark:text-blue-200' : undefined,
+        headerClassName: showInfoColumn ? 'text-blue-800 dark:text-blue-200' : undefined,
         cell: (l) => (
-          <AssignedToDisplay assignedTo={showSender ? l.markToUsers || l.assignedTo : l.assignedTo} />
+          <AssignedToDisplay
+            assignedTo={showSender ? l.markToUsers || l.assignedTo : l.assignedTo}
+          />
         ),
       },
-      ...(showSender
+      ...(showInfoColumn
         ? ([
             {
               id: 'markInfoUsers',
@@ -272,6 +275,7 @@ export function LetterTable({
     onToggle,
     onOpen,
     showSender,
+    showInfoColumn,
     role,
     users,
     departments,
@@ -285,8 +289,11 @@ export function LetterTable({
       columns={columns}
       data={data}
       rowKey={(l) => (l.sentMarkingId != null ? `${l.id}-m${l.sentMarkingId}` : l.id)}
-      storageKey={storageKey || (showSender ? 'letter-register-inbox' : 'letter-register')}
-      minWidth={showSender ? '1280px' : '1100px'}
+      storageKey={
+        storageKey ||
+        (showSender ? 'letter-register-inbox' : navFrom === 'sent' ? 'letter-register-sent' : 'letter-register')
+      }
+      minWidth={showInfoColumn ? '1280px' : '1100px'}
       maxHeight="min(480px, 58vh)"
       className={className}
       style={style}

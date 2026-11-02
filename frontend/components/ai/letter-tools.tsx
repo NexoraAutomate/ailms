@@ -41,6 +41,7 @@ import {
   fetchLetterAiAnalysis,
   fetchLetterQuestions,
   generateDraftResponse,
+  generateGuidedDraftResponse,
   letterQaChat,
   recommendActions,
   saveLetterAiDecisions,
@@ -693,6 +694,122 @@ export function AIDraftResponse({ letter, canRegenerate = false, stored = null, 
   )
 }
 
+const GUIDED_DRAFT_EXAMPLES = [
+  'Acknowledge receipt formally, say we are examining the matter, and ask for any missing annexures. Two short paragraphs.',
+  'Write a concise polite decline explaining we cannot meet the requested timeline, and propose an alternate date.',
+  'Draft a formal reply confirming acceptance of the nomination list and requesting the next steps.',
+]
+
+export function AIGuidedDraftResponse({ letter }: { letter: Letter }) {
+  const [instructions, setInstructions] = useState('')
+  const [status, setStatus] = useState<AiStatus>('idle')
+  const [draft, setDraft] = useState<DraftResponse | null>(null)
+  const [text, setText] = useState('')
+
+  useEffect(() => {
+    setInstructions('')
+    setDraft(null)
+    setText('')
+    setStatus('idle')
+  }, [letter.id])
+
+  const generate = async () => {
+    const guidance = instructions.trim()
+    if (!guidance || status === 'generating') return
+    setStatus('generating')
+    try {
+      const next = await generateGuidedDraftResponse(letter, guidance)
+      setDraft(next)
+      setText(next.text || '')
+      setStatus('success')
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  return (
+    <SectionCard
+      title="Draft Response using AI"
+      action={
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            disabled={!instructions.trim() || status === 'generating'}
+            onClick={() => void generate()}
+          >
+            <Sparkles data-icon="inline-start" />
+            {status === 'generating' ? 'Generating…' : draft ? 'Regenerate' : 'Generate response'}
+          </Button>
+          <Button size="sm" variant="outline" disabled={!text} onClick={() => void copyText(text)}>
+            <Copy data-icon="inline-start" />
+            Copy Draft
+          </Button>
+        </div>
+      }
+    >
+      <p className="mb-3 text-[11px] text-slate-400">
+        Describe the reply you want — content, tone, length, and format. The AI drafts from this letter
+        (and visible workflow/comments) with correct grammar. This remains a draft only.
+      </p>
+      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        Your instructions
+      </label>
+      <textarea
+        className="min-h-24 w-full rounded-md border border-slate-200 px-3 py-2 text-xs"
+        value={instructions}
+        onChange={(e) => setInstructions(e.target.value)}
+        placeholder="e.g. Formal acknowledgement, confirm review is underway, request missing annexures in 2 short paragraphs…"
+        disabled={status === 'generating'}
+        maxLength={4000}
+      />
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {GUIDED_DRAFT_EXAMPLES.map((example) => (
+          <button
+            key={example}
+            type="button"
+            className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-[11px] text-slate-600 hover:bg-slate-100"
+            onClick={() => setInstructions(example)}
+            disabled={status === 'generating'}
+          >
+            {example.length > 72 ? `${example.slice(0, 71)}…` : example}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3">
+        <AIStatusIndicator
+          status={status === 'success' ? 'idle' : status}
+          label={status === 'generating' ? 'AI is drafting your response…' : undefined}
+        />
+      </div>
+      {status === 'error' && (
+        <p className="mb-2 text-xs text-rose-600">Could not generate a draft from these instructions. Try again.</p>
+      )}
+      {draft && (
+        <>
+          <label className="mb-1 mt-2 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Generated draft
+          </label>
+          <textarea
+            className="min-h-36 w-full rounded-md border border-slate-200 px-3 py-2 text-xs"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+            <p><span className="text-slate-400">Tone · </span>{draft.tone || '—'}</p>
+            <p>
+              <span className="text-slate-400">Points addressed · </span>
+              {(draft.pointsAddressed || []).join('; ') || '—'}
+            </p>
+          </div>
+          {!!draft.missingInformation?.length && (
+            <p className="mt-2 text-[11px] text-amber-700">{draft.missingInformation.join(' ')}</p>
+          )}
+        </>
+      )}
+    </SectionCard>
+  )
+}
+
 export function AIAnalysisPanel({
   letter,
   letters,
@@ -1218,7 +1335,12 @@ export function AIIntelligencePanel({
               {tab === 'Recommended Actions' && (
                 <AIActionRecommendations letter={letter} onAcceptAction={onAcceptAction} {...shared('recommend_actions')} />
               )}
-              {tab === 'Draft Response' && <AIDraftResponse letter={letter} {...shared('draft_response')} />}
+              {tab === 'Draft Response' && (
+                <div className="space-y-4">
+                  <AIDraftResponse letter={letter} {...shared('draft_response')} />
+                  <AIGuidedDraftResponse letter={letter} />
+                </div>
+              )}
               {tab === 'Analyze Correspondence' && <AIAnalysisPanel letter={letter} letters={letters} {...shared('analyze_correspondence')} />}
             </>
           )}

@@ -22,6 +22,7 @@ from app.ai_service import (
     assistant_chat_deltas,
     classify,
     draft_response,
+    draft_response_from_instructions,
     extract_fields,
     letter_qa,
     prepare_assistant_turn,
@@ -56,6 +57,13 @@ class LetterRef(BaseModel):
     variant: int = 0
     style: str = "default"
     force: bool = False
+
+    model_config = {"populate_by_name": True}
+
+
+class GuidedDraftIn(BaseModel):
+    letter_id: int = Field(alias="letterId")
+    instructions: str
 
     model_config = {"populate_by_name": True}
 
@@ -308,6 +316,25 @@ async def api_draft(body: LetterRef, db: Session = Depends(get_db)) -> dict:
     )
     db.commit()
     return result
+
+
+@router.post("/draft-response-guided")
+async def api_draft_guided(body: GuidedDraftIn, db: Session = Depends(get_db)) -> dict:
+    """Generate a reply from free-form user instructions (tone, format, content)."""
+    instructions = (body.instructions or "").strip()
+    if not instructions:
+        raise HTTPException(status_code=422, detail="Instructions are required")
+    if len(instructions) > 4000:
+        raise HTTPException(status_code=422, detail="Instructions are too long (max 4000 characters)")
+    _guard_configured()
+    try:
+        result = await draft_response_from_instructions(db, body.letter_id, instructions)
+        db.commit()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LlmNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/search")
