@@ -130,13 +130,13 @@ DEPARTMENT_COORDINATION = [
 ]
 
 ORGANIZATIONS = [
-    ("Ministry of Defence", "MOD", "Government", "Secretary Office", "secretary@mod.gov", "+92 51 9000", "Active"),
-    ("SUPARCO", "SUPARCO", "Research", "Director General", "info@suparco.gov", "+92 21 9927", "Active"),
-    ("Finance Division", "FD", "Government", "Budget Wing", "budget@finance.gov", "+92 51 9100", "Active"),
-    ("Foreign Partner Organization", "FPO", "Foreign Organization", "Liaison Office", "liaison@partner.org", "+44 20 7000", "Active"),
-    ("Research Organization", "RPO", "Research", "Focal Person", "contact@research.org", "+92 51 3300", "Inactive"),
-    ("Cabinet Secretariat", "CAB", "Government", "Records Wing", "records@cabinet.gov", "+92 51 9200", "Active"),
-    ("Government Department", "GOV", "Government", "Operations Desk", "ops@gov.pk", "+92 51 9300", "Active"),
+    ("Ministry of Defence", "MOD", "Government", "Secretary Office", "secretary@mod.gov", "+92 51 9000", "Active", "#1D4ED8"),
+    ("SUPARCO", "SUPARCO", "Research", "Director General", "info@suparco.gov", "+92 21 9927", "Active", "#7C3AED"),
+    ("Finance Division", "FD", "Government", "Budget Wing", "budget@finance.gov", "+92 51 9100", "Active", "#0F766E"),
+    ("Foreign Partner Organization", "FPO", "Foreign Organization", "Liaison Office", "liaison@partner.org", "+44 20 7000", "Active", "#C2410C"),
+    ("Research Organization", "RPO", "Research", "Focal Person", "contact@research.org", "+92 51 3300", "Inactive", "#4F46E5"),
+    ("Cabinet Secretariat", "CAB", "Government", "Records Wing", "records@cabinet.gov", "+92 51 9200", "Active", "#0369A1"),
+    ("Government Department", "GOV", "Government", "Operations Desk", "ops@gov.pk", "+92 51 9300", "Active", "#15803D"),
 ]
 
 USERS = [
@@ -199,8 +199,19 @@ def seed_if_empty(db: Session) -> None:
         if source and target:
             db.add(DepartmentLink(source_id=source.id, target_id=target.id, kind="coordinates"))
 
-    for name, short, org_type, contact, email, phone, status in ORGANIZATIONS:
-        db.add(Organization(name=name, short_name=short, type=org_type, contact=contact, email=email, phone=phone, status=status))
+    for name, short, org_type, contact, email, phone, status, color in ORGANIZATIONS:
+        db.add(
+            Organization(
+                name=name,
+                short_name=short,
+                type=org_type,
+                contact=contact,
+                email=email,
+                phone=phone,
+                status=status,
+                color=color,
+            )
+        )
 
     for name, username, department, role, email, status, activity in USERS:
         db.add(User(name=name, username=username, department=department, role=role, email=email, status=status, last_activity=activity))

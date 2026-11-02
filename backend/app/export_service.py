@@ -80,9 +80,20 @@ def export_departments_csv(db: Session) -> str:
 def export_organizations_csv(db: Session) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["name", "shortName", "type", "contact", "email", "phone", "status"])
+    writer.writerow(["name", "shortName", "type", "contact", "email", "phone", "status", "color"])
     for row in db.query(Organization).order_by(Organization.name).all():
-        writer.writerow([row.name, row.short_name, row.type, row.contact, row.email, row.phone, row.status])
+        writer.writerow(
+            [
+                row.name,
+                row.short_name,
+                row.type,
+                row.contact,
+                row.email,
+                row.phone,
+                row.status,
+                getattr(row, "color", "") or "",
+            ]
+        )
     return buf.getvalue()
 
 

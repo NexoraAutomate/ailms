@@ -15,7 +15,7 @@ export function FormDialog({
   initialValues,
 }: {
   title: string
-  fields: { name: string; label: string; required?: boolean }[]
+  fields: { name: string; label: string; required?: boolean; type?: 'text' | 'color' }[]
   onClose: () => void
   onSubmit: (values: Record<string, string>) => Promise<void>
   initialValues?: Record<string, string>
@@ -34,7 +34,29 @@ export function FormDialog({
           {fields.map((field) => (
             <label key={field.name} className="flex flex-col gap-1">
               <span className="text-xs font-semibold text-slate-600">{field.label}</span>
-              <input className="h-10 rounded-md border border-slate-200 px-3 text-xs" value={values[field.name] ?? ''} onChange={(e) => setValues((current) => ({ ...current, [field.name]: e.target.value }))} />
+              {field.type === 'color' ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    aria-label={`${field.label} picker`}
+                    className="h-10 w-12 cursor-pointer rounded-md border border-slate-200 bg-white p-1"
+                    value={/^#[0-9A-Fa-f]{6}$/.test(values[field.name] ?? '') ? (values[field.name] as string) : '#64748B'}
+                    onChange={(e) => setValues((current) => ({ ...current, [field.name]: e.target.value.toUpperCase() }))}
+                  />
+                  <input
+                    className="h-10 flex-1 rounded-md border border-slate-200 px-3 text-xs uppercase"
+                    placeholder="#64748B"
+                    value={values[field.name] ?? ''}
+                    onChange={(e) => setValues((current) => ({ ...current, [field.name]: e.target.value }))}
+                  />
+                </div>
+              ) : (
+                <input
+                  className="h-10 rounded-md border border-slate-200 px-3 text-xs"
+                  value={values[field.name] ?? ''}
+                  onChange={(e) => setValues((current) => ({ ...current, [field.name]: e.target.value }))}
+                />
+              )}
             </label>
           ))}
         </div>

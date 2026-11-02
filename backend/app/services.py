@@ -123,13 +123,44 @@ def serialize_letter(
     completion = iso(letter.completion_date) if letter.status in CLOSED_STATUSES else "—"
     edit_details = can_edit_details
     active_marks = has_active_markings
+    assigned_to = letter.assigned_to or ""
+    mark_to_users = ""
+    mark_info_users = ""
+    last_action_at = ""
     if db is not None:
-        from app.marking_workflow_service import can_edit_letter_details, has_active_markings as _has_active
+        from app.marking_workflow_service import (
+            can_edit_letter_details,
+            current_actionable_holder_names,
+            current_info_holder_names,
+            derive_last_action_at,
+            format_assigned_to_holders,
+            has_active_markings as _has_active,
+        )
 
         if edit_details is None and viewer:
             edit_details = can_edit_letter_details(db, letter, viewer)
         if active_marks is None:
             active_marks = _has_active(db, letter.id)
+        # Authoritative live split: Assigned To = To holders; Info = for_info holders.
+        to_holders = current_actionable_holder_names(db, letter.id)
+        info_holders = current_info_holder_names(db, letter.id)
+        if to_holders or info_holders or active_marks:
+            mark_to_users = format_assigned_to_holders(to_holders)
+            mark_info_users = format_assigned_to_holders(info_holders)
+            if to_holders:
+                assigned_to = mark_to_users
+            elif not active_marks:
+                assigned_to = letter.assigned_to or ""
+            else:
+                # Only Info holds remain — Assigned To stays empty for the To card.
+                assigned_to = ""
+        ts = derive_last_action_at(db, letter)
+        if ts is not None:
+            last_action_at = ts.isoformat()
+    elif getattr(letter, "updated_at", None):
+        last_action_at = letter.updated_at.isoformat()
+    elif getattr(letter, "created_at", None):
+        last_action_at = letter.created_at.isoformat()
     return LetterOut(
         id=str(letter.id),
         number=letter.number,
@@ -143,10 +174,11 @@ def serialize_letter(
         priority=letter.priority,
         status=status,
         dueDate=iso(letter.due_date),
-        assignedTo=letter.assigned_to,
+        assignedTo=assigned_to,
         createdBy=getattr(letter, "created_by", "") or "",
         assignedBy=getattr(letter, "assigned_by", "") or "",
         lastAction=letter.last_action,
+        lastActionAt=last_action_at,
         daysPending=days_pending(letter),
         confidentiality=letter.confidentiality,
         actionRequired=letter.action_required,
@@ -169,6 +201,8 @@ def serialize_letter(
         sentDueAt="",
         sentAction="",
         markedBy="",
+        markToUsers=mark_to_users,
+        markInfoUsers=mark_info_users,
         viewerHolds=False,
         canAssign=False,
         canRespond=False,
@@ -301,6 +335,7 @@ def serialize_organization(organization: Organization) -> OrganizationOut:
         email=organization.email,
         phone=organization.phone,
         status=organization.status,
+        color=getattr(organization, "color", "") or "",
     )
 
 

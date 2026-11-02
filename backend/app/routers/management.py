@@ -216,6 +216,7 @@ def create_organization(payload: OrganizationIn, db: Session = Depends(get_db)) 
         email=payload.email,
         phone=payload.phone,
         status=payload.status,
+        color=(payload.color or "").strip(),
     )
     db.add(row)
     add_audit(db, user=current_user_name(db), module="Organizations", action="Organization Created", record=payload.short or payload.name, description=f"Created organization {payload.name}")
@@ -247,6 +248,8 @@ def update_organization(organization_id: int, payload: OrganizationUpdateIn, db:
         row.phone = data["phone"]
     if "status" in data:
         row.status = data["status"]
+    if "color" in data:
+        row.color = (data["color"] or "").strip()
     add_audit(db, user=current_user_name(db), module="Organizations", action="Organization Updated", record=row.short_name or row.name, description=f"Updated organization {row.name}")
     db.commit()
     db.refresh(row)

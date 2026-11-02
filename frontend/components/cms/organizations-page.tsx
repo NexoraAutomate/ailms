@@ -8,15 +8,17 @@ import { DataTable, TableActions, type DataTableColumn } from '@/components/cms/
 import { FormDialog } from '@/components/cms/management-table'
 import { Button } from '@/components/ui/button'
 import { IconActionButton } from '@/components/ui/icon-action-button'
+import { normalizeOrgColor, ORG_COLOR_PRESETS } from '@/lib/org-color'
 import type { Organization } from '@/services/management'
 
-const ORG_FIELDS = [
+const ORG_FIELDS: { name: string; label: string; type?: 'text' | 'color' }[] = [
   { name: 'name', label: 'Organization' },
   { name: 'short', label: 'Short name' },
   { name: 'type', label: 'Type' },
   { name: 'contact', label: 'Contact person' },
   { name: 'email', label: 'Email' },
   { name: 'phone', label: 'Phone' },
+  { name: 'color', label: 'Color', type: 'color' },
 ]
 
 function StatusToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -47,7 +49,7 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
   const filtered = useMemo(
     () =>
       organizations.filter((org) =>
-        [org.name, org.short, org.type, org.contact, org.email, org.phone, org.status]
+        [org.name, org.short, org.type, org.contact, org.email, org.phone, org.status, org.color]
           .join(' ')
           .toLowerCase()
           .includes(search.toLowerCase()),
@@ -63,17 +65,38 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
         id: 'name',
         header: 'Organization',
         sortValue: (org) => org.name,
-        cell: (org) => (
-          <div className="flex items-center gap-2 font-semibold text-slate-700">
-            <span className="inline-flex size-7 items-center justify-center rounded-md bg-slate-50 text-[#1769aa]">
-              <Building2 className="size-3.5" />
-            </span>
-            {org.name}
-          </div>
-        ),
+        cell: (org) => {
+          const color = normalizeOrgColor(org.color)
+          return (
+            <div className="flex items-center gap-2 font-semibold text-slate-700">
+              <span
+                className="inline-flex size-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-[#1769aa]"
+                style={color ? { backgroundColor: `${color}22`, borderColor: color, color } : undefined}
+              >
+                <Building2 className="size-3.5" />
+              </span>
+              {org.name}
+            </div>
+          )
+        },
       },
       { id: 'short', header: 'Short Name', sortValue: (org) => org.short, className: 'text-slate-600', cell: (org) => org.short },
       { id: 'type', header: 'Type', sortValue: (org) => org.type, className: 'text-slate-600', cell: (org) => org.type },
+      {
+        id: 'color',
+        header: 'Color',
+        sortValue: (org) => org.color || '',
+        cell: (org) => {
+          const color = normalizeOrgColor(org.color)
+          if (!color) return <span className="text-xs text-slate-400">—</span>
+          return (
+            <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <span className="size-4 rounded-full border border-slate-200 shadow-sm" style={{ backgroundColor: color }} />
+              {color}
+            </span>
+          )
+        },
+      },
       { id: 'contact', header: 'Contact Person', sortValue: (org) => org.contact, className: 'text-slate-600', cell: (org) => org.contact },
       { id: 'email', header: 'Email', sortValue: (org) => org.email, className: 'text-slate-600', cell: (org) => org.email },
       { id: 'phone', header: 'Phone', sortValue: (org) => org.phone, className: 'text-slate-600', cell: (org) => org.phone },
@@ -177,7 +200,7 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
         data={filtered}
         rowKey={(org, index) => String(org.id ?? `${org.name}-${index}`)}
         storageKey="organizations"
-        minWidth="760px"
+        minWidth="860px"
         title="Organizations"
         description={`${filtered.length} records`}
         emptyMessage="No organizations found."
@@ -186,6 +209,7 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
         <FormDialog
           title="Add organization"
           fields={fieldsWithTypes}
+          initialValues={{ color: ORG_COLOR_PRESETS[0] }}
           onClose={() => setAdding(false)}
           onSubmit={async (v) => {
             await addOrganization({
@@ -195,6 +219,7 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
               contact: v.contact,
               email: v.email,
               phone: v.phone,
+              color: normalizeOrgColor(v.color),
             })
           }}
         />
@@ -210,6 +235,7 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
             contact: editing.contact,
             email: editing.email,
             phone: editing.phone,
+            color: normalizeOrgColor(editing.color) || ORG_COLOR_PRESETS[0],
           }}
           onClose={() => setEditing(null)}
           onSubmit={async (v) => {
@@ -224,6 +250,7 @@ export function OrganizationsManager({ embedded = false }: { embedded?: boolean 
               contact: v.contact,
               email: v.email,
               phone: v.phone,
+              color: normalizeOrgColor(v.color),
             })
             setEditing(null)
           }}

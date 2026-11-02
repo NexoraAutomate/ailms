@@ -26,6 +26,8 @@ class LetterOut(BaseModel):
     createdBy: str = ""
     assignedBy: str = ""
     lastAction: str
+    # ISO datetime of the latest mark / respond / close (or letter updated_at fallback).
+    lastActionAt: str = ""
     daysPending: int
     confidentiality: str = "Normal"
     actionRequired: str = ""
@@ -235,6 +237,7 @@ class OrganizationIn(BaseModel):
     email: str = ""
     phone: str = ""
     status: str = "Active"
+    color: str = ""
 
 
 class OrganizationOut(BaseModel):
@@ -246,6 +249,7 @@ class OrganizationOut(BaseModel):
     email: str
     phone: str
     status: str
+    color: str = ""
 
 
 class OrganizationUpdateIn(BaseModel):
@@ -256,6 +260,7 @@ class OrganizationUpdateIn(BaseModel):
     email: str | None = None
     phone: str | None = None
     status: str | None = None
+    color: str | None = None
 
 
 class UserIn(BaseModel):

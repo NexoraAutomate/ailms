@@ -6,6 +6,7 @@ import {
   ArrowDownLeft,
   ArrowLeftRight,
   ArrowUpRight,
+  Building2,
   Calendar,
   CalendarClock,
   CalendarDays,
@@ -31,6 +32,13 @@ import { AssignedToDisplay } from '@/components/cms/assigned-to-display'
 import { Badge, Card } from '@/components/cms/ui'
 import { CollapsibleCardMotionProvider } from '@/components/ui/collapsible-card'
 import { letterDetailOrigin } from '@/lib/cms-nav'
+import {
+  formatDashDate,
+  relativeDueDateInfo,
+  relativePastDateInfo,
+  type RelativeDateInfo,
+} from '@/lib/datetime'
+import { normalizeOrgColor, organizationCardStyle } from '@/lib/org-color'
 import { cn } from '@/lib/utils'
 import { getLetter, priorityTone, statusTone, updateLetter, type Letter, type Priority } from '@/services/letters'
 import {
@@ -67,7 +75,7 @@ const ATTACHMENTS_SUB_TABS: {
 
 export function Details({ id, go }: { id: string; go: (p: string) => void }) {
   const searchParams = useSearchParams()
-  const { letters, users, me, refresh, applyLetterField, acceptAiAction, departments, organizations, masterData } = useAppData()
+  const { letters, users, me, refresh, applyLetterField, acceptAiAction, departments, organizations } = useAppData()
   const initialTab = (searchParams.get('tab') as LetterTabId | null) || 'details'
   const [tab, setTab] = useState<LetterTabId>(
     LETTER_TABS.some((t) => t.id === initialTab) ? initialTab : 'details',
@@ -204,6 +212,12 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
                 <TypeIcon className="size-3" />
                 {letter.type}
               </Badge>
+              {letter.department ? (
+                <Badge tone="slate">
+                  <Building2 className="size-3" />
+                  {letter.department}
+                </Badge>
+              ) : null}
               <Badge tone={priorityTone(letter.priority)}>
                 <PriorityIcon className="size-3" />
                 {letter.priority}
@@ -240,7 +254,6 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
                 users={users}
                 departments={departments}
                 organizations={organizations}
-                letterTypes={masterData['Letter Types'] ?? ['Incoming', 'Outgoing']}
                 onSaved={async () => {
                   await refresh()
                   const next = await getLetter(letter.id)
@@ -305,21 +318,19 @@ export function Details({ id, go }: { id: string; go: (p: string) => void }) {
 
 type DetailsPerson = { name: string; department?: string }
 type DetailsDept = { name: string }
-type DetailsOrg = { name: string; status?: string }
+type DetailsOrg = { name: string; status?: string; color?: string }
 
 function CorrespondenceDetailsPanel({
   letter,
   users,
   departments,
   organizations,
-  letterTypes,
   onSaved,
 }: {
   letter: Letter
   users: DetailsPerson[]
   departments: DetailsDept[]
   organizations: DetailsOrg[]
-  letterTypes: string[]
   onSaved: () => Promise<void>
 }) {
   const canEdit = letter.canEditDetails === true
@@ -368,7 +379,11 @@ function CorrespondenceDetailsPanel({
   }
 
   const deptNames = [...new Set([letter.department, ...departments.map((item) => item.name)].filter(Boolean))]
-  const typeOptions = [...new Set([letter.type, ...letterTypes].filter(Boolean))]
+  const organizationColors = Object.fromEntries(
+    organizations
+      .map((org) => [org.name, normalizeOrgColor(org.color)] as const)
+      .filter((entry) => entry[0] && entry[1]),
+  )
   const organizationOptions = [
     ...new Set([
       ...organizations
@@ -429,18 +444,24 @@ function CorrespondenceDetailsPanel({
             </Button>
           </div>
         ) : null}
-        <div className="grid gap-5 lg:grid-cols-3 lg:items-start">
-          <LetterPartiesCard from={letter.from} to={letter.to} organizationOptions={organizationOptions} />
+        <div className="grid gap-5 lg:grid-cols-3 lg:grid-rows-[auto_repeat(3,minmax(0,auto))] lg:gap-x-5 lg:gap-y-3">
+          <LetterPartiesCard
+            from={letter.from}
+            to={letter.to}
+            organizationOptions={organizationOptions}
+            organizationColors={organizationColors}
+          />
           <LetterDatesCard
             letterDate={letter.letterDate}
             receivedDate={letter.receivedDate}
             dueDate={letter.dueDate}
           />
           <LetterOtherDetailsCard
-            type={letter.type}
             department={letter.department}
             assignedTo={letter.assignedTo}
+            infoRecipients={letter.markInfoUsers || ''}
             lastAction={letter.lastAction}
+            lastActionAt={letter.lastActionAt || ''}
           />
         </div>
         {!canEdit ? (
@@ -470,12 +491,13 @@ function CorrespondenceDetailsPanel({
           onNumberChange={setNumber}
           onSubjectChange={setSubject}
         />
-        <div className="grid gap-5 lg:grid-cols-3 lg:items-start">
+        <div className="grid gap-5 lg:grid-cols-3 lg:items-stretch">
           <LetterPartiesCard
             editing
             from={from}
             to={to}
             organizationOptions={organizationOptions}
+            organizationColors={organizationColors}
             onFromChange={setFrom}
             onToChange={setTo}
           />
@@ -490,14 +512,13 @@ function CorrespondenceDetailsPanel({
           />
           <LetterOtherDetailsCard
             editing
-            type={type}
             priority={priority}
             department={department}
             assignedTo={letter.assignedTo}
+            infoRecipients={letter.markInfoUsers || ''}
             lastAction={letter.lastAction}
-            typeOptions={typeOptions}
+            lastActionAt={letter.lastActionAt || ''}
             deptNames={deptNames}
-            onTypeChange={setType}
             onPriorityChange={setPriority}
             onDepartmentChange={setDepartment}
           />
@@ -554,110 +575,137 @@ function LetterIdentityCard({
   )
 }
 
+function formatLastActionLine(action: string, at: string): string {
+  const label = (action || '').trim()
+  const day = formatDashDate(at)
+  if (!label && day === '—') return '—'
+  if (!label) return day
+  if (day === '—') return label
+  return `${label} on ${day}`
+}
+
 function LetterOtherDetailsCard({
-  type,
   department,
   assignedTo,
+  infoRecipients = '',
   lastAction,
+  lastActionAt = '',
   editing = false,
   priority,
-  typeOptions = [],
   deptNames = [],
-  onTypeChange,
   onPriorityChange,
   onDepartmentChange,
 }: {
-  type: string
   department: string
   assignedTo: string
+  infoRecipients?: string
   lastAction: string
+  lastActionAt?: string
   editing?: boolean
   priority?: Priority
-  typeOptions?: string[]
   deptNames?: string[]
-  onTypeChange?: (value: string) => void
   onPriorityChange?: (value: Priority) => void
   onDepartmentChange?: (value: string) => void
 }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
-      <div className="mb-3 flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
-        <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
-          <ClipboardList className="size-3.5" />
-        </span>
-        <h3 className="text-sm font-bold text-slate-700">Other Details</h3>
+  const lastActionLine = formatLastActionLine(lastAction, lastActionAt)
+  const lastActionRelative = relativePastDateInfo(lastActionAt)
+
+  const infoBlock = (
+    <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2.5 dark:border-violet-800/50 dark:bg-violet-950/30">
+      <div className="mb-1 flex items-center gap-1.5">
+        <Badge tone="violet">Info</Badge>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Info recipients</p>
       </div>
-      <div className="space-y-3">
-        {editing ? (
-          <>
-            <label className="block rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-              <span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                <Send className="size-3.5 text-[#1769aa]" />
-                Type
-              </span>
-              <AppSelect value={type} onValueChange={(v) => onTypeChange?.(v)} options={typeOptions} className="mt-0.5 h-9 text-xs" />
-            </label>
-            <label className="block rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-              <span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                <CircleAlert className="size-3.5 text-[#1769aa]" />
-                Priority
-              </span>
-              <AppSelect
-                value={priority ?? 'Routine'}
-                onValueChange={(v) => onPriorityChange?.(v as Priority)}
-                options={['Routine', 'Important', 'Urgent']}
-                className="mt-0.5 h-9 text-xs"
-              />
-            </label>
-            <label className="block rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-              <span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                <ClipboardList className="size-3.5 text-[#1769aa]" />
-                Department
-              </span>
-              <AppSelect value={department} onValueChange={(v) => onDepartmentChange?.(v)} options={deptNames} className="mt-0.5 h-9 text-xs" />
-            </label>
-            <div className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-              <div className="mb-1 flex items-center gap-1.5">
-                <CheckCircle2 className="size-3.5 text-[#1769aa]" />
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Assigned to</p>
-              </div>
-              <div className="text-xs font-semibold text-slate-700">
-                <AssignedToDisplay assignedTo={assignedTo} />
-              </div>
-              <p className="mt-1 text-[10px] text-slate-400">
-                Use Assign / Forward to mark to another user (puts the letter in their Inbox).
-              </p>
+      <div className="text-xs font-semibold text-slate-700">
+        <AssignedToDisplay assignedTo={infoRecipients} />
+      </div>
+    </div>
+  )
+
+  if (editing) {
+    return (
+      <div className="flex h-full flex-col rounded-lg border border-slate-200 bg-neutral-50 p-4 dark:bg-slate-900/40">
+        <div className="mb-3 flex shrink-0 items-center gap-2 border-b border-slate-200/80 pb-2.5">
+          <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
+            <ClipboardList className="size-3.5" />
+          </span>
+          <h3 className="text-sm font-bold text-slate-700">Current Marking Details</h3>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <label className="flex min-h-0 flex-1 flex-col rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
+            <span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              <CircleAlert className="size-3.5 text-[#1769aa]" />
+              Priority
+            </span>
+            <AppSelect
+              value={priority ?? 'Routine'}
+              onValueChange={(v) => onPriorityChange?.(v as Priority)}
+              options={['Routine', 'Important', 'Urgent']}
+              className="mt-0.5 h-9 text-xs"
+            />
+          </label>
+          <label className="flex min-h-0 flex-1 flex-col rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
+            <span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              <ClipboardList className="size-3.5 text-[#1769aa]" />
+              Department
+            </span>
+            <AppSelect value={department} onValueChange={(v) => onDepartmentChange?.(v)} options={deptNames} className="mt-0.5 h-9 text-xs" />
+          </label>
+          <div className="flex min-h-0 flex-1 flex-col rounded-md border border-sky-200 bg-sky-50 px-3 py-2.5 dark:border-blue-800/50 dark:bg-blue-950/30">
+            <div className="mb-1 flex items-center gap-1.5">
+              <Badge tone="blue">To</Badge>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Assigned to</p>
             </div>
-            <div className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
+            <div className="text-xs font-semibold text-slate-700">
+              <AssignedToDisplay assignedTo={assignedTo} />
+            </div>
+            <p className="mt-1 text-[10px] text-slate-400">
+              Use Assign / Forward to mark to another user (puts the letter in their Inbox).
+            </p>
+          </div>
+          {infoBlock}
+            <div className="flex min-h-0 flex-1 flex-col rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
               <div className="mb-1 flex items-center gap-1.5">
                 <ClipboardList className="size-3.5 text-[#1769aa]" />
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Last action</p>
               </div>
-              <p className="text-xs font-semibold text-slate-700">{lastAction || '—'}</p>
-            </div>
-          </>
-        ) : (
-          [
-            { key: 'type', label: 'Type', icon: Send, value: type, assigned: false },
-            { key: 'department', label: 'Department', icon: ClipboardList, value: department, assigned: false },
-            { key: 'assigned', label: 'Assigned to', icon: CheckCircle2, value: assignedTo, assigned: true },
-            { key: 'last', label: 'Last action', icon: FileText, value: lastAction, assigned: false },
-          ].map(({ key, label, icon: Icon, value, assigned }) => (
-            <div key={key} className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-              <div className="mb-1 flex items-center gap-1.5">
-                <Icon className="size-3.5 text-[#1769aa]" />
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <p className="text-xs font-semibold text-slate-700">{lastActionLine}</p>
+                {lastActionRelative ? <DateRelativeBadge info={lastActionRelative} /> : null}
               </div>
-              {assigned ? (
-                <div className="text-xs font-semibold text-slate-700">
-                  <AssignedToDisplay assignedTo={value} />
-                </div>
-              ) : (
-                <p className="text-xs font-semibold text-slate-700">{value || '—'}</p>
-              )}
             </div>
-          ))
-        )}
+          </div>
+        </div>
+      )
+  }
+
+  return (
+    <div className="grid gap-y-3 rounded-lg border border-slate-200 bg-neutral-50 p-4 dark:bg-slate-900/40 lg:row-span-4 lg:grid-rows-subgrid">
+      <div className="flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
+        <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
+          <ClipboardList className="size-3.5" />
+        </span>
+        <h3 className="text-sm font-bold text-slate-700">Current Marking Details</h3>
+      </div>
+      <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2.5 dark:border-blue-800/50 dark:bg-blue-950/30">
+        <div className="mb-1 flex items-center gap-1.5">
+          <Badge tone="blue">To</Badge>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Assigned to</p>
+        </div>
+        <div className="text-xs font-semibold text-slate-700">
+          <AssignedToDisplay assignedTo={assignedTo} />
+        </div>
+      </div>
+      {infoBlock}
+      <div className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
+        <div className="mb-1 flex items-center gap-1.5">
+          <FileText className="size-3.5 text-[#1769aa]" />
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Last action</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <p className="text-xs font-semibold text-slate-700">{lastActionLine}</p>
+          {lastActionRelative ? <DateRelativeBadge info={lastActionRelative} /> : null}
+        </div>
       </div>
     </div>
   )
@@ -668,6 +716,7 @@ function LetterPartiesCard({
   to,
   editing = false,
   organizationOptions = [],
+  organizationColors = {},
   onFromChange,
   onToChange,
 }: {
@@ -675,6 +724,7 @@ function LetterPartiesCard({
   to: string
   editing?: boolean
   organizationOptions?: string[]
+  organizationColors?: Record<string, string>
   onFromChange?: (value: string) => void
   onToChange?: (value: string) => void
 }) {
@@ -688,6 +738,7 @@ function LetterPartiesCard({
       label: 'From',
       icon: ArrowUpRight,
       value: from,
+      color: organizationColors[from] || '',
       onChange: onFromChange,
     },
     {
@@ -695,39 +746,95 @@ function LetterPartiesCard({
       label: 'To',
       icon: ArrowDownLeft,
       value: to,
+      color: organizationColors[to] || '',
       onChange: onToChange,
     },
   ]
 
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
-      <div className="mb-3 flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
-        <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
-          <ArrowLeftRight className="size-3.5" />
-        </span>
-        <h3 className="text-sm font-bold text-slate-700">Correspondents</h3>
-      </div>
-      <div className="space-y-3">
-        {rows.map(({ key, label, icon: Icon, value, onChange }) => (
-          <div key={key} className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-            <div className="mb-1 flex items-center gap-1.5">
-              <Icon className="size-3.5 text-[#1769aa]" />
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-            </div>
-            {editing ? (
+  if (editing) {
+    return (
+      <div className="flex h-full flex-col rounded-lg border border-slate-200 bg-neutral-50 p-4 dark:bg-slate-900/40">
+        <div className="mb-3 flex shrink-0 items-center gap-2 border-b border-slate-200/80 pb-2.5">
+          <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
+            <ArrowLeftRight className="size-3.5" />
+          </span>
+          <h3 className="text-sm font-bold text-slate-700">Correspondents</h3>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          {rows.map(({ key, label, icon: Icon, value, color, onChange }) => (
+            <div
+              key={key}
+              className="flex min-h-0 flex-1 flex-col rounded-md border border-slate-200/80 bg-white px-3 py-2.5"
+              style={organizationCardStyle(color)}
+            >
+              <div className="mb-1 flex items-center gap-1.5">
+                <Icon className="size-3.5 text-[#1769aa]" style={color ? { color } : undefined} />
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+                {color ? (
+                  <span className="ml-auto size-2.5 rounded-full border border-white/80 shadow-sm" style={{ backgroundColor: color }} />
+                ) : null}
+              </div>
               <AppSelect
                 value={value}
                 onValueChange={(next) => onChange?.(next)}
                 options={orgSelectOptions}
                 className="mt-0.5 h-9 text-xs"
               />
-            ) : (
-              <p className="text-xs font-semibold text-slate-700">{value || '—'}</p>
-            )}
-          </div>
-        ))}
+            </div>
+          ))}
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div className="grid gap-y-3 rounded-lg border border-slate-200 bg-neutral-50 p-4 dark:bg-slate-900/40 lg:row-span-4 lg:grid-rows-subgrid">
+      <div className="flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
+        <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
+          <ArrowLeftRight className="size-3.5" />
+        </span>
+        <h3 className="text-sm font-bold text-slate-700">Correspondents</h3>
+      </div>
+      {rows.map(({ key, label, icon: Icon, value, color }) => (
+        <div
+          key={key}
+          className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5"
+          style={organizationCardStyle(color)}
+        >
+          <div className="mb-1 flex items-center gap-1.5">
+            <Icon className="size-3.5 text-[#1769aa]" style={color ? { color } : undefined} />
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+            {color ? (
+              <span className="ml-auto size-2.5 rounded-full border border-white/80 shadow-sm" style={{ backgroundColor: color }} />
+            ) : null}
+          </div>
+          <p className="text-xs font-semibold text-slate-700">{value || '—'}</p>
+        </div>
+      ))}
+      {/* Keep a third track so sub-cards line up with Dates / Marking */}
+      <div className="hidden lg:block" aria-hidden />
     </div>
+  )
+}
+
+function DateRelativeBadge({ info }: { info: RelativeDateInfo }) {
+  if (info.tone === 'orange' || info.badgeClassName) {
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold',
+          info.badgeClassName ??
+            'border border-orange-200 bg-orange-100 text-orange-900 dark:border-orange-700 dark:bg-orange-950/70 dark:text-orange-200',
+        )}
+      >
+        {info.label}
+      </span>
+    )
+  }
+  return (
+    <Badge tone={info.tone} className="px-2 py-0.5 text-[10px]">
+      {info.label}
+    </Badge>
   )
 }
 
@@ -754,6 +861,7 @@ function LetterDatesCard({
     icon: typeof Calendar
     inputValue: string
     displayValue: string
+    relative: RelativeDateInfo | null
     onChange?: (value: string) => void
   }[] = [
     {
@@ -761,7 +869,8 @@ function LetterDatesCard({
       label: 'Letter Date',
       icon: Calendar,
       inputValue: letterDate,
-      displayValue: letterDate,
+      displayValue: formatDashDate(letterDate),
+      relative: relativePastDateInfo(letterDate),
       onChange: onLetterDateChange,
     },
     {
@@ -769,7 +878,8 @@ function LetterDatesCard({
       label: 'Receive Date',
       icon: Inbox,
       inputValue: receivedDate === '—' ? '' : receivedDate,
-      displayValue: receivedDate,
+      displayValue: formatDashDate(receivedDate),
+      relative: relativePastDateInfo(receivedDate),
       onChange: onReceivedDateChange,
     },
     {
@@ -777,39 +887,61 @@ function LetterDatesCard({
       label: 'Due Date',
       icon: CalendarClock,
       inputValue: dueDate === '—' ? '' : dueDate,
-      displayValue: dueDate,
+      displayValue: formatDashDate(dueDate),
+      relative: relativeDueDateInfo(dueDate),
       onChange: onDueDateChange,
     },
   ]
 
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-100 p-4 dark:bg-slate-900/40">
-      <div className="mb-3 flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
-        <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
-          <CalendarDays className="size-3.5" />
-        </span>
-        <h3 className="text-sm font-bold text-slate-700">Dates</h3>
-      </div>
-      <div className="space-y-3">
-        {rows.map(({ key, label, icon: Icon, inputValue, displayValue, onChange }) => (
-          <div key={key} className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
-            <div className="mb-1 flex items-center gap-1.5">
-              <Icon className="size-3.5 text-[#1769aa]" />
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-            </div>
-            {editing ? (
+  if (editing) {
+    return (
+      <div className="flex h-full flex-col rounded-lg border border-slate-200 bg-neutral-50 p-4 dark:bg-slate-900/40">
+        <div className="mb-3 flex shrink-0 items-center gap-2 border-b border-slate-200/80 pb-2.5">
+          <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
+            <CalendarDays className="size-3.5" />
+          </span>
+          <h3 className="text-sm font-bold text-slate-700">Dates</h3>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          {rows.map(({ key, label, icon: Icon, inputValue, onChange }) => (
+            <div key={key} className="flex min-h-0 flex-1 flex-col rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
+              <div className="mb-1 flex items-center gap-1.5">
+                <Icon className="size-3.5 text-[#1769aa]" />
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+              </div>
               <input
                 type="date"
                 value={inputValue}
                 onChange={(e) => onChange?.(e.target.value)}
                 className="mt-0.5 h-9 w-full rounded-md border border-slate-200 px-2 text-xs font-semibold text-slate-700"
               />
-            ) : (
-              <p className="text-xs font-semibold text-slate-700">{displayValue || '—'}</p>
-            )}
-          </div>
-        ))}
+            </div>
+          ))}
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div className="grid gap-y-3 rounded-lg border border-slate-200 bg-neutral-50 p-4 dark:bg-slate-900/40 lg:row-span-4 lg:grid-rows-subgrid">
+      <div className="flex items-center gap-2 border-b border-slate-200/80 pb-2.5">
+        <span className="inline-flex size-7 items-center justify-center rounded-md bg-white text-[#1769aa] shadow-sm ring-1 ring-slate-200">
+          <CalendarDays className="size-3.5" />
+        </span>
+        <h3 className="text-sm font-bold text-slate-700">Dates</h3>
+      </div>
+      {rows.map(({ key, label, icon: Icon, displayValue, relative }) => (
+        <div key={key} className="rounded-md border border-slate-200/80 bg-white px-3 py-2.5">
+          <div className="mb-1 flex items-center gap-1.5">
+            <Icon className="size-3.5 text-[#1769aa]" />
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <p className="text-xs font-semibold text-slate-700">{displayValue}</p>
+            {relative ? <DateRelativeBadge info={relative} /> : null}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

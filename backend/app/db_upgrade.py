@@ -497,6 +497,18 @@ def backfill_letter_ownership(db) -> None:
 
 
 
+def upgrade_organization_color_column(engine: Engine) -> None:
+    """Add optional display color for organizations (Correspondence Details From/To)."""
+    inspector = inspect(engine)
+    if not inspector.has_table("cms_organizations"):
+        return
+    columns = {col["name"] for col in inspector.get_columns("cms_organizations")}
+    if "color" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE cms_organizations ADD COLUMN color VARCHAR(20) DEFAULT ''"))
+
+
 def upgrade_department_org_schema(engine: Engine) -> None:
     """Add org-chart columns and coordination links for departments."""
     inspector = inspect(engine)

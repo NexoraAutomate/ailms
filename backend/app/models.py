@@ -59,6 +59,8 @@ class Organization(Base):
     email: Mapped[str] = mapped_column(String(180), default="")
     phone: Mapped[str] = mapped_column(String(60), default="")
     status: Mapped[str] = mapped_column(String(20), default="Active")
+    # Hex color (e.g. #3B82F6) shown on Correspondence Details From/To cards.
+    color: Mapped[str] = mapped_column(String(20), default="")
 
 
 class User(Base):

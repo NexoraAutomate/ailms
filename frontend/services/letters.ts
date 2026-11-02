@@ -53,6 +53,8 @@ export type Letter = {
   createdBy?: string
   assignedBy?: string
   lastAction: string
+  /** ISO datetime of the latest mark / respond / close (or letter updated_at). */
+  lastActionAt?: string
   daysPending: number
   confidentiality?: string
   actionRequired?: string

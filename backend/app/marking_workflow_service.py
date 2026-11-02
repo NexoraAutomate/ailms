@@ -176,7 +176,7 @@ def response_returned_markings(
 
 
 def current_holder_names(db: Session, letter_id: int) -> list[str]:
-    """Display names of users who currently hold the letter."""
+    """Display names of users who currently hold the letter (To + Info leaves)."""
     names: list[str] = []
     for leaf in active_leaf_markings(db, letter_id):
         names.append(leaf.to_user)
@@ -185,17 +185,42 @@ def current_holder_names(db: Session, letter_id: int) -> list[str]:
     return names
 
 
+def current_actionable_holder_names(db: Session, letter_id: int) -> list[str]:
+    """Current holders on actionable marks (Forward / Response Required), not For Information."""
+    names: list[str] = []
+    for leaf in active_leaf_markings(db, letter_id):
+        if (leaf.action or "").strip() == "for_info":
+            continue
+        names.append(leaf.to_user)
+    for returned in response_returned_markings(db, letter_id):
+        names.append(returned.from_user)
+    return names
+
+
+def current_info_holder_names(db: Session, letter_id: int) -> list[str]:
+    """Current holders on For Information leaf marks only."""
+    return [
+        leaf.to_user
+        for leaf in active_leaf_markings(db, letter_id)
+        if (leaf.action or "").strip() == "for_info"
+    ]
+
+
 def sync_letter_from_markings(
     db: Session,
     letter: Letter,
     *,
     last_action: str | None = None,
 ) -> None:
-    """Keep legacy Assigned To / Last Action in sync with the marking tree."""
+    """Keep legacy Assigned To / Last Action in sync with the marking tree.
+
+    Assigned To lists actionable (To) holders only — Info recipients are separate.
+    """
     leaves = active_leaf_markings(db, letter.id)
     returned = response_returned_markings(db, letter.id)
-    holders = current_holder_names(db, letter.id)
-    primary = _pick_primary_marking(leaves) or (returned[-1] if returned else None)
+    holders = current_actionable_holder_names(db, letter.id)
+    actionable_leaves = [m for m in leaves if (m.action or "").strip() != "for_info"]
+    primary = _pick_primary_marking(actionable_leaves) or (returned[-1] if returned else None)
     if holders:
         letter.assigned_to = format_assigned_to_holders(holders)
         if primary:
@@ -218,13 +243,8 @@ def _mark_last_action(marking: Marking) -> str:
     return f"Marked ({_action_label(marking.action)})"
 
 
-def derive_last_action_from_markings(db: Session, letter: Letter) -> str | None:
-    """Most recent marking event label for backfill / repair.
-
-    Revoked markings are omitted entirely — revoke is not a workflow tracking
-    event, and skipping them also avoids create/revoke clock skew resurfacing
-    a mark after it was revoked.
-    """
+def _last_action_events(db: Session, letter: Letter) -> list[tuple[datetime, int, str]]:
+    """Marking / close events that contribute to last-action label + timestamp."""
     events: list[tuple[datetime, int, str]] = []
     if letter.status == CLOSED_LETTER and letter.closed_at:
         events.append((letter.closed_at, letter.id or 0, "Closed"))
@@ -238,10 +258,30 @@ def derive_last_action_from_markings(db: Session, letter: Letter) -> str | None:
             events.append((row.responded_at, row.id or 0, "Responded"))
         elif row.created_at:
             events.append((row.created_at, row.id or 0, _mark_last_action(row)))
+    events.sort(key=lambda item: (item[0], item[1]))
+    return events
+
+
+def derive_last_action_from_markings(db: Session, letter: Letter) -> str | None:
+    """Most recent marking event label for backfill / repair.
+
+    Revoked markings are omitted entirely — revoke is not a workflow tracking
+    event, and skipping them also avoids create/revoke clock skew resurfacing
+    a mark after it was revoked.
+    """
+    events = _last_action_events(db, letter)
     if not events:
         return None
-    events.sort(key=lambda item: (item[0], item[1]))
     return events[-1][2]
+
+
+def derive_last_action_at(db: Session | None, letter: Letter) -> datetime | None:
+    """Timestamp of the latest last-action event (mark / respond / close), else letter clocks."""
+    if db is not None:
+        events = _last_action_events(db, letter)
+        if events:
+            return events[-1][0]
+    return getattr(letter, "updated_at", None) or getattr(letter, "created_at", None)
 
 
 def repair_letter_assignment_from_markings(db: Session, letter: Letter) -> bool:

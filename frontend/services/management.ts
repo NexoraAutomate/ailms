@@ -30,6 +30,8 @@ export type Organization = {
   email: string
   phone: string
   status: string
+  /** Hex color for Correspondence Details From/To cards, e.g. #3B82F6 */
+  color?: string
 }
 
 export type MasterValueItem = {
