@@ -53,6 +53,11 @@ class LetterOut(BaseModel):
     sentAction: str = ""
     # Inbox view: user who marked this letter into the viewer's hold.
     markedBy: str = ""
+    # Inbox: 'to' (actionable mark) or 'info' (For Information only).
+    inboxRole: str = ""
+    # Inbox: To / Info recipients on the same mark batch (comma-separated).
+    markToUsers: str = ""
+    markInfoUsers: str = ""
     # Inbox: viewer currently holds this letter (can Assign / Respond from the table).
     viewerHolds: bool = False
     canAssign: bool = False

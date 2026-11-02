@@ -32,7 +32,8 @@ type MarkingChainStepperProps = {
   className?: string
 }
 
-const MS_HOUR = 1000 * 60 * 60
+const MS_MINUTE = 1000 * 60
+const MS_HOUR = MS_MINUTE * 60
 const MS_DAY = MS_HOUR * 24
 
 function sameName(a?: string | null, b?: string | null) {
@@ -51,27 +52,50 @@ export function markingDelayDays(from?: string | null, to?: string | null): numb
   return parts ? parts.days : null
 }
 
-/** Days + remaining hours between two ISO timestamps. */
+/** Days + remaining hours + remaining minutes between two ISO timestamps. */
 export function markingDelayParts(
   from?: string | null,
   to?: string | null,
-): { days: number; hours: number } | null {
+): { days: number; hours: number; minutes: number } | null {
   const a = parseTs(from)
   const b = parseTs(to)
   if (a == null || b == null || b < a) return null
   const ms = b - a
   const days = Math.floor(ms / MS_DAY)
   const hours = Math.floor((ms % MS_DAY) / MS_HOUR)
-  return { days, hours }
+  const minutes = Math.floor((ms % MS_HOUR) / MS_MINUTE)
+  return { days, hours, minutes }
 }
 
-function formatDelayParts(parts: { days: number; hours: number } | null): string | undefined {
+/** Compact hop delay: `0h 5m`, `0d 7h`, `5d 2h`. */
+function formatDelayParts(
+  parts: { days: number; hours: number; minutes: number } | null,
+): string | undefined {
   if (!parts) return undefined
-  const { days, hours } = parts
-  if (days <= 0 && hours <= 0) return '0h'
-  if (days <= 0) return `${hours}h`
-  if (hours <= 0) return `${days}d`
+  const { days, hours, minutes } = parts
+  if (days <= 0 && hours <= 0) return `0h ${Math.max(minutes, 0)}m`
+  if (days <= 0) return `0d ${hours}h`
   return `${days}d ${hours}h`
+}
+
+/**
+ * Delay badge tone:
+ * - under 1 day → green
+ * - 1 day up to 1 week → yellow
+ * - 1 week up to 30 days → orange
+ * - 30+ days → red
+ */
+function delayBadgeClass(parts: { days: number; hours: number; minutes: number }): string {
+  if (parts.days >= 30) {
+    return 'border-red-300 bg-red-100 text-red-800 dark:border-red-700 dark:bg-red-950/70 dark:text-red-200'
+  }
+  if (parts.days >= 7) {
+    return 'border-orange-300 bg-orange-100 text-orange-900 dark:border-orange-700 dark:bg-orange-950/70 dark:text-orange-200'
+  }
+  if (parts.days >= 1) {
+    return 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-600 dark:bg-amber-950/70 dark:text-amber-200'
+  }
+  return 'border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-200'
 }
 
 function PriorUsersLead({ priorCount }: { priorCount: number }) {
@@ -131,9 +155,8 @@ export function MarkingChainStepper({
             const label = isYou ? 'You' : step.name
             const next = steps[index + 1]
             const hopMarkedAt = next?.markedAt
-            const delayLabel = next
-              ? formatDelayParts(markingDelayParts(step.markedAt, next.markedAt))
-              : undefined
+            const delayParts = next ? markingDelayParts(step.markedAt, next.markedAt) : null
+            const delayLabel = formatDelayParts(delayParts)
 
             return (
               <Fragment key={step.id}>
@@ -166,9 +189,12 @@ export function MarkingChainStepper({
                           {formatDateTime(hopMarkedAt)}
                         </span>
                       ) : null}
-                      {delayLabel ? (
+                      {delayLabel && delayParts ? (
                         <span
-                          className="absolute left-1/2 top-8 z-1 -translate-x-1/2 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-slate-600 shadow-sm sm:top-9"
+                          className={cn(
+                            'absolute left-1/2 top-8 z-1 -translate-x-1/2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold tabular-nums shadow-sm sm:top-9',
+                            delayBadgeClass(delayParts),
+                          )}
                           title={`${delayLabel} between markings`}
                         >
                           {delayLabel}

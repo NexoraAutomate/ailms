@@ -82,6 +82,12 @@ export type Letter = {
   sentAction?: string
   /** Inbox view: user who marked this letter to the viewer. */
   markedBy?: string
+  /** Inbox: 'to' (actionable) or 'info' (For Information only). */
+  inboxRole?: 'to' | 'info' | string
+  /** Inbox: To recipients on the same mark batch. */
+  markToUsers?: string
+  /** Inbox: Info recipients on the same mark batch. */
+  markInfoUsers?: string
   /** Inbox: current viewer holds this letter. */
   viewerHolds?: boolean
   canAssign?: boolean

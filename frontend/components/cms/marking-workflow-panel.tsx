@@ -362,6 +362,54 @@ function attachmentLetterLabel(index: number): string {
 }
 
 const WORKFLOW_VISIBILITY_KEY = 'ailms.markingWorkflow.visibility'
+const COMPOSER_UI_KEY_PREFIX = 'ailms.markingWorkflow.composerUi.'
+
+type ComposerUiState = {
+  mode: 'forward' | 'reply'
+  parentMarkingId: number | null
+}
+
+function composerUiStorageKey(letterId: string) {
+  return `${COMPOSER_UI_KEY_PREFIX}${letterId}`
+}
+
+function readComposerUi(letterId: string): ComposerUiState {
+  if (typeof window === 'undefined') return { mode: 'forward', parentMarkingId: null }
+  try {
+    const raw = sessionStorage.getItem(composerUiStorageKey(letterId))
+    if (!raw) return { mode: 'forward', parentMarkingId: null }
+    const parsed = JSON.parse(raw) as Partial<ComposerUiState>
+    return {
+      mode: parsed.mode === 'reply' ? 'reply' : 'forward',
+      parentMarkingId:
+        typeof parsed.parentMarkingId === 'number' && Number.isFinite(parsed.parentMarkingId)
+          ? parsed.parentMarkingId
+          : null,
+    }
+  } catch {
+    return { mode: 'forward', parentMarkingId: null }
+  }
+}
+
+function writeComposerUi(letterId: string, state: ComposerUiState) {
+  try {
+    if (state.mode === 'forward' && state.parentMarkingId == null) {
+      sessionStorage.removeItem(composerUiStorageKey(letterId))
+      return
+    }
+    sessionStorage.setItem(composerUiStorageKey(letterId), JSON.stringify(state))
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function clearComposerUi(letterId: string) {
+  try {
+    sessionStorage.removeItem(composerUiStorageKey(letterId))
+  } catch {
+    /* ignore */
+  }
+}
 
 type WorkflowVisibility = {
   /** Emerald highlight + YOU badge on the logged-in user's comment cards. */
@@ -712,7 +760,9 @@ export function MarkingWorkflowPanel({
   const [error, setError] = useState('')
   const [visibility, setVisibility] = useState<WorkflowVisibility>(DEFAULT_WORKFLOW_VISIBILITY)
   const [dialog, setDialog] = useState<'forward' | 'close' | 'revoke' | 'decline' | null>(null)
-  const [composerMode, setComposerMode] = useState<'forward' | 'reply'>('forward')
+  const [composerMode, setComposerModeState] = useState<'forward' | 'reply'>(
+    () => readComposerUi(letter.id).mode,
+  )
   const [remarks, setRemarks] = useState('')
   const [recipients, setRecipients] = useState<MarkRecipientInput[]>([emptyRecipient()])
   const [activeRecipientIndex, setActiveRecipientIndex] = useState(0)
@@ -720,7 +770,11 @@ export function MarkingWorkflowPanel({
   /** Remount composer after a successful Mark so local draft state resets. */
   const [composerKey, setComposerKey] = useState(0)
   const composerRef = useRef<DraftCommentsComposerHandle>(null)
-  const [composerMarkState, setComposerMarkState] = useState({ canMark: false, busy: false })
+  const [composerMarkState, setComposerMarkState] = useState({
+    canMark: false,
+    canSend: false,
+    busy: false,
+  })
   const [draftPreview, setDraftPreview] = useState<DraftCommentPreviewData | null>(null)
   const draftPreviewOpenRef = useRef(false)
 
@@ -741,7 +795,46 @@ export function MarkingWorkflowPanel({
   const handleDraftsChange = useCallback((next: MarkingDrafts) => {
     setDrafts({ ...next, roster: next.roster ?? [] })
   }, [])
-  const [parentMarkingId, setParentMarkingId] = useState<number | null>(null)
+  const [parentMarkingId, setParentMarkingIdState] = useState<number | null>(
+    () => readComposerUi(letter.id).parentMarkingId,
+  )
+  const composerUiRef = useRef<ComposerUiState>({
+    mode: composerMode,
+    parentMarkingId,
+  })
+  composerUiRef.current = { mode: composerMode, parentMarkingId }
+
+  const setComposerMode = useCallback(
+    (mode: 'forward' | 'reply') => {
+      setComposerModeState(mode)
+      composerUiRef.current.mode = mode
+      if (mode === 'forward') composerUiRef.current.parentMarkingId = null
+      writeComposerUi(letter.id, {
+        mode,
+        parentMarkingId: mode === 'reply' ? composerUiRef.current.parentMarkingId : null,
+      })
+    },
+    [letter.id],
+  )
+
+  const setParentMarkingId = useCallback(
+    (holdId: number | null) => {
+      setParentMarkingIdState(holdId)
+      composerUiRef.current.parentMarkingId = holdId
+      writeComposerUi(letter.id, {
+        mode: composerUiRef.current.mode,
+        parentMarkingId: composerUiRef.current.mode === 'reply' ? holdId : null,
+      })
+    },
+    [letter.id],
+  )
+
+  useEffect(() => {
+    const saved = readComposerUi(letter.id)
+    setComposerModeState(saved.mode)
+    setParentMarkingIdState(saved.parentMarkingId)
+    composerUiRef.current = saved
+  }, [letter.id])
   const [noteBody, setNoteBody] = useState('')
   const [forceClose, setForceClose] = useState(false)
   const [expandedTrackerBatchId, setExpandedTrackerBatchId] = useState<number | null>(null)
@@ -860,6 +953,14 @@ export function MarkingWorkflowPanel({
         setParentMarkingId(holds[0]!.id)
       } else if (holds.length === 0) {
         setParentMarkingId(null)
+        if (composerUiRef.current.mode === 'reply') setComposerMode('forward')
+      } else if (
+        composerUiRef.current.mode === 'reply' &&
+        composerUiRef.current.parentMarkingId != null &&
+        !holds.some((h) => h.id === composerUiRef.current.parentMarkingId)
+      ) {
+        // Restored hold no longer active — keep reply mode but force a fresh hold pick.
+        setParentMarkingId(null)
       }
     } catch (err) {
       if (!silent) {
@@ -869,7 +970,7 @@ export function MarkingWorkflowPanel({
       loadInFlightRef.current = false
       if (!silent) setLoading(false)
     }
-  }, [letter.id])
+  }, [letter.id, setComposerMode, setParentMarkingId])
 
   useEffect(() => {
     void load()
@@ -933,6 +1034,7 @@ export function MarkingWorkflowPanel({
         draftPreviewOpenRef.current = false
         setDraftPreview(null)
         setComposerMode('forward')
+        clearComposerUi(letter.id)
         setComposerKey((k) => k + 1)
       }
     } catch (err) {
@@ -1219,17 +1321,14 @@ export function MarkingWorkflowPanel({
                 <XCircle className="mr-1 h-3.5 w-3.5" /> Reject
               </Button>
             )}
-            {!actions.includes('accept') && actions.includes('reply') && (
+            {!actions.includes('accept') &&
+              actions.includes('reply') &&
+              composerMode !== 'reply' && (
               <Button
                 size="sm"
-                variant={composerMode === 'reply' ? 'default' : 'outline'}
+                variant="outline"
                 disabled={busy || activeHolds.length === 0}
                 onClick={() => {
-                  if (composerMode === 'reply') {
-                    setComposerMode('forward')
-                    setError('')
-                    return
-                  }
                   if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
                   setError('')
                   setComposerMode('reply')
@@ -1242,7 +1341,7 @@ export function MarkingWorkflowPanel({
                 }}
               >
                 <Reply className="mr-1 h-3.5 w-3.5" />
-                {composerMode === 'reply' ? 'Cancel Reply' : 'Reply'}
+                Reply
               </Button>
             )}
             {revokableMarkings.length > 0 && (
@@ -1250,19 +1349,39 @@ export function MarkingWorkflowPanel({
                 <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
               </Button>
             )}
-            {!actions.includes('accept') && actions.includes('forward') && (
-              <Button
-                size="sm"
-                disabled={
-                  composerMode === 'reply' ||
-                  !composerMarkState.canMark ||
-                  composerMarkState.busy ||
-                  busy
-                }
-                onClick={() => composerRef.current?.requestMark()}
-              >
-                <Send className="mr-1 h-3.5 w-3.5" /> Mark
-              </Button>
+            {composerMode === 'reply' ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    setComposerMode('forward')
+                    setError('')
+                  }}
+                >
+                  Cancel Reply
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={busy || composerMarkState.busy || !composerMarkState.canSend}
+                  onClick={() => composerRef.current?.requestSend()}
+                >
+                  <Reply className="mr-1 h-3.5 w-3.5" />
+                  Send Reply
+                </Button>
+              </>
+            ) : (
+              !actions.includes('accept') &&
+              actions.includes('forward') && (
+                <Button
+                  size="sm"
+                  disabled={!composerMarkState.canMark || composerMarkState.busy || busy}
+                  onClick={() => composerRef.current?.requestMark()}
+                >
+                  <Send className="mr-1 h-3.5 w-3.5" /> Mark
+                </Button>
+              )
             )}
             {!actions.includes('accept') && actions.includes('close') && (
               <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
@@ -1369,10 +1488,6 @@ export function MarkingWorkflowPanel({
             hideMarkButton
             mode={composerMode}
             lockedToUser={composerMode === 'reply' ? replyTargetUser : null}
-            onCancelReply={() => {
-              setComposerMode('forward')
-              setError('')
-            }}
             previewActive={draftPreview != null}
             onPreviewChange={handleDraftPreviewChange}
             onMarkAvailabilityChange={setComposerMarkState}

@@ -54,6 +54,7 @@ type ToEntry = {
 
 export type DraftCommentsComposerHandle = {
   requestMark: () => void
+  requestSend: () => void
 }
 
 export type DraftCommentPreviewAttachment = {
@@ -79,15 +80,14 @@ type DraftCommentsComposerProps = {
   drafts: MarkingDrafts | null
   onDraftsChange: (drafts: MarkingDrafts) => void
   disabled?: boolean
-  /** When true, Mark is rendered by the parent (e.g. Workflow action bar). */
+  /** When true, Mark / Send Reply are rendered by the parent (e.g. Workflow action bar). */
   hideMarkButton?: boolean
-  /** Reply locks To to the immediate sender and shows Send at the card footer. */
+  /** Reply locks To to the immediate sender; Send Reply lives in the parent action bar. */
   mode?: 'forward' | 'reply'
   lockedToUser?: string | null
-  onCancelReply?: () => void
   previewActive?: boolean
   onPreviewChange?: (preview: DraftCommentPreviewData | null) => void
-  onMarkAvailabilityChange?: (state: { canMark: boolean; busy: boolean }) => void
+  onMarkAvailabilityChange?: (state: { canMark: boolean; canSend: boolean; busy: boolean }) => void
   onRequestMark: (recipients: MarkRecipientInput[]) => void
   /** Reply Send — same recipient payload as Mark, parent submits with direction=reply. */
   onRequestSend?: (recipients: MarkRecipientInput[]) => void
@@ -169,7 +169,6 @@ export const DraftCommentsComposer = forwardRef<
     hideMarkButton = false,
     mode = 'forward',
     lockedToUser = null,
-    onCancelReply,
     previewActive = false,
     onPreviewChange,
     onMarkAvailabilityChange,
@@ -803,11 +802,18 @@ export const DraftCommentsComposer = forwardRef<
     ])
   }, [commonBody, lockedTo, onRequestSend])
 
-  useImperativeHandle(ref, () => ({ requestMark: handleMarkClick }), [handleMarkClick])
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestMark: handleMarkClick,
+      requestSend: handleSendClick,
+    }),
+    [handleMarkClick, handleSendClick],
+  )
 
   useEffect(() => {
-    onMarkAvailabilityChange?.({ canMark, busy: busyAttach })
-  }, [busyAttach, canMark, onMarkAvailabilityChange])
+    onMarkAvailabilityChange?.({ canMark, canSend: canSendReply, busy: busyAttach })
+  }, [busyAttach, canMark, canSendReply, onMarkAvailabilityChange])
 
   return (
     <section
@@ -826,11 +832,6 @@ export const DraftCommentsComposer = forwardRef<
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {isReplyMode && onCancelReply ? (
-            <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onCancelReply}>
-              Cancel Reply
-            </Button>
-          ) : null}
           <Button
             type="button"
             size="sm"
@@ -853,6 +854,12 @@ export const DraftCommentsComposer = forwardRef<
             <Button size="sm" disabled={!canMark || busyAttach} onClick={handleMarkClick}>
               <Send className="mr-1 h-3.5 w-3.5" />
               Mark
+            </Button>
+          ) : null}
+          {!hideMarkButton && isReplyMode ? (
+            <Button size="sm" disabled={!canSendReply} onClick={handleSendClick}>
+              <Reply className="mr-1 h-3.5 w-3.5" />
+              Send Reply
             </Button>
           ) : null}
         </div>
@@ -1074,24 +1081,6 @@ export const DraftCommentsComposer = forwardRef<
         </div>
       </div>
 
-      {isReplyMode ? (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-violet-100 bg-violet-50/40 px-3 py-3 sm:px-4">
-          {onCancelReply ? (
-            <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onCancelReply}>
-              Cancel
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            size="sm"
-            disabled={!canSendReply}
-            onClick={handleSendClick}
-          >
-            <Reply className="mr-1 h-3.5 w-3.5" />
-            Send
-          </Button>
-        </div>
-      ) : null}
     </section>
   )
 })

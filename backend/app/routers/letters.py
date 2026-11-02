@@ -103,11 +103,16 @@ def list_letters(
     if view == "inbox":
         from app.marking_workflow_service import (
             available_marking_actions,
+            inbox_hold_context,
             letter_ids_held_by_user,
             marked_by_for_holder,
             pending_acceptance_markings,
         )
-        from app.services import attach_inbox_holder_actions, attach_inbox_marked_by
+        from app.services import (
+            attach_inbox_hold_context,
+            attach_inbox_holder_actions,
+            attach_inbox_marked_by,
+        )
 
         held = {str(i) for i in letter_ids_held_by_user(db, actor)}
         by_id = {str(row.id): row for row in rows}
@@ -131,8 +136,12 @@ def list_letters(
                 leaves = leaf_inbound_markings(db, int(item.id), actor)
                 if leaves:
                     acceptance_status = (leaves[0].acceptance_status or "").strip()
-            enriched = attach_inbox_marked_by(
-                item, marked_by_for_holder(db, int(item.id), actor)
+            hold_ctx = inbox_hold_context(db, int(item.id), actor)
+            enriched = attach_inbox_hold_context(
+                attach_inbox_marked_by(item, marked_by_for_holder(db, int(item.id), actor)),
+                inbox_role=hold_ctx["inboxRole"],
+                mark_to_users=hold_ctx["markToUsers"],
+                mark_info_users=hold_ctx["markInfoUsers"],
             )
             inbox_items.append(
                 attach_inbox_holder_actions(

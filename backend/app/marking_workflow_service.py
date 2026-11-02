@@ -464,6 +464,68 @@ def marked_by_for_holder(db: Session, letter_id: int, user_name: str) -> str:
     return ""
 
 
+def inbox_hold_context(db: Session, letter_id: int, user_name: str) -> dict[str, str]:
+    """
+    Inbox segregation + To/Info columns for the viewer's current hold.
+
+    inboxRole: 'to' when the viewer was an actionable recipient (or holds without
+    an Info-only marking); 'info' when every inbound leaf is For Information.
+    markToUsers / markInfoUsers list peers on the same mark batch.
+    """
+    name = (user_name or "").strip()
+    empty = {"inboxRole": "", "markToUsers": "", "markInfoUsers": ""}
+    if not name:
+        return empty
+
+    def _join(names: list[str]) -> str:
+        return ", ".join(names)
+
+    leaves = leaf_inbound_markings(db, letter_id, name)
+    if leaves:
+        actionable = [m for m in leaves if (m.action or "").strip() != "for_info"]
+        primary = actionable[0] if actionable else leaves[0]
+        role = "to" if actionable else "info"
+        to_names: list[str] = []
+        info_names: list[str] = []
+        batch_id = getattr(primary, "batch_id", None)
+        siblings: list[Marking]
+        if batch_id is not None:
+            siblings = (
+                db.query(Marking)
+                .filter(
+                    Marking.batch_id == int(batch_id),
+                    Marking.status == "active",
+                )
+                .order_by(Marking.id.asc())
+                .all()
+            )
+        else:
+            siblings = list(leaves)
+        for row in siblings:
+            person = (row.to_user or "").strip()
+            if not person:
+                continue
+            if (row.action or "").strip() == "for_info":
+                if person not in info_names:
+                    info_names.append(person)
+            elif person not in to_names:
+                to_names.append(person)
+        return {
+            "inboxRole": role,
+            "markToUsers": _join(to_names),
+            "markInfoUsers": _join(info_names),
+        }
+
+    if response_returned_markings(db, letter_id, name):
+        return {"inboxRole": "to", "markToUsers": name, "markInfoUsers": ""}
+
+    letter = db.get(Letter, letter_id)
+    if letter and is_initiator(letter, name) and not has_active_markings(db, letter_id):
+        return {"inboxRole": "to", "markToUsers": name, "markInfoUsers": ""}
+
+    return empty
+
+
 def user_holds_letter(db: Session, letter: Letter, actor_name: str) -> bool:
     """
     Holder may mark / note / close.

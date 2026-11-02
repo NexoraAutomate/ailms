@@ -25,6 +25,7 @@ from app.marking_workflow_service import (
     can_edit_letter_details,
     close_letter,
     create_mark_batch,
+    inbox_hold_context,
     letter_ids_held_by_user,
     letter_ids_marked_by_user,
     letter_ids_marked_to_user,
@@ -1765,6 +1766,26 @@ class MarkingWorkflowTest(unittest.TestCase):
         self.assertEqual(atts[0]["originalFilename"], "test.pdf")
         remaining = list_drafts(self.db, self.letter.id, self.initiator.name)
         self.assertEqual(remaining["attachments"], [])
+
+    def test_inbox_hold_context_segregates_to_and_info(self) -> None:
+        create_mark_batch(
+            self.db,
+            letter=self.letter,
+            actor_name=self.initiator.name,
+            recipients=[
+                {"toUser": self.user_a.name, "action": "forward"},
+                {"toUser": self.user_b.name, "action": "for_info"},
+            ],
+        )
+        self.db.flush()
+        to_ctx = inbox_hold_context(self.db, self.letter.id, self.user_a.name)
+        self.assertEqual(to_ctx["inboxRole"], "to")
+        self.assertIn(self.user_a.name, to_ctx["markToUsers"])
+        self.assertIn(self.user_b.name, to_ctx["markInfoUsers"])
+        info_ctx = inbox_hold_context(self.db, self.letter.id, self.user_b.name)
+        self.assertEqual(info_ctx["inboxRole"], "info")
+        self.assertIn(self.user_a.name, info_ctx["markToUsers"])
+        self.assertIn(self.user_b.name, info_ctx["markInfoUsers"])
 
     def test_recipient_cannot_mutate_marker_attachments(self) -> None:
         """Files attached when marking to you are preview/open only for the recipient."""

@@ -37,6 +37,10 @@ export function LetterTable({
   onDelete,
   showSender,
   navFrom,
+  title = 'Correspondence register',
+  description,
+  storageKey,
+  colorCodeInboxRoles = false,
   className,
   style,
 }: {
@@ -58,6 +62,11 @@ export function LetterTable({
   showSender?: boolean
   /** Preserved when row actions deep-link into letter detail. */
   navFrom?: 'inbox' | 'sent'
+  title?: string
+  description?: string
+  storageKey?: string
+  /** Tint To / Info rows with blue / violet (combined inbox list). */
+  colorCodeInboxRoles?: boolean
   className?: string
   style?: CSSProperties
 }) {
@@ -205,11 +214,26 @@ export function LetterTable({
       },
       {
         id: 'assignedTo',
-        header: 'Assigned to',
-        sortValue: (l) => l.assignedTo,
+        header: showSender ? 'To' : 'Assigned to',
+        sortValue: (l) => (showSender ? l.markToUsers || l.assignedTo : l.assignedTo),
         className: 'text-slate-600',
-        cell: (l) => <AssignedToDisplay assignedTo={l.assignedTo} />,
+        headerClassName: showSender ? 'text-blue-800 dark:text-blue-200' : undefined,
+        cell: (l) => (
+          <AssignedToDisplay assignedTo={showSender ? l.markToUsers || l.assignedTo : l.assignedTo} />
+        ),
       },
+      ...(showSender
+        ? ([
+            {
+              id: 'markInfoUsers',
+              header: 'Info',
+              sortValue: (l) => l.markInfoUsers || '',
+              className: 'text-slate-600',
+              headerClassName: 'text-violet-800 dark:text-violet-200',
+              cell: (l) => <AssignedToDisplay assignedTo={l.markInfoUsers || ''} />,
+            },
+          ] satisfies DataTableColumn<Letter>[])
+        : []),
       {
         id: 'actions',
         header: 'Actions',
@@ -261,13 +285,13 @@ export function LetterTable({
       columns={columns}
       data={data}
       rowKey={(l) => (l.sentMarkingId != null ? `${l.id}-m${l.sentMarkingId}` : l.id)}
-      storageKey={showSender ? 'letter-register-inbox' : 'letter-register'}
-      minWidth={showSender ? '1200px' : '1100px'}
+      storageKey={storageKey || (showSender ? 'letter-register-inbox' : 'letter-register')}
+      minWidth={showSender ? '1280px' : '1100px'}
       maxHeight="min(480px, 58vh)"
       className={className}
       style={style}
-      title="Correspondence register"
-      description={`${data.length} records`}
+      title={title}
+      description={description ?? `${data.length} records`}
       toolbar={
         selectable ? (
           <label className="mr-1 inline-flex items-center gap-1.5 text-xs text-slate-500">
@@ -290,6 +314,12 @@ export function LetterTable({
         const highlighted = highlightId === l.id
         if (locked) return 'bg-slate-50/80 text-slate-400'
         if (highlighted) return 'bg-blue-50/80 ring-1 ring-inset ring-blue-100'
+        if (colorCodeInboxRoles) {
+          const info = l.inboxRole === 'info'
+          return info
+            ? 'border-l-[3px] border-l-violet-500 bg-violet-50/70 hover:bg-violet-50 dark:bg-violet-950/30 dark:hover:bg-violet-950/45'
+            : 'border-l-[3px] border-l-blue-500 bg-blue-50/70 hover:bg-blue-50 dark:bg-blue-950/30 dark:hover:bg-blue-950/45'
+        }
         return 'hover:bg-slate-50'
       }}
       emptyMessage="No letters found."

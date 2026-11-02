@@ -183,6 +183,26 @@ def attach_inbox_marked_by(letter_out: LetterOut, marked_by: str) -> LetterOut:
     return letter_out.model_copy(update={"markedBy": (marked_by or "").strip()})
 
 
+def attach_inbox_hold_context(
+    letter_out: LetterOut,
+    *,
+    inbox_role: str,
+    mark_to_users: str,
+    mark_info_users: str,
+) -> LetterOut:
+    """Clone a letter DTO with To/Info segregation fields for the Inbox view."""
+    to_users = (mark_to_users or "").strip()
+    return letter_out.model_copy(
+        update={
+            "inboxRole": (inbox_role or "").strip(),
+            "markToUsers": to_users,
+            "markInfoUsers": (mark_info_users or "").strip(),
+            # Assigned To column shows actionable (To) recipients on this mark.
+            "assignedTo": to_users or letter_out.assignedTo,
+        }
+    )
+
+
 def attach_inbox_holder_actions(
     letter_out: LetterOut,
     *,
