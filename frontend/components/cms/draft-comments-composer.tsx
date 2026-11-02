@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react'
 import { Eye, EyeOff, Paperclip, Reply, Send, Trash2 } from 'lucide-react'
 import { AppSelect } from '@/components/ui/app-select'
@@ -80,8 +81,10 @@ type DraftCommentsComposerProps = {
   drafts: MarkingDrafts | null
   onDraftsChange: (drafts: MarkingDrafts) => void
   disabled?: boolean
-  /** When true, Mark / Send Reply are rendered by the parent (e.g. Workflow action bar). */
+  /** When true, Mark / Send Reply are rendered by the parent (e.g. via headerActions). */
   hideMarkButton?: boolean
+  /** Extra actions to the right of Preview Comments (Reply, Mark, Revoke, …). */
+  headerActions?: ReactNode
   /** Reply locks To to the immediate sender; Send Reply lives in the parent action bar. */
   mode?: 'forward' | 'reply'
   lockedToUser?: string | null
@@ -167,6 +170,7 @@ export const DraftCommentsComposer = forwardRef<
     onDraftsChange,
     disabled = false,
     hideMarkButton = false,
+    headerActions,
     mode = 'forward',
     lockedToUser = null,
     previewActive = false,
@@ -831,7 +835,7 @@ export const DraftCommentsComposer = forwardRef<
               : 'Choose recipients, compose comments, then Mark to send.'}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             type="button"
             size="sm"
@@ -850,6 +854,7 @@ export const DraftCommentsComposer = forwardRef<
             )}
             {previewActive ? 'Hide Preview' : 'Preview Comments'}
           </Button>
+          {headerActions}
           {!hideMarkButton && !isReplyMode ? (
             <Button size="sm" disabled={!canMark || busyAttach} onClick={handleMarkClick}>
               <Send className="mr-1 h-3.5 w-3.5" />

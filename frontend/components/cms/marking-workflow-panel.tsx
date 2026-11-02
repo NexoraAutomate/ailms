@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  BarChart3,
   CheckCircle2,
   CornerUpLeft,
   ExternalLink,
@@ -414,21 +415,12 @@ function clearComposerUi(letterId: string) {
 type WorkflowVisibility = {
   /** Emerald highlight + YOU badge on the logged-in user's comment cards. */
   highlightOwnComments: boolean
-  /** Show “Marked to you via” inbound chain stepper. */
-  showMarkedToYouChain: boolean
-  /** Show active holders strip (parallel leaves). */
-  showActiveHolds: boolean
-  /** Show React Flow marking pathway graph. */
-  showFlowGraph: boolean
   /** Show centered mark chips (e.g. A. Rahman → N. Ahmed). */
   showMarkingCards: boolean
 }
 
 const DEFAULT_WORKFLOW_VISIBILITY: WorkflowVisibility = {
   highlightOwnComments: true,
-  showMarkedToYouChain: true,
-  showActiveHolds: true,
-  showFlowGraph: true,
   showMarkingCards: true,
 }
 
@@ -440,18 +432,21 @@ function readWorkflowVisibility(): WorkflowVisibility {
     const parsed = JSON.parse(raw) as Partial<WorkflowVisibility> & {
       showStepper?: boolean
       showCommentMeta?: boolean
+      showMarkedToYouChain?: boolean
+      showActiveHolds?: boolean
+      showFlowGraph?: boolean
     }
-    const { showStepper, showCommentMeta: _removedCommentMeta, ...rest } = parsed
+    const {
+      showStepper: _legacyStepper,
+      showCommentMeta: _removedCommentMeta,
+      showMarkedToYouChain: _legacyChain,
+      showActiveHolds: _legacyHolds,
+      showFlowGraph: _legacyFlow,
+      ...rest
+    } = parsed
     return {
       ...DEFAULT_WORKFLOW_VISIBILITY,
       ...rest,
-      // Migrate legacy showStepper → showActiveHolds
-      showActiveHolds:
-        typeof rest.showActiveHolds === 'boolean'
-          ? rest.showActiveHolds
-          : typeof showStepper === 'boolean'
-            ? showStepper
-            : DEFAULT_WORKFLOW_VISIBILITY.showActiveHolds,
     }
   } catch {
     return DEFAULT_WORKFLOW_VISIBILITY
@@ -759,6 +754,7 @@ export function MarkingWorkflowPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [visibility, setVisibility] = useState<WorkflowVisibility>(DEFAULT_WORKFLOW_VISIBILITY)
+  const [statsOpen, setStatsOpen] = useState(false)
   const [dialog, setDialog] = useState<'forward' | 'close' | 'revoke' | 'decline' | null>(null)
   const [composerMode, setComposerModeState] = useState<'forward' | 'reply'>(
     () => readComposerUi(letter.id).mode,
@@ -1160,9 +1156,51 @@ export function MarkingWorkflowPanel({
     }
   }, [loading, initialAction, actions, activeHolds])
 
+  const openPathwayNode = (data: MarkingFlowNodeData) => {
+    const meName = (me.name || '').trim()
+    // Only the person represented by the node may open their own comments/files.
+    if (!meName || !sameWorkflowUser(data.toUser, meName)) {
+      if (data.markingId != null) {
+        setStatsOpen(false)
+        jumpToMarkingInTimeline(data.markingId, data.batchId)
+      }
+      return
+    }
+    setNodeDialog(data)
+    setNodeEvents([])
+    setNodeEventsLoading(true)
+    // Fetch all of my archive events; dialog filters to this node + outbound children.
+    void fetchAttachmentEvents(letter.id, { mineOnly: true })
+      .then(setNodeEvents)
+      .catch(() => setNodeEvents([]))
+      .finally(() => setNodeEventsLoading(false))
+  }
+
+  const pathwayActiveHolderNames = initiatorHold
+    ? [(letter.createdBy || '').trim()].filter(Boolean)
+    : [
+        ...new Map(
+          activeLeaves
+            .map((m) => (m.toUser || '').trim())
+            .filter(Boolean)
+            .map((name) => [name.toLowerCase(), name] as const),
+        ).values(),
+      ]
+
   return (
     <CollapsibleCard collapsible={false} contentClassName="relative">
-      <div className="absolute top-3 right-3 z-20 sm:top-4 sm:right-4">
+      <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 sm:top-4 sm:right-4">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 text-[11px]"
+          disabled={loading}
+          onClick={() => setStatsOpen(true)}
+        >
+          <BarChart3 className="size-3.5" />
+          Marking Information
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
             type="button"
@@ -1180,26 +1218,6 @@ export function MarkingWorkflowPanel({
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuCheckboxItem
-                checked={visibility.showMarkedToYouChain}
-                onCheckedChange={(checked) =>
-                  updateVisibility('showMarkedToYouChain', checked === true)
-                }
-              >
-                Marked to you via
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={visibility.showActiveHolds}
-                onCheckedChange={(checked) => updateVisibility('showActiveHolds', checked === true)}
-              >
-                Active holders
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={visibility.showFlowGraph}
-                onCheckedChange={(checked) => updateVisibility('showFlowGraph', checked === true)}
-              >
-                Pathway graph
-              </DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem
                 checked={visibility.showMarkingCards}
                 onCheckedChange={(checked) => updateVisibility('showMarkingCards', checked === true)}
@@ -1220,176 +1238,76 @@ export function MarkingWorkflowPanel({
       {loading && <p className="text-xs text-slate-500">Loading workflow…</p>}
       {error && <p className="mb-2 text-xs text-rose-600">{error}</p>}
 
-      {!loading && visibility.showMarkedToYouChain && markedToMeChain && (
-        <div className="mb-5">
-          <MarkingChainStepper
-            steps={markedToMeChain.steps}
-            currentStep={markedToMeChain.currentStep}
-            priorCount={markedToMeChain.priorCount}
-            viewerName={me.name}
-          />
-        </div>
-      )}
-
-      {!loading && visibility.showActiveHolds && (
-        <div className="mb-5">
-          <MarkingActiveHolds
-            activeLeaves={activeLeaves}
-            initiatorHold={initiatorHold}
-            initiatorName={letter.createdBy || ''}
-            users={users}
-          />
-        </div>
-      )}
-
-      {!loading && visibility.showFlowGraph && (
-        <div className="mb-5">
-          <MarkingHistoryFlow
-            tree={tree}
-            initiatorName={letter.createdBy || ''}
-            viewerName={me.name || ''}
-            activeHolderNames={
-              initiatorHold
-                ? [(letter.createdBy || '').trim()].filter(Boolean)
-                : [
-                    ...new Map(
-                      activeLeaves
-                        .map((m) => (m.toUser || '').trim())
-                        .filter(Boolean)
-                        .map((name) => [name.toLowerCase(), name] as const),
-                    ).values(),
-                  ]
-            }
-            onMarkingClick={(data) => {
-              const meName = (me.name || '').trim()
-              // Only the person represented by the node may open their own comments/files.
-              if (!meName || !sameWorkflowUser(data.toUser, meName)) {
-                if (data.markingId != null) {
-                  jumpToMarkingInTimeline(data.markingId, data.batchId)
-                }
-                return
-              }
-              setNodeDialog(data)
-              setNodeEvents([])
-              setNodeEventsLoading(true)
-              // Fetch all of my archive events; dialog filters to this node + outbound children.
-              void fetchAttachmentEvents(letter.id, { mineOnly: true })
-                .then(setNodeEvents)
-                .catch(() => setNodeEvents([]))
-                .finally(() => setNodeEventsLoading(false))
-            }}
-          />
-        </div>
-      )}
-
-      {!loading && (
-        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-            {actions.includes('accept') && (
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError('')
-                    try {
-                      await acceptInboxLetter(letter.id)
-                      await onDone()
-                      await load({ silent: true })
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : 'Accept failed')
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-              >
-                <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Accept — I will work on it
-              </Button>
-            )}
-            {actions.includes('decline') && (
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={busy}
-                onClick={() => {
-                  setRemarks('')
+      {!loading &&
+        (actions.includes('accept') ||
+          actions.includes('decline') ||
+          (!actions.includes('accept') && actions.includes('close')) ||
+          // Revoke when draft composer is hidden (no forward/reply).
+          (revokableMarkings.length > 0 &&
+            (actions.includes('accept') ||
+              !(actions.includes('forward') || actions.includes('reply'))))) && (
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2 pt-14 sm:pt-12">
+          {actions.includes('accept') && (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                void (async () => {
+                  setBusy(true)
                   setError('')
-                  setDialog('decline')
-                }}
-              >
-                <XCircle className="mr-1 h-3.5 w-3.5" /> Reject
-              </Button>
-            )}
-            {!actions.includes('accept') &&
-              actions.includes('reply') &&
-              composerMode !== 'reply' && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || activeHolds.length === 0}
-                onClick={() => {
-                  if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
-                  setError('')
-                  setComposerMode('reply')
-                  window.requestAnimationFrame(() => {
-                    document.getElementById('workflow-draft-composer')?.scrollIntoView({
-                      behavior: 'smooth',
-                      block: 'nearest',
-                    })
-                  })
-                }}
-              >
-                <Reply className="mr-1 h-3.5 w-3.5" />
-                Reply
-              </Button>
-            )}
-            {revokableMarkings.length > 0 && (
-              <Button size="sm" variant="destructive" onClick={() => setDialog('revoke')}>
-                <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
-              </Button>
-            )}
-            {composerMode === 'reply' ? (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => {
-                    setComposerMode('forward')
-                    setError('')
-                  }}
-                >
-                  Cancel Reply
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={busy || composerMarkState.busy || !composerMarkState.canSend}
-                  onClick={() => composerRef.current?.requestSend()}
-                >
-                  <Reply className="mr-1 h-3.5 w-3.5" />
-                  Send Reply
-                </Button>
-              </>
-            ) : (
-              !actions.includes('accept') &&
-              actions.includes('forward') && (
-                <Button
-                  size="sm"
-                  disabled={!composerMarkState.canMark || composerMarkState.busy || busy}
-                  onClick={() => composerRef.current?.requestMark()}
-                >
-                  <Send className="mr-1 h-3.5 w-3.5" /> Mark
-                </Button>
-              )
-            )}
-            {!actions.includes('accept') && actions.includes('close') && (
-              <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
-                <XCircle className="mr-1 h-3.5 w-3.5" /> Close
-              </Button>
-            )}
+                  try {
+                    await acceptInboxLetter(letter.id)
+                    await onDone()
+                    await load({ silent: true })
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Accept failed')
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Accept — I will work on it
+            </Button>
+          )}
+          {actions.includes('decline') && (
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => {
+                setRemarks('')
+                setError('')
+                setDialog('decline')
+              }}
+            >
+              <XCircle className="mr-1 h-3.5 w-3.5" /> Reject
+            </Button>
+          )}
+          {revokableMarkings.length > 0 &&
+            (actions.includes('accept') ||
+              !(actions.includes('forward') || actions.includes('reply'))) && (
+            <Button size="sm" variant="destructive" onClick={() => setDialog('revoke')}>
+              <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
+            </Button>
+          )}
+          {!actions.includes('accept') && actions.includes('close') && (
+            <Button size="sm" variant="outline" onClick={() => setDialog('close')}>
+              <XCircle className="mr-1 h-3.5 w-3.5" /> Close
+            </Button>
+          )}
         </div>
       )}
+      {/* Spacer under Marking Information when the action bar above is hidden */}
+      {!loading &&
+        !(
+          actions.includes('accept') ||
+          actions.includes('decline') ||
+          (!actions.includes('accept') && actions.includes('close')) ||
+          (revokableMarkings.length > 0 &&
+            (actions.includes('accept') ||
+              !(actions.includes('forward') || actions.includes('reply'))))
+        ) && <div className="pt-14 sm:pt-12" aria-hidden />}
 
       {!loading && myRrBatches.length > 0 && (
         <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5">
@@ -1486,6 +1404,63 @@ export function MarkingWorkflowPanel({
             onDraftsChange={handleDraftsChange}
             disabled={busy}
             hideMarkButton
+            headerActions={
+              <>
+                {actions.includes('reply') && composerMode !== 'reply' ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || activeHolds.length === 0}
+                    onClick={() => {
+                      if (activeHolds.length === 1) setParentMarkingId(activeHolds[0]!.id)
+                      setError('')
+                      setComposerMode('reply')
+                    }}
+                  >
+                    <Reply className="mr-1 h-3.5 w-3.5" />
+                    Reply
+                  </Button>
+                ) : null}
+                {composerMode === 'reply' ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => {
+                        setComposerMode('forward')
+                        setError('')
+                      }}
+                    >
+                      Cancel Reply
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={busy || composerMarkState.busy || !composerMarkState.canSend}
+                      onClick={() => composerRef.current?.requestSend()}
+                    >
+                      <Reply className="mr-1 h-3.5 w-3.5" />
+                      Send Reply
+                    </Button>
+                  </>
+                ) : (
+                  actions.includes('forward') && (
+                    <Button
+                      size="sm"
+                      disabled={!composerMarkState.canMark || composerMarkState.busy || busy}
+                      onClick={() => composerRef.current?.requestMark()}
+                    >
+                      <Send className="mr-1 h-3.5 w-3.5" /> Mark
+                    </Button>
+                  )
+                )}
+                {revokableMarkings.length > 0 ? (
+                  <Button size="sm" variant="destructive" onClick={() => setDialog('revoke')}>
+                    <CornerUpLeft className="mr-1 h-3.5 w-3.5" /> Revoke
+                  </Button>
+                ) : null}
+              </>
+            }
             mode={composerMode}
             lockedToUser={composerMode === 'reply' ? replyTargetUser : null}
             previewActive={draftPreview != null}
@@ -2145,6 +2120,64 @@ export function MarkingWorkflowPanel({
               src={documentPreviewUrl(previewVersionId)}
               className="min-h-0 flex-1 rounded border border-slate-200 bg-white"
             />
+          </div>
+        </div>
+      )}
+
+      {statsOpen && !loading && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-3 sm:items-center sm:p-4">
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-xl dark:bg-slate-950">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+              <div>
+                <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Marking Information</h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Marked-to-you path, active holders, and marking pathway for this correspondence.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                onClick={() => setStatsOpen(false)}
+                aria-label="Close marking information"
+              >
+                <X />
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+              {markedToMeChain ? (
+                <MarkingChainStepper
+                  steps={markedToMeChain.steps}
+                  currentStep={markedToMeChain.currentStep}
+                  priorCount={markedToMeChain.priorCount}
+                  viewerName={me.name}
+                />
+              ) : (
+                <section className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-xs text-slate-500 dark:border-slate-700">
+                  No inbound marking path to you for this letter.
+                </section>
+              )}
+
+              <MarkingActiveHolds
+                activeLeaves={activeLeaves}
+                initiatorHold={initiatorHold}
+                initiatorName={letter.createdBy || ''}
+                users={users}
+              />
+
+              <MarkingHistoryFlow
+                tree={tree}
+                initiatorName={letter.createdBy || ''}
+                viewerName={me.name || ''}
+                activeHolderNames={pathwayActiveHolderNames}
+                onMarkingClick={openPathwayNode}
+              />
+            </div>
+            <div className="flex shrink-0 justify-end border-t border-slate-200 px-4 py-3 dark:border-slate-800">
+              <Button type="button" variant="outline" size="sm" onClick={() => setStatsOpen(false)}>
+                Close
+              </Button>
+            </div>
           </div>
         </div>
       )}
