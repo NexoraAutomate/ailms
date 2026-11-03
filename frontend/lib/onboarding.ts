@@ -1,32 +1,25 @@
-/** Interactive onboarding content for the Correspondence Management System. */
+/** Interactive onboarding for the simplified correspondence marking workflow. */
 
 export type OnboardingChapterId =
   | 'welcome'
-  | 'roles'
   | 'register'
-  | 'marking'
-  | 'routing'
-  | 'action-items'
-  | 'response'
+  | 'mark'
+  | 'work'
+  | 'track-close'
   | 'workspace'
   | 'ai'
   | 'practice'
 
-export type OnboardingRoleColor = {
-  /** Solid accent used for bold role names and selected chips. */
+export type OnboardingActorColor = {
   hex: string
-  /** Soft fill for badges / chips. */
   soft: string
-  /** Soft border paired with soft fill. */
   border: string
 }
 
-export type OnboardingRole = {
+export type OnboardingActor = {
   name: string
   summary: string
-  focus: string
-  permissions: string[]
-  color: OnboardingRoleColor
+  color: OnboardingActorColor
 }
 
 export type OnboardingChapter = {
@@ -36,141 +29,134 @@ export type OnboardingChapter = {
   minutes: number
 }
 
-export const ONBOARDING_STORAGE_KEY = 'cms-onboarding-progress'
+/** Bumped so browsers do not restore obsolete enterprise-tour progress. */
+export const ONBOARDING_STORAGE_KEY = 'cms-onboarding-progress-v2'
 
 export const ONBOARDING_CHAPTERS: OnboardingChapter[] = [
-  { id: 'welcome', title: 'Welcome', subtitle: 'How correspondence moves through the system', minutes: 2 },
-  { id: 'roles', title: 'Roles', subtitle: 'Who can do what', minutes: 3 },
-  { id: 'register', title: 'Register', subtitle: 'Capture an incoming or outgoing letter', minutes: 2 },
-  { id: 'marking', title: 'Marking', subtitle: 'Classify as Information or Actionable', minutes: 3 },
-  { id: 'routing', title: 'Routing', subtitle: 'Validate, classify, and hand off', minutes: 3 },
-  { id: 'action-items', title: 'Action items', subtitle: 'Accept, start, block, and complete work', minutes: 3 },
-  { id: 'response', title: 'Response & close', subtitle: 'Draft, approve, dispatch, archive', minutes: 3 },
-  { id: 'workspace', title: 'Workspace', subtitle: 'Inbox, My Actions, Analytics', minutes: 2 },
-  { id: 'ai', title: 'AI helpers', subtitle: 'OCR, analysis, and search assistants', minutes: 2 },
+  { id: 'welcome', title: 'Welcome', subtitle: 'Holdership, not role ladders', minutes: 2 },
+  { id: 'register', title: 'Register', subtitle: 'Capture a letter and become initiator', minutes: 2 },
+  { id: 'mark', title: 'Mark', subtitle: 'Forward, For Info, or Response Required', minutes: 3 },
+  { id: 'work', title: 'Accept & work', subtitle: 'Inbox gate, notes, and Reply', minutes: 3 },
+  { id: 'track-close', title: 'Track & close', subtitle: 'Batch trackers, Revoke, Close', minutes: 3 },
+  { id: 'workspace', title: 'Workspace', subtitle: 'Inbox, Sent, Track, and Catalog', minutes: 2 },
+  { id: 'ai', title: 'AI helpers', subtitle: 'Intake and discovery — not marking', minutes: 2 },
   { id: 'practice', title: 'Practice', subtitle: 'Walk a sample letter end to end', minutes: 4 },
 ]
 
-/** Roles in letter lifecycle order: entry → routing → work → close → read-only. */
-export const ONBOARDING_ROLES: OnboardingRole[] = [
+/** Who acts on a letter — holdership, not Coordinator/Manager/Actionist tiers. */
+export const ONBOARDING_ACTORS: OnboardingActor[] = [
   {
-    name: 'Coordinator',
-    summary: 'Correspondence officer who validates intake and keeps letters moving.',
-    focus: 'First touch — registration, classification, and handoffs.',
-    permissions: [
-      'Validate OCR / registration data',
-      'Classify Information vs Actionable',
-      'Assign, forward, and reassign',
-      'Route FYI and close information letters',
-    ],
+    name: 'Initiator',
+    summary: 'Who registered the letter. Closes it when they hold it again.',
     color: { hex: '#0d9488', soft: '#f0fdfa', border: '#5eead4' },
   },
   {
-    name: 'Management',
-    summary: 'Executive oversight with the same workflow powers as Admin on letters.',
-    focus: 'Routing approval, escalations, and dispatch authority.',
-    permissions: [
-      'Approve routing and response steps',
-      'Escalate overdue or blocked work',
-      'Close and archive correspondence',
-      'Monitor department performance',
-    ],
-    color: { hex: '#9f1239', soft: '#fff1f2', border: '#fda4af' },
+    name: 'Current holder',
+    summary: 'Who can Mark, add notes/files, Reply, or Close (if initiator).',
+    color: { hex: '#1769aa', soft: '#eff6ff', border: '#93c5fd' },
   },
   {
-    name: 'Manager',
-    summary: 'Department lead who routes work, delegates, and reviews responses.',
-    focus: 'Delegation, department approvals, and completion.',
-    permissions: [
-      'Classify and route letters',
-      'Delegate or handle at this tier',
-      'Approve response steps',
-      'Escalate, reopen, and close',
-    ],
+    name: 'Marker',
+    summary: 'Who sent a mark — can Track Response Required and Revoke when allowed.',
     color: { hex: '#c2410c', soft: '#fff7ed', border: '#fdba74' },
   },
   {
-    name: 'Actionist',
-    summary: 'The person who executes assigned work on a letter.',
-    focus: 'Action items and drafting the reply.',
-    permissions: [
-      'Accept / start / block / complete action items',
-      'Add notes and request clarification',
-      'Draft a response and submit for approval',
-      'Acknowledge information (FYI) letters',
-    ],
+    name: 'Recipient',
+    summary: 'Must Accept before working; then becomes the current holder.',
     color: { hex: '#15803d', soft: '#ecfdf5', border: '#6ee7b7' },
   },
   {
     name: 'Admin',
-    summary: 'Full control of users, configuration, and every workflow transition.',
-    focus: 'Overrides, dispatch, and system ownership.',
-    permissions: [
-      'Validate & classify letters',
-      'Approve routing and dispatch',
-      'Assign, reassign, escalate, close, archive',
-      'Manage users, roles, and master data',
-    ],
+    summary: 'Can override letter actions and manage users/settings.',
     color: { hex: '#0d3763', soft: '#eff6ff', border: '#93c5fd' },
   },
   {
     name: 'Viewer',
-    summary: 'Read-only access for stakeholders who need visibility without edits.',
-    focus: 'Search, catalog, and status tracking.',
-    permissions: ['View letters they can access', 'No workflow transitions'],
+    summary: 'Read-only — no Mark, notes, or Close.',
     color: { hex: '#475569', soft: '#f8fafc', border: '#cbd5e1' },
   },
 ]
 
-const FALLBACK_ROLE_COLOR: OnboardingRoleColor = {
+const FALLBACK_ACTOR_COLOR: OnboardingActorColor = {
   hex: '#334155',
   soft: '#f8fafc',
   border: '#cbd5e1',
 }
 
-export function getRoleColor(roleName: string): OnboardingRoleColor {
-  const match = ONBOARDING_ROLES.find((r) => r.name.toLowerCase() === roleName.trim().toLowerCase())
-  return match?.color ?? FALLBACK_ROLE_COLOR
+export function getActorColor(actorName: string): OnboardingActorColor {
+  const key = actorName.trim().toLowerCase()
+  const match = ONBOARDING_ACTORS.find((a) => {
+    const name = a.name.toLowerCase()
+    return key === name || key.includes(name) || name.includes(key.split('(')[0].trim())
+  })
+  return match?.color ?? FALLBACK_ACTOR_COLOR
 }
 
 export const WORKFLOW_PIPELINE = [
   {
     status: 'Register',
-    meaning: 'Initiator captures the letter (manual entry or OCR-assisted).',
-    roles: ['Any user', 'Admin'],
+    meaning: 'Create the letter (manual or OCR-assisted). You become initiator and initial holder.',
+    actors: ['Any user'],
   },
   {
     status: 'Mark',
-    meaning: 'Mark to any user(s) as Forward, For Info, or Response Required.',
-    roles: ['Current holder'],
+    meaning: 'Send to people as Forward, For Information, or Response Required.',
+    actors: ['Current holder'],
   },
   {
-    status: 'Notes & attachments',
-    meaning: 'Holders add dated inputs and typed files on the correspondence.',
-    roles: ['Current holder'],
+    status: 'Accept',
+    meaning: 'Inbound recipient accepts (or rejects) before working the letter.',
+    actors: ['Recipient'],
   },
   {
-    status: 'Track & remind',
-    meaning: 'Marker tracks pending responses; optional pathway and due reminders.',
-    roles: ['Marker'],
+    status: 'Notes & work',
+    meaning: 'Holders add comments and attachments; may Mark onward or Reply.',
+    actors: ['Current holder'],
   },
   {
-    status: 'Revoke',
-    meaning: 'Marker may revoke if the recipient has not marked onward.',
-    roles: ['Marker'],
+    status: 'Track & Revoke',
+    meaning: 'Marker tracks pending Response Required; may Revoke if the recipient has not remade.',
+    actors: ['Marker'],
   },
   {
     status: 'Close',
-    meaning: 'When the initiator holds again, they can close the correspondence.',
-    roles: ['Initiator'],
+    meaning: 'When the initiator holds again, they close the correspondence.',
+    actors: ['Initiator'],
+  },
+] as const
+
+export const MARK_TYPES = [
+  {
+    id: 'forward',
+    title: 'Forward',
+    slot: 'To',
+    meaning: 'Pass the letter onward. The recipient becomes the next holder after Accept.',
+  },
+  {
+    id: 'response_required',
+    title: 'Response Required',
+    slot: 'To',
+    meaning: 'Ask for a response (draft letter, presentation, nominations, comments, or other). Track until fulfilled.',
+  },
+  {
+    id: 'for_info',
+    title: 'For Information',
+    slot: 'Info',
+    meaning: 'FYI only — awareness without a response obligation.',
+  },
+  {
+    id: 'reply',
+    title: 'Reply',
+    slot: 'Back',
+    meaning: 'Send the letter back up the chain to the previous marker.',
   },
 ] as const
 
 export type PracticeAction = {
   id: string
   label: string
-  /** Canonical role name(s) that perform this practice click. */
-  roles: string[]
+  /** Who performs this practice click (holdership labels, not legacy roles). */
+  actors: string[]
   nextStatus: string
   note: string
 }
@@ -181,193 +167,144 @@ export type PracticeStep = {
   actions: PracticeAction[]
 }
 
-/** Guided sandbox: each status offers the realistic next click(s). */
+/** Guided sandbox for the simplified marking path. */
 export const PRACTICE_STEPS: PracticeStep[] = [
   {
-    status: 'Registered',
-    prompt: 'A scanned letter just landed. As Coordinator, validate the registration before anything else moves.',
+    status: 'Open',
+    prompt:
+      'You registered this letter. You are the initiator and current holder. Open the Workflow tab and Mark it to a colleague.',
     actions: [
       {
-        id: 'validate',
-        label: 'Validate',
-        roles: ['Coordinator'],
-        nextStatus: 'Validated',
-        note: 'You confirmed number, subject, dates, and attachments look correct.',
+        id: 'mark-forward',
+        label: 'Mark — Forward to Sara',
+        actors: ['Current holder'],
+        nextStatus: 'Awaiting Accept',
+        note: 'Forwarded to Sara. She must Accept before working on it.',
+      },
+      {
+        id: 'mark-rr',
+        label: 'Mark — Response Required to Finance',
+        actors: ['Current holder'],
+        nextStatus: 'Awaiting Accept (RR)',
+        note: 'Response Required sent. You can track this batch until Finance replies.',
       },
     ],
   },
   {
-    status: 'Validated',
-    prompt: 'Mark the letter. This choice decides whether it needs action items or only FYI delivery.',
-    actions: [
-      {
-        id: 'classify-actionable',
-        label: 'Mark as Actionable',
-        roles: ['Coordinator'],
-        nextStatus: 'Classified',
-        note: 'Marked Actionable — someone must accept and complete work.',
-      },
-      {
-        id: 'classify-info',
-        label: 'Mark as Information',
-        roles: ['Coordinator'],
-        nextStatus: 'Classified-Info',
-        note: 'Marked Information / FYI — route for awareness, no action owner required.',
-      },
-    ],
-  },
-  {
-    status: 'Classified',
-    prompt: 'Route the actionable letter to the owning department and assign an Actionist.',
-    actions: [
-      {
-        id: 'delegate',
-        label: 'Delegate to Actionist',
-        roles: ['Manager'],
-        nextStatus: 'Action Assigned',
-        note: 'Action item created for Finance · Due in 5 days.',
-      },
-    ],
-  },
-  {
-    status: 'Classified-Info',
-    prompt: 'Information letters are delivered for awareness. Route FYI, then close when acknowledged.',
-    actions: [
-      {
-        id: 'route-info',
-        label: 'Route for information',
-        roles: ['Coordinator'],
-        nextStatus: 'Information Delivered',
-        note: 'FYI recipients notified. They can acknowledge from My Actions.',
-      },
-    ],
-  },
-  {
-    status: 'Information Delivered',
-    prompt: 'FYI path complete. Close as information delivered, then archive if policy requires.',
-    actions: [
-      {
-        id: 'close-info',
-        label: 'Close information letter',
-        roles: ['Coordinator'],
-        nextStatus: 'Closed',
-        note: 'Information path finished. Catalog retains the record.',
-      },
-    ],
-  },
-  {
-    status: 'Action Assigned',
-    prompt: 'You are the Actionist. Accept the item so the clock and ownership are clear.',
+    status: 'Awaiting Accept',
+    prompt: 'Sara sees the letter in Inbox. She must Accept before she can Mark, note, or Reply.',
     actions: [
       {
         id: 'accept',
-        label: 'Accept action',
-        roles: ['Actionist'],
-        nextStatus: 'In Progress',
-        note: 'Action item accepted. Status moves to In Progress.',
+        label: 'Accept — I will work on it',
+        actors: ['Recipient'],
+        nextStatus: 'Holding',
+        note: 'Sara accepted and now holds the letter.',
+      },
+      {
+        id: 'reject',
+        label: 'Reject',
+        actors: ['Recipient'],
+        nextStatus: 'Open',
+        note: 'Rejected — hold returns. Try Marking again.',
       },
     ],
   },
   {
-    status: 'In Progress',
-    prompt: 'Do the work, then either draft a response or mark the action complete when finished.',
+    status: 'Awaiting Accept (RR)',
+    prompt: 'Finance received a Response Required mark. Accept to start the response work.',
     actions: [
       {
-        id: 'draft',
-        label: 'Draft response',
-        roles: ['Actionist'],
-        nextStatus: 'Response Drafted',
-        note: 'Response version v1 prepared and ready for approval.',
-      },
-      {
-        id: 'block',
-        label: 'Block action',
-        roles: ['Actionist'],
-        nextStatus: 'In Progress',
-        note: 'Blocked with a reason (waiting on external data). Managers see this in Analytics → Needs action.',
+        id: 'accept-rr',
+        label: 'Accept — I will work on it',
+        actors: ['Recipient'],
+        nextStatus: 'Holding (RR)',
+        note: 'Finance accepted. Your batch tracker still shows this RR as open until they Reply.',
       },
     ],
   },
   {
-    status: 'Response Drafted',
-    prompt: 'Submit the draft so a Manager can approve the step.',
+    status: 'Holding',
+    prompt: 'Sara holds the letter. She can add notes, Mark onward, or Reply back to you.',
     actions: [
       {
-        id: 'submit',
-        label: 'Submit for approval',
-        roles: ['Actionist'],
-        nextStatus: 'Under Approval',
-        note: 'Approval step opened for the department Manager.',
+        id: 'reply',
+        label: 'Send Reply to initiator',
+        actors: ['Current holder'],
+        nextStatus: 'Back with Initiator',
+        note: 'Replied with comments. Hold returns to the previous marker (you).',
+      },
+      {
+        id: 'mark-onward',
+        label: 'Mark onward (Forward)',
+        actors: ['Current holder'],
+        nextStatus: 'Onward Marked',
+        note: 'Marked to the next person. Sara can Revoke until they remake or add content.',
       },
     ],
   },
   {
-    status: 'Under Approval',
-    prompt: 'As Manager, approve the response — or return it for revision.',
+    status: 'Holding (RR)',
+    prompt: 'Finance holds a Response Required mark. Complete the response and Reply back.',
     actions: [
       {
-        id: 'approve',
-        label: 'Approve step',
-        roles: ['Manager'],
-        nextStatus: 'Approved for Dispatch',
-        note: 'Response approved. Ready for dispatch.',
-      },
-      {
-        id: 'return',
-        label: 'Return for revision',
-        roles: ['Manager'],
-        nextStatus: 'Response Drafted',
-        note: 'Returned with remarks. Actionist revises the draft.',
+        id: 'reply-rr',
+        label: 'Reply with response',
+        actors: ['Current holder'],
+        nextStatus: 'Back with Initiator',
+        note: 'Response sent. The RR batch clears for the marker; you hold the letter again.',
       },
     ],
   },
   {
-    status: 'Approved for Dispatch',
-    prompt: 'Dispatch the reply on the right channel, then close the letter.',
+    status: 'Onward Marked',
+    prompt:
+      'After Marking onward you are mostly revoke-only until hold returns. Practice Revoke, or skip ahead as if the next person replied.',
     actions: [
       {
-        id: 'dispatch',
-        label: 'Dispatch',
-        roles: ['Management', 'Admin'],
-        nextStatus: 'Dispatched',
-        note: 'Outgoing reply recorded with channel and recipients.',
+        id: 'revoke',
+        label: 'Revoke mark',
+        actors: ['Marker'],
+        nextStatus: 'Holding',
+        note: 'Mark revoked. Sara holds again and can choose a different next step.',
+      },
+      {
+        id: 'recipient-replied',
+        label: 'Recipient replies back',
+        actors: ['Recipient'],
+        nextStatus: 'Back with Initiator',
+        note: 'Chain returned. You hold the letter as initiator.',
       },
     ],
   },
   {
-    status: 'Dispatched',
-    prompt: 'Correspondence is complete. Close and archive for retention.',
+    status: 'Back with Initiator',
+    prompt: 'You hold the letter again as initiator. Close when the work is finished (optional Archive later).',
     actions: [
       {
         id: 'close',
-        label: 'Close & archive',
-        roles: ['Manager', 'Management', 'Admin'],
-        nextStatus: 'Archived',
-        note: 'Letter closed and available in Catalog / Archive views.',
+        label: 'Close correspondence',
+        actors: ['Initiator'],
+        nextStatus: 'Closed',
+        note: 'Letter Closed. Catalog retains the record; Archive is available when policy requires it.',
       },
     ],
   },
   {
     status: 'Closed',
-    prompt: 'Practice complete for the information path. Try again as Actionable to see action items.',
-    actions: [],
-  },
-  {
-    status: 'Archived',
-    prompt: 'Full actionable journey complete. Restart anytime to try the Information path.',
+    prompt: 'Practice complete. Restart anytime and try the other Mark type (Forward vs Response Required).',
     actions: [],
   },
 ]
 
 export type PracticeLogEntry = {
-  roles: string[]
+  actors: string[]
   text: string
 }
 
 export type OnboardingProgress = {
   completed: OnboardingChapterId[]
   current: OnboardingChapterId
-  selectedRole: string
   practiceStatus: string
   practiceLog: PracticeLogEntry[]
 }
@@ -376,8 +313,7 @@ export function defaultOnboardingProgress(): OnboardingProgress {
   return {
     completed: [],
     current: 'welcome',
-    selectedRole: 'Coordinator',
-    practiceStatus: 'Registered',
+    practiceStatus: 'Open',
     practiceLog: [],
   }
 }
@@ -387,14 +323,17 @@ function normalizePracticeLog(raw: unknown): PracticeLogEntry[] {
   return raw
     .map((entry): PracticeLogEntry | null => {
       if (typeof entry === 'string') {
-        return { roles: [], text: entry }
+        return { actors: [], text: entry }
       }
       if (entry && typeof entry === 'object' && 'text' in entry) {
-        const roles = Array.isArray((entry as PracticeLogEntry).roles)
-          ? (entry as PracticeLogEntry).roles.filter((r): r is string => typeof r === 'string')
+        const legacyRoles = Array.isArray((entry as { roles?: unknown }).roles)
+          ? ((entry as { roles: unknown[] }).roles.filter((r): r is string => typeof r === 'string'))
           : []
+        const actors = Array.isArray((entry as PracticeLogEntry).actors)
+          ? (entry as PracticeLogEntry).actors.filter((r): r is string => typeof r === 'string')
+          : legacyRoles
         const text = String((entry as PracticeLogEntry).text ?? '')
-        return text ? { roles, text } : null
+        return text ? { actors, text } : null
       }
       return null
     })
@@ -420,6 +359,11 @@ export function loadOnboardingProgress(): OnboardingProgress {
         ? (parsed.current as OnboardingChapterId)
         : 'welcome',
       practiceLog: normalizePracticeLog(parsed.practiceLog),
+      practiceStatus:
+        typeof parsed.practiceStatus === 'string' &&
+        PRACTICE_STEPS.some((s) => s.status === parsed.practiceStatus)
+          ? parsed.practiceStatus
+          : 'Open',
     }
   } catch {
     return defaultOnboardingProgress()
